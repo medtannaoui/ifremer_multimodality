@@ -64,106 +64,60 @@ def convert_sar_to_xy(sar_file, sargeo_df, output_dir):
     ds.close()
 
 
-def _disk_mask(X, Y, rmax_km):
+def center_and_mean_calm_pixels(x, y, WS, seuil_strong, vent_oeil, n_points=10):
     """
-    Crée un masque booléen pour ne garder que les pixels
-    à l'intérieur d'un disque de rayon rmax_km autour de (0,0).
+    1) Trouve le barycentre des pixels forts (WS >= seuil_strong)
+    2) Cherche les n_points pixels calmes (WS < vent_oeil) les plus proches
+    3) Retourne leur moyenne (xo, yo)
+
+    Sorties :
+      xc, yc  : centre des vents forts
+      xo, yo  : moyenne des n pixels calmes les + proches
     """
-    R = np.hypot(X, Y)  # distance radiale
-    return (R <= rmax_km)
 
+    # --- 1) centre des vents forts ---
+    mask_strong = (WS >= seuil_strong) & np.isfinite(WS)
 
-def find_eye_IR(x, y, BT, rmax_km=250, sigma=2.0):
-    """
-    Trouve le centre de l'œil du cyclone dans une image IR.
-    
-    Paramètres :
-        x, y : 1D arrays (km)
-        BT : 2D array (Brightness Temperature en K)
-        rmax_km : rayon max pour la recherche (km)
-        sigma : écart-type du lissage gaussien
-        
-    Retour :
-        x_eye, y_eye : coordonnées (km)
-        i, j : indices du pixel trouvé
-    """
-    X, Y = np.meshgrid(x, y)
-    M = _disk_mask(X, Y, rmax_km)
-    BTs = gaussian_filter(BT, sigma=sigma)         # lissage
-    BTs_masked = np.where(M, BTs, -np.inf)         # on cherche un MAX
-    i, j = np.unravel_index(np.nanargmax(BTs_masked), BT.shape)
-    return x[j], y[i], i, j
+    if not np.any(mask_strong):
+        return None, None, None, None
 
+    if x.ndim == 2:
+        xs = x[mask_strong]
+        ys = y[mask_strong]
+    else:
+        iy, ix = np.where(mask_strong)
+        xs = x[ix]
+        ys = y[iy]
 
+    xc = float(np.mean(xs))
+    yc = float(np.mean(ys))
 
+    # --- 2) pixels calmes ---
+    mask_calm = (WS < vent_oeil) & np.isfinite(WS)
+    if not np.any(mask_calm):
+        return xc, yc, None, None
 
+    if x.ndim == 2:
+        xcand = x[mask_calm]
+        ycand = y[mask_calm]
+    else:
+        iy2, ix2 = np.where(mask_calm)
+        xcand = x[ix2]
+        ycand = y[iy2]
 
-def find_eye_SAR(x, y, WS, vent_min, vent_oeil, r_max, r_oeil):
-    X, Y = np.meshgrid(x, y)
-    dist = np.sqrt(X**2 + Y**2)
+    # --- 3) calcul distance par rapport à (xc,yc) ---
+    d2 = (xcand - xc)**2 + (ycand - yc)**2
+    idx = np.argsort(d2)   # tri des distances
 
-    # Pixels dans la zone où on cherche l'oeil
-    mask_zone = (dist <= r_max) & np.isfinite(WS)
-    if not np.any(mask_zone):
-        return np.nan, np.nan, None, None
+    # on prend les n_points premiers
+    k = min(n_points, len(idx))
+    sel = idx[:k]
 
-    # Pixels candidats = vent faible
-    mask_candidat = (WS <= vent_min) & mask_zone
-    if not np.any(mask_candidat):
-        return np.nan, np.nan, None, None
+    xo = float(np.mean(xcand[sel]))
+    yo = float(np.mean(ycand[sel]))
 
-    best_score = -1
-    x_eye = y_eye = np.nan
-    i_eye = j_eye = None
+    return xc, yc, xo, yo
 
-    # Boucle sur les candidats
-    for i, j in zip(*np.nonzero(mask_candidat)):
-        xc, yc = x[j], y[i]
-
-        # Disque local autour du candidat
-        dist_local = np.sqrt((X - xc)**2 + (Y - yc)**2)
-        mask_ring = (dist_local <= r_oeil) & np.isfinite(WS)
-
-        # Vérifier que la zone calme est assez large (pas 1 pixel)
-        calm_neighbors = np.sum((WS <= vent_min) & mask_ring)
-        if calm_neighbors < 5:
-            continue
-
-        # Vent fort autour du disque
-        strong = (WS >= vent_oeil) & mask_ring
-        if not np.any(strong):
-            continue
-
-        # Vérification en 8 directions (45° secteurs)
-        dx = X - xc
-        dy = Y - yc
-        angles = (np.degrees(np.arctan2(dy, dx)) + 360) % 360
-
-        valid_eye = True
-        for a in [0, 90, 180, 270]:     # 4 directions cardinales
-            sector = (angles >= a) & (angles < a + 90) & strong
-            if not np.any(sector):
-                valid_eye = False
-                break
-
-
-        if not valid_eye:
-            continue
-
-        # Score = combien de pixels forts autour
-        score = np.sum(strong)
-
-        # Garder le meilleur
-        if score > best_score:
-            best_score = score
-            x_eye = xc
-            y_eye = yc
-            i_eye = j_eye = i, j
-
-    if best_score <= 0:
-        return np.nan, np.nan, None, None,best_score
-
-    return x_eye, y_eye, i_eye, j_eye, best_score
 
 
 def is_within_deltamin(date1_str, date2_str, delta=10):
