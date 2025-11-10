@@ -4,6 +4,8 @@ from datetime import datetime,timedelta
 import os
 import xarray as xr
 import pyproj
+from matplotlib import pyplot as plt
+
 
 def convert_sar_to_xy(sar_file, sargeo_df, output_dir):
     """
@@ -13,16 +15,18 @@ def convert_sar_to_xy(sar_file, sargeo_df, output_dir):
     sar_file : str → chemin du fichier SAR .nc
     sargeo_df : DataFrame → contient les centres (lat_centre, lon_centre)
     output_dir : str → dossier de sortie
+    for file_path in sargeo["sar_path"]: 
+    try: 
+        fct.convert_sar_to_xy(file_path, sargeo, output_dir) 
+    except Exception as e: 
+        print(f"❌ Erreur pour {file_path}: {e}")
     """
 
     # 1️⃣ Charger le fichier SAR
     ds = xr.open_dataset(sar_file)
-    filename = os.path.basename(sar_file).replace(".nc", "")
-    #print(f"🔹 Traitement du fichier : {filename}")
-
-    # 2️⃣ Trouver le centre du cyclone correspondant
-    inter_key = filename.split("_centered")[0].split("_aeqd")[0]
-    match = sargeo_df[sargeo_df["inter_list_sar"].str.contains(inter_key, case=False, na=False)]
+    filename = os.path.basename(sar_file).split(".nc")[0]
+    
+    match = sargeo_df[sargeo_df["sar_inter"].str.contains(filename, case=False, na=False)]
 
     if match.empty:
         print(f"⚠️ Aucun centre trouvé pour {filename}")
@@ -53,10 +57,10 @@ def convert_sar_to_xy(sar_file, sargeo_df, output_dir):
     os.makedirs(output_dir, exist_ok=True)
     out_file = os.path.join(output_dir, f"{filename}_aeqd.nc")
     #recuperer l indice de la ligne courante dans le dataframe
-    current_index = sargeo_df[sargeo_df["inter_list_sar"].str.contains(inter_key, case=False, na=False)].index[0]
+    current_index = sargeo_df[sargeo_df["sar_inter"].str.contains(filename, case=False, na=False)].index[0]
     #mettre a jour le chemin du fichier modifié dans le dataframe
     sargeo_df.at[current_index, "sar_xy"] = out_file
-    sargeo_df.to_csv("excels/SARGEO_modifiee.csv", index=False)  # Mettre à jour le CSV avec le nouveau chemin
+    sargeo_df.to_csv("excels/SARGEO_SAR.csv", index=False)  # Mettre à jour le CSV avec le nouveau chemin
     ds.to_netcdf(out_file)
     
 
@@ -144,38 +148,3 @@ def is_within_deltamin(date1_str, date2_str, delta=10):
     return (d2 - delta) <= d1 <= (d2 + delta)
 
 
-
-
-def find_center_of_strong_wind(x, y, WS, vent_oeil, r_max):
-    """
-    Calcule le centre du cyclone comme le centre de masse des vents forts.
-    Correction : Inversion des axes à la fin si le meshgrid a interverti X et Y.
-    """
-    # Conservez l'appel initial qui produit les matrices de la bonne taille:
-    X, Y = np.meshgrid(x, y) 
-    
-    # ... (le masquage est inchangé et correct car les formes correspondent)
-    dist = np.sqrt(X**2 + Y**2)
-
-    # 1. Définir la zone de recherche
-    mask_zone = (dist <= r_max) & np.isfinite(WS)
-
-    # 2. Identifier les pixels de vent fort
-    mask_strong = (WS >= vent_oeil) & mask_zone
-
-    if not np.any(mask_strong):
-        return np.nan, np.nan
-
-    # 3. Récupérer les coordonnées des pixels forts
-    X_strong = X[mask_strong]
-    Y_strong = Y[mask_strong]
-
-    # 4. Calculer le centre de masse (Centroid)
-    # SI X et Y ont été intervertis par le meshgrid, nous faisons la correction ici.
-    # Dans le cas d'une erreur d'inversion des coordonnées X et Y, 
-    # X_strong contient en fait les coordonnées de l'axe Y, et vice-versa.
-    
-    y_center = np.mean(X_strong) # Utiliser la moyenne de X_strong pour Y
-    x_center = np.mean(Y_strong) # Utiliser la moyenne de Y_strong pour X
-
-    return x_center, y_center # Retourne le X corrigé et le Y corrigé
