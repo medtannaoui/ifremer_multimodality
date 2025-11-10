@@ -7,8 +7,4 @@ verification.ipynb
 visualisation_pics.ipynb
 colocalisation.ipynb
 GEO_to_XYcenter.py
-SARGEO_data_vis.ipynb
-TCPrimed_data_vis.ipynb
-changement_de_coordonnées.ipynb
-data_preprocessing.ipynb
-pretraitement.ipynb
+*.ipynb
