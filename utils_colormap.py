@@ -1,6 +1,8 @@
 from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
 from matplotlib.colors import ListedColormap, BoundaryNorm
+import colorsys
+import matplotlib
 
 
 class CMAP:
@@ -53,29 +55,86 @@ class CMAP:
 
 
     @classmethod
-    def cmap_sar(cls, return_vminvmax=False, return_levels=False):
-            # seuils NOAA (en kt)
-        levels = np.array([0, 17, 34, 50, 64, 83, 96, 113, 137, 150], dtype=float)
+    def cmap_sar(cls):
+        def gmtColormap(fileName):
+            """
+            Originally from http://wiki.scipy.org/Cookbook/Matplotlib/Loading_a_colormap_dynamically
+            Modifications : - move imports outside function
+        - replace Numeric by numpy
+        - remove GMTPath argument, fileName is now the complete path of ctp file
+        - file opening
+            """
+            with open(fileName) as f:
+                lines = f.readlines()
 
-        colors = [
-        "#ffffff",  # 0
-        "#c8f1dd",  # 17 vert clair
-        "#6ad1df",  # 34 turquoise
-        "#ff72bd",  # 50 rose saturé
-        "#ffa031",  # 64 orange
-        "#8d5dd1",  # 83 violet
-        "#3b2e7f",  # 96 violet foncé
-        "#0d0c29",  # 113 presque noir
-        "#010014",  # 137 presque noir
-        "#000000"  # 150 noir
-        ]
+            x = []
+            r = []
+            g = []
+            b = []
+            colorModel = "RGB"
+            for line in lines:
+                ls = line.split()
+                if line[0] == "#":
+                    if ls[-1] == "HSV":
+                        colorModel = "HSV"
+                        continue
+                    else:
+                        continue
+                if ls[0] == "B" or ls[0] == "F" or ls[0] == "N":
+                    pass
+                else:
+                    x.append(float(ls[0]))
+                    r.append(float(ls[1]))
+                    g.append(float(ls[2]))
+                    b.append(float(ls[3]))
+                    xtemp = float(ls[4])
+                    rtemp = float(ls[5])
+                    gtemp = float(ls[6])
+                    btemp = float(ls[7])
 
-        name = "sar_noaa"
-        return cls.create_cmap(
-            values=levels,
-            colors=colors,
-            name=name,
-            return_vminvmax=return_vminvmax,
-            return_levels=return_levels
-        )
+            x.append(xtemp)
+            r.append(rtemp)
+            g.append(gtemp)
+            b.append(btemp)
 
+            nTable = len(r)
+            x = np.array(x)
+            r = np.array(r)
+            g = np.array(g)
+            b = np.array(b)
+            if colorModel == "HSV":
+                for i in range(r.shape[0]):
+                    rr,gg,bb = colorsys.hsv_to_rgb(r[i] / 360., g[i], b[i])
+                    r[i] = rr
+                    g[i] = gg
+                    b[i] = bb
+            if colorModel == "HSV":
+                for i in range(r.shape[0]):
+                    rr,gg,bb = colorsys.hsv_to_rgb(r[i] / 360., g[i], b[i])
+                    r[i] = rr
+                    g[i] = gg
+                    b[i] = bb
+            if colorModel == "RGB":
+                r = r / 255.
+                g = g / 255.
+                b = b / 255.
+            xNorm = (x - x[0]) / (x[-1] - x[0])
+
+            red = []
+            blue = []
+            green = []
+            for i in range(len(x)):
+                red.append([xNorm[i], r[i], r[i]])
+                green.append([xNorm[i], g[i], g[i]])
+                blue.append([xNorm[i], b[i], b[i]])
+            colorDict = {"red":red, "green":green, "blue":blue}
+            return colorDict
+
+        clrbar = 'wind_faozi.cpt'
+
+        #cmap = getColorMap(clrbar)
+
+        colordict = gmtColormap(clrbar)
+        cmap_sar = matplotlib.colors.LinearSegmentedColormap('custom', colordict)
+        return cmap_sar
+        

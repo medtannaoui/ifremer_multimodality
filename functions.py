@@ -126,7 +126,7 @@ def center_and_mean_calm_pixels(x, y, WS, seuil_strong, vent_oeil, n_points=10):
 
 def is_within_deltamin(date1_str, date2_str, delta=10):
     """
-    Vérifie si date1 est dans l'intervalle [date2 - 10 min, date2 + 10 min].
+    Vérifie si date1 est dans l'intervalle [date2 - delta min, date2 + delta min].
     
     Paramètres :
         date1_str (str) : première date, ex '2019-09-20T22:19:52.000'
@@ -136,11 +136,12 @@ def is_within_deltamin(date1_str, date2_str, delta=10):
     Retourne :
         bool : True si date1 est dans l'intervalle, sinon False
     """
-    fmt = "%Y-%m-%dT%H:%M:%S.%f"
+    fmt1 = "%Y%m%dT%H%M%S"
+    fmt2 = "%Y-%m-%dT%H:%M:%S.%f"
     
     # Conversion en datetime
-    d1 = datetime.strptime(date1_str, fmt)
-    d2 = datetime.strptime(date2_str, fmt)
+    d1 = datetime.strptime(date1_str, fmt1)
+    d2 = datetime.strptime(date2_str, fmt2)
     
     # Création de l'intervalle ±delta minutes
     delta = timedelta(minutes=delta)
