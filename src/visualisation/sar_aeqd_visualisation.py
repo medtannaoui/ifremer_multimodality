@@ -12,7 +12,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import xarray as xr
 from importlib import reload
-from utils_colormap import CMAP
+from src.visualisation.utils_colormap import CMAP
 
 #get inter path 
 def get_inter_path(path):
@@ -38,7 +38,7 @@ def get_geo_path(path_sar_aeqd):
 
     return geo_path
 
-def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alternance/donnees_sar_aeqd"):
+def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alternance/donnees_sar_aeqd",show=True):
 
     sar_aeqd_file = [f for f in os.listdir(path_sar_folder) if date in f][0]
 
@@ -165,14 +165,18 @@ def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alt
     # Créer un dossier de sortie
     os.makedirs("/scale/user/mtannaou/alternance/src/visualisation/outputs", exist_ok=True)
 
-    # Sauvegarder l’image
-    output_file = f"/scale/user/mtannaou/alternance/src/visualisation/outputs/sar_ir_{date_fmt}.png"
-    plt.savefig(output_file, dpi=300, bbox_inches="tight")
-    plt.close()
-    os.sync()
-    os.system(f"touch {os.path.dirname(output_file)}")
-    print(f"✅ Figure sauvegardée : {output_file}")
+    
+    if show : 
+        plt.show()
+    else : 
+        # Sauvegarder l’image
+        output_file = f"/scale/user/mtannaou/alternance/src/visualisation/outputs/sar_ir_{date_fmt}.png"
+        plt.savefig(output_file, dpi=300, bbox_inches="tight")
+        plt.close()
+        os.sync()
+        os.system(f"touch {os.path.dirname(output_file)}")
+        print(f"✅ Figure sauvegardée : {output_file}")
 
 if __name__ == "__main__":
-    plot_sar_ir(date="20241007t20")
+    plot_sar_ir(date="20241007t20",show=False)
 
