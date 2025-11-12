@@ -93,17 +93,20 @@ def colocate(sargeo_path="excels/SARGEO_cyclones.csv", tcprimed_overpass_path = 
 
             compt_int = 0
             tc_paths = []   
-
+            date_tcprimed = []
             for _, row in extrait_primed.iterrows():
                 if is_within_deltamin(date, row["date"], delta):
                     compt_int += 1
                     tc_paths.append(os.path.basename(row["path"]))
+                    date_tcprimed.append(row["date"])
 
             rslt[cyc_exemple].append({
-                "date": date,
+                # "date": date,
                 "count": compt_int,
                 "path_sargeo": os.path.basename(path_sargeo),
-                "path_tcprimed": tc_paths   #une liste de tous les matchés
+                "path_tcprimed": tc_paths,
+                "date_sargeo":datetime.strptime(date,"%Y%m%dT%H%M%S").strftime("%H-%m-%d-T%H:%M:%S.000"),
+                "date_tcprimed": date_tcprimed
             })
 
     # ✅ Conversion en DataFrame
@@ -112,8 +115,10 @@ def colocate(sargeo_path="excels/SARGEO_cyclones.csv", tcprimed_overpass_path = 
         for e in entries:
             rows.append({
                 "cyclone_id": cyclone_id,
-                "date": e["date"],
+                # "date": e["date"],
                 "count": e["count"],
+                "date_sargeo":e["date_sargeo"],
+                "date_tcprimed": e["date_tcprimed"],
                 "path_sargeo": e["path_sargeo"],
                 "path_tcprimed": e["path_tcprimed"]
             })
@@ -130,7 +135,7 @@ def save_colocate_data(sargeo_path="excels/SARGEO_cyclones.csv", tcprimed_overpa
 
 
 if run : 
-    print(colocate().head(10))
+    # print(colocate().head(10))
     save_colocate_data()
 
 
