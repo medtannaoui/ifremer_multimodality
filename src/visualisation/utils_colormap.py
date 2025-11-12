@@ -130,7 +130,7 @@ class CMAP:
             colorDict = {"red":red, "green":green, "blue":blue}
             return colorDict
 
-        clrbar = 'wind_faozi.cpt'
+        clrbar = '/scale/user/mtannaou/alternance/src/visualisation/wind_faozi.cpt'
 
         #cmap = getColorMap(clrbar)
 
