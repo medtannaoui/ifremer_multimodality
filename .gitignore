@@ -8,3 +8,8 @@ visualisation_pics.ipynb
 colocalisation.ipynb
 GEO_to_XYcenter.py
 *.ipynb
+*pycache*
+*github*
+SARGEO_utils.py
+functions.py
+donnees_sar_aeqd
