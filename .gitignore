@@ -13,3 +13,6 @@ GEO_to_XYcenter.py
 SARGEO_utils.py
 functions.py
 donnees_sar_aeqd
+data_coloc_pkl
+outputs
+*without*
