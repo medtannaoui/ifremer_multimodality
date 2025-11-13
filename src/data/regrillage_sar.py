@@ -39,14 +39,14 @@ def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=0.5):
     ds["owiLon"] = (ds["owiLon"] + 180) % 360 - 180    #longitude normalisation
 
     # application of the aeqd projection
-    sar_aeqd, aeqd_proj = NESDIS.aeqd(
+    sar_aeqd, _ = NESDIS.aeqd(
         sar_org=ds,
         clon=lon_centre,
         clat=lat_centre,
         max_r=max_r,         # maximal radius
         dxy=dxy,           # résolution (in km)
-        kind="nearest",    # interpolation plus rapide  nearest ou linear
-        varnames=["owiWindSpeed"],
+        kind="nearest",    # nearest or linear
+        varnames=["owiWindSpeed","owiWindSpeed_co","owiWindDirection_co","owiIncidenceAngle"],
         include_org=False
     )
 
@@ -69,7 +69,8 @@ def main():
     sargeo = pd.read_csv("excels/SARGEO_SAR.csv")
 
     # test only for al122024
-    sargeo = sargeo[sargeo["cyclone"] == "al122024"]
+    # sargeo = sargeo[sargeo["cyclone"] == "al122024"]
+    sargeo = sargeo[sargeo["lat_centre"] != 0]
 
     for file_path in sargeo["sar_path"]:
         try:
