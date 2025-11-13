@@ -38,7 +38,7 @@ def get_geo_path(path_sar_aeqd):
 
     return geo_path
 
-def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alternance/donnees_sar_aeqd",show=True):
+def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alternance/donnees_sar_aeqd",show=True, var_vis = "owiWindSpeed"):
 
     sar_aeqd_file = [f for f in os.listdir(path_sar_folder) if date in f][0]
 
@@ -53,7 +53,7 @@ def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alt
     cmap_sar = CMAP.cmap_sar()
 
     # === Données ===
-    wind = ds_xy["owiWindSpeed"] * 1.94384   # m/s → kt
+    wind = ds_xy[var_vis] * 1.94384   # m/s → kt
     ir = ds_geo["IRWIN"].sel(t_rel=0) - 273.15   # K → °C
     xs, ys = ds_xy["x_sar"], ds_xy["y_sar"]
 
@@ -138,10 +138,9 @@ def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alt
 
     # === TITRE GLOBAL ===
     plt.suptitle(
-        f"SAR vs IR comparison – {date_fmt} OLD Version\n",
-        fontsize=14, fontweight="bold"
-    )
-
+    f"SAR vs IR comparison – {date_fmt} ({ds_sar['storm_latitude'].values[4]:.3f}°N, {(360 - ds_sar['storm_longitude'].values[4]):.3f}°W)\n",
+    fontsize=14, fontweight='bold'
+)
     # === COLORBARS — fixées et centrées ===
     cbar_sar = fig.colorbar(
         p1, ax=[ax11, ax21],
@@ -170,11 +169,8 @@ def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alt
         plt.show()
     else : 
         # Sauvegarder l’image
-        output_file = f"/scale/user/mtannaou/alternance/src/visualisation/outputs/sar_ir_{date_fmt}.png"
+        output_file = f"/scale/user/mtannaou/alternance/src/visualisation/outputs/{var_vis}_{date_fmt}.png"
         plt.savefig(output_file, dpi=300, bbox_inches="tight")
-        plt.close()
-        os.sync()
-        os.system(f"touch {os.path.dirname(output_file)}")
         print(f"✅ Figure sauvegardée : {output_file}")
 
 if __name__ == "__main__":
