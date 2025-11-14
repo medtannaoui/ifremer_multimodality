@@ -5,14 +5,17 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from SAR_NESDIS import NESDIS 
+import shutil
 
+tcprimed_path = "/scale/project/ifremer-isi-jumeaunumerique/TC_PRIMED_DATASET/v01r01/final"   #tcprimed path
 
 def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=0.5):
     """
     Convertit un fichier SAR en coordonnées (x, y) centrées sur le cyclone
     en utilisant la méthode NESDIS.aeqd().
     """
-
+    
+    
     # Charger le fichier SAR original
     ds = xr.open_dataset(sar_file)
     # print(ds.data_vars)
@@ -23,7 +26,7 @@ def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=0.5):
     if match.empty:
         print(f"⚠️ Aucun centre trouvé pour {filename}")
         return
-
+    cyclone_name = match.iloc[0]["cyclone"]
     lat_centre = float(match.iloc[0]["lat_centre"])
 
     lon_centre = float(match.iloc[0]["lon_centre"])
@@ -52,7 +55,31 @@ def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=0.5):
 
     # Sauvegarder le nouveau fichier NetCDF
     os.makedirs(output_dir, exist_ok=True)
-    out_file = os.path.join(output_dir, f"{filename}_aeqd.nc")
+    # env = False
+    if not os.path.isdir(os.path.join(output_dir,cyclone_name)):
+        
+        year_cyclone = cyclone_name[4:]
+        num_cyclone = cyclone_name[2:4]
+        bassin_cyclone = cyclone_name[0:2]
+        cyclone_path_primed = os.path.join(tcprimed_path, str(year_cyclone), bassin_cyclone.upper(), str(num_cyclone) )
+        path_env = None
+
+        if os.path.isdir(cyclone_path_primed):              # if it exists in tcprimed dataset
+            os.makedirs(os.path.join(output_dir,cyclone_name),exist_ok=True)
+            for path_i in  os.listdir(cyclone_path_primed):
+                if "env" in path_i :
+                    # env = True
+                    path_env = os.path.join(cyclone_path_primed, path_i)
+                    break
+            
+            shutil.copy(path_env, os.path.join(output_dir,cyclone_name,path_i))
+        else : #if does not exist in tcprimed
+            cyclone_name = cyclone_name+"no_env"
+            os.makedirs(os.path.join(output_dir,cyclone_name),exist_ok=True)
+
+
+
+    out_file = os.path.join(os.path.join(output_dir,cyclone_name), f"{filename}_aeqd.nc")
     sar_aeqd.to_netcdf(out_file)
     ds.close()
 
@@ -65,7 +92,7 @@ def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=0.5):
 
 
 def main():
-    output_dir = "/scale/user/mtannaou/alternance/donnees_sar_aeqd"
+    output_dir = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_v1"
     sargeo = pd.read_csv("excels/SARGEO_SAR.csv")
 
     # test only for al122024

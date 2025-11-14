@@ -110,11 +110,11 @@ class NESDIS:
             aeqd_proj.crs, 
             center=(0, 0), 
             units='km',
-            shape=(out_ny, out_nx), 
+            shape=(out_ny, out_nx),  
             resolution=(dxy, dxy)
             )
         
-        sar_aeqd = xr.Dataset(coords={"x":xax.astype(np.float32), "y":yax.astype(np.float32)})
+        sar_aeqd = xr.Dataset(coords={"x_sar":xax.astype(np.float32), "y_sar":yax.astype(np.float32)})
         sar_aeqd["clon"] = ([], clon, {"standard_name": "clon", "long_name": "center longitude", "units": "degrees"})
         sar_aeqd["clat"] = ([], clat, {"standard_name": "clat", "long_name": "center latitude", "units": "degrees"})
         # sar_aeqd["sar_lon"] = (("sar_lon",), sar_org["owiLon"].values)
@@ -131,7 +131,7 @@ class NESDIS:
             if kind == "nearest":
                 reso = dxy*1000
                 sar_aeqd[varname] = (
-                    ["y","x"], 
+                    ["y_sar","x_sar"], 
                     pyresample.kd_tree.resample_nearest(
                         swath, sar_org[varname].values, aeqd_areadef, radius_of_influence=RADIUS_RESAMPLE, fill_value=np.nan
                     ))
@@ -144,8 +144,8 @@ class NESDIS:
         sar_aeqd["kind"] = ([], kind, {"standard_name": "kind", "long_name": "kind of interpolation in resampling"})
         sar_aeqd["dxy"] = ([], dxy, {"standard_name": "dxy", "long_name": "Spatial resolution in x/y axes", "units": "km"})
         sar_aeqd["max_r"] = ([], max_r, {"standard_name": "max_r", "long_name": "Maximum radius for output", "units": "km"})
-        sar_aeqd["x_sar"] = (("x",), sar_aeqd["x"].values)
-        sar_aeqd["y_sar"] = (("y",), sar_aeqd["y"].values)
+        sar_aeqd["x_sar"] = (("x_sar",), sar_aeqd["x_sar"].values)
+        sar_aeqd["y_sar"] = (("y_sar",), sar_aeqd["y_sar"].values)
 
         # Attributes
         sar_aeqd["x_sar"].attrs.update({"standard_name": "x_sar", "long_name": "x from storm center", "units": "km"})

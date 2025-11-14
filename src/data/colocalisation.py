@@ -99,13 +99,14 @@ def colocate(sargeo_path="excels/SARGEO_cyclones.csv", tcprimed_overpass_path = 
                     compt_int += 1
                     tc_paths.append(os.path.basename(row["path"]))
                     date_tcprimed.append(row["date"])
+                    print(f"date -------------------------------------,{row["date"]}")
 
             rslt[cyc_exemple].append({
                 # "date": date,
                 "count": compt_int,
                 "path_sargeo": os.path.basename(path_sargeo),
                 "path_tcprimed": tc_paths,
-                "date_sargeo":datetime.strptime(date,"%Y%m%dT%H%M%S").strftime("%H-%m-%d-T%H:%M:%S.000"),
+                "date_sargeo":datetime.strptime(date,"%Y%m%dT%H%M%S").strftime("%Y-%m-%dT%H:%M:%S.000"),
                 "date_tcprimed": date_tcprimed
             })
 
@@ -128,15 +129,15 @@ def colocate(sargeo_path="excels/SARGEO_cyclones.csv", tcprimed_overpass_path = 
 
 #save on csv file
 
-def save_colocate_data(sargeo_path="excels/SARGEO_cyclones.csv", tcprimed_overpass_path = "excels/TCPrimed_overpass.csv", delta = 30, output_dir = "excels/colocates_sargeo_primed.csv"):
+def save_colocate_data(sargeo_path="excels/SARGEO_cyclones.csv", tcprimed_overpass_path = "excels/TCPrimed_overpass.csv", delta = 30, output_dir = "excels/colocates_sargeo_primed_v1.csv"):
     data = colocate()
     data.to_csv(output_dir)
     print("file saved on ",output_dir)
 
 
-if run : 
+if __name__ == "__main__":
     # print(colocate().head(10))
-    save_colocate_data()
+    save_colocate_data(output_dir = "excels/colocates_sargeo_primed_v1.csv")
 
 
 
