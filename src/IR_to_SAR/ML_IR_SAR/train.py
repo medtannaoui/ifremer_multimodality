@@ -70,14 +70,26 @@ class IRSARDataset(Dataset):
         if not test : 
             with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_v1.pkl","rb") as f :
                 data_ir_sar = pkl.load(f)
-            self.ir = np.array(data_ir_sar)[:, 0, :size, :size]
-            
+            self.ir = np.array(data_ir_sar)[:, 0, :size, :size]       
             self.sar = np.array(data_ir_sar)[:, 1, :size, :size]
+            self.ir  = np.concatenate((self.ir[:381],  self.ir[382:]),  axis=0)-273.15
+            self.sar = np.concatenate((self.sar[:381], self.sar[382:]), axis=0)*1.94384 
         else : 
             self.ir = np.random.rand(10,16*3,16*3)
             self.sar = np.random.rand(10,16*3,16*3)
+        
             
-            
+        print("NaN dans IR:", np.isnan(self.ir).sum())
+        print("Inf dans IR:", np.isinf(self.ir).sum())
+        print("Min/Max IR:", np.min(self.ir), np.max(self.ir))
+
+        
+        self.ir = np.nan_to_num(self.ir, nan=0.0, posinf=0.0, neginf=0.0)
+        self.sar = np.nan_to_num(self.sar, nan=0.0, posinf=0.0, neginf=0.0)
+        print("NaN dans SAR:", np.isnan(self.sar).sum())
+        print("Inf dans SAR:", np.isinf(self.sar).sum())
+        print("Min/Max SAR:", np.min(self.sar), np.max(self.sar))
+
         self.ir, self.min_val_ir, self.max_val_ir = dataprep.min_max_normalize_numpy(self.ir)
         self.sar , self.min_val_sar, self.max_val_sar = dataprep.min_max_normalize_numpy(self.sar)
         print(self.ir.shape,self.sar.shape)
@@ -194,7 +206,7 @@ def main(cfg: IR_SAR_Config,test=False):
                 max_sar=full_data.max_val_sar,
                 cmap_ir=cmap_ir,
                 cmap_sar=cmap_sar,
-                start_epoch=1,     
+                start_epoch=cfg.start_epoch,     
             )
         ],
     )
@@ -242,7 +254,7 @@ def main(cfg: IR_SAR_Config,test=False):
                 print("----- DOSSIER sauvgardr dans config")
 
         fabric.print(
-            f"📊 Epoch {epoch}: Train Loss={train_loss:.4f}, "
+            f"📊 Epoch {epoch+1}: Train Loss={train_loss:.4f}, "
             f"Val Loss={val_loss:.4f}, "
             f"LR={scheduler.get_last_lr()[0]:.6f}, "
             f"Train metrics={train_metrics}, Val metrics={val_metrics}"

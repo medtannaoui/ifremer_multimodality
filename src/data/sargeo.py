@@ -1,73 +1,114 @@
-# this script is used to create sargeo database on csv format
+"""
+This script scans the full SARGEO dataset and extracts metadata into a CSV file.
 
-#creer la base de données excel du SARGEO 
+Output CSV columns:
+    cyclone, channel, file, lat_center, lon_center, acquisition_time
+
+It only keeps IRWIN and WV subfolders.
+"""
+
 import os
 import xarray as xr
 import pandas as pd
 
 
-run = True
+# ============================================================
+# ========================== PATHS ============================
+# ============================================================
+
+SARGEO_ROOT = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v01r02/cyclobs"
 
 
-sargeo_path = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v01r02/cyclobs" 
+# ============================================================
+# ================== METADATA EXTRACTION =====================
+# ============================================================
 
-# cyclones list
-cyclones = os.listdir(sargeo_path)
+def extract_sargeo_metadata(sargeo_root: str = SARGEO_ROOT):
+    """
+    Walks through SARGEO cyclone folders, loads IRWIN/WV NetCDF files,
+    and extracts cyclone metadata.
 
-infos = []
+    Returns:
+        List of dictionaries that can be turned into a DataFrame.
+    """
 
-for cyclone in cyclones:
-    cyclone_path = os.path.join(sargeo_path, cyclone)
-    if not os.path.isdir(cyclone_path):
-        continue
+    metadata_records = []
 
-    # IRWIn and WV existing check as a subfolders
-    for subdir in ["IRWIN", "WV"]:
-        sub_path = os.path.join(cyclone_path, subdir)
-        if not os.path.exists(sub_path):
-            # print(f"  ⚠️ No folder {subdir} of {cyclone}")
+    # List of cyclone folders (e.g. "al122024")
+    cyclones = os.listdir(sargeo_root)
+
+    for cyclone_id in cyclones:
+
+        cyclone_path = os.path.join(sargeo_root, cyclone_id)
+        if not os.path.isdir(cyclone_path):
             continue
 
-        # netcdf files list
-        nc_files = [f for f in os.listdir(sub_path) if f.endswith(".nc")]
-        # print(f"  📁 {subdir} → {len(nc_files)} files founded")
+        # Process only the IRWIN and WV subfolders
+        for channel in ["IRWIN", "WV"]:
+            channel_path = os.path.join(cyclone_path, channel)
+            if not os.path.exists(channel_path):
+                continue
 
-        for nc_file in nc_files:
-            file_path = os.path.join(sub_path, nc_file)
-            try:
-                ds = xr.open_dataset(file_path)
+            # List all NetCDF files
+            nc_files = [f for f in os.listdir(channel_path) if f.endswith(".nc")]
 
-                # existing path check
-                lat_centre = float(ds["storm_latitude"].values[4]) if "storm_latitude" in ds else None
-                lon_centre = float(ds["storm_longitude"].values[4]) if "storm_longitude" in ds else None
-                time = str(ds["sar_acquisition_time"].values) if "sar_acquisition_time" in ds else None
+            for nc_file in nc_files:
+                file_path = os.path.join(channel_path, nc_file)
 
-                infos.append({
-                    "cyclone": cyclone,
-                    "canal": subdir,
-                    "fichier": nc_file,
-                    "lat_centre": lat_centre,
-                    "lon_centre": lon_centre,
-                    "sar_acquisition_time": time
-                })
+                try:
+                    ds = xr.open_dataset(file_path)
 
-                ds.close()
+                    # Extract metadata safely
+                    lat_center = float(ds["storm_latitude"].values[4]) if "storm_latitude" in ds else None
+                    lon_center = float(ds["storm_longitude"].values[4]) if "storm_longitude" in ds else None
+                    acquisition_time = (
+                        str(ds["sar_acquisition_time"].values) 
+                        if "sar_acquisition_time" in ds 
+                        else None
+                    )
 
-            except Exception as e:
-                print(f"  ⚠️ error with  {file_path} : {e}")
+                    metadata_records.append({
+                        "cyclone": cyclone_id,
+                        "channel": channel,
+                        "file": nc_file,
+                        "lat_center": lat_center,
+                        "lon_center": lon_center,
+                        "acquisition_time": acquisition_time
+                    })
 
+                    ds.close()
 
-def main(output_dir = "/scale/user/mtannaou/alternance/excels/sargeo.csv"):
-    # Convert to dataframe
-    df = pd.DataFrame(infos)
+                except Exception as err:
+                    print(f"⚠️ Error reading {file_path}: {err}")
 
-    # save on csv file
-    os.makedirs(os.path.dirname(output_dir), exist_ok=True)
-    df.to_csv(output_dir, index=False)
-
-    print(f"\n File saved on : {output_dir}")
-    print(f"{len(df)} files")
+    return metadata_records
 
 
-if run :
-    main()
+# ============================================================
+# ======================== SAVE CSV ==========================
+# ============================================================
+
+def save_sargeo_csv(
+    output_csv: str = "/scale/user/mtannaou/alternance/excels/sargeo.csv",
+    sargeo_root: str = SARGEO_ROOT
+):
+    """
+    Extracts metadata and writes it to a CSV file.
+    """
+
+    records = extract_sargeo_metadata(sargeo_root)
+    df = pd.DataFrame(records)
+
+    os.makedirs(os.path.dirname(output_csv), exist_ok=True)
+    df.to_csv(output_csv, index=False)
+
+    print(f"\n📁 SARGEO metadata CSV saved at: {output_csv}")
+    print(f"📌 Total NetCDF files indexed: {len(df)}")
+
+
+# ============================================================
+# ============================ RUN ============================
+# ============================================================
+
+if __name__ == "__main__":
+    save_sargeo_csv()

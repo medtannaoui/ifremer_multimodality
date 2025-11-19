@@ -9,7 +9,7 @@ import shutil
 
 tcprimed_path = "/scale/project/ifremer-isi-jumeaunumerique/TC_PRIMED_DATASET/v01r01/final"   #tcprimed path
 
-def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=0.5):
+def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=2):
     """
     Convertit un fichier SAR en coordonnées (x, y) centrées sur le cyclone
     en utilisant la méthode NESDIS.aeqd().
@@ -91,7 +91,7 @@ def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=0.5):
     print(f"✅ Fichier reprojeté sauvegardé : {out_file}")
 
 
-def main():
+def main(dxy=2,max_r=300):
     output_dir = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_v1"
     sargeo = pd.read_csv("excels/SARGEO_SAR.csv")
 
@@ -101,7 +101,7 @@ def main():
 
     for file_path in sargeo["sar_path"]:
         try:
-            convert_sar_to_xy(file_path, sargeo, output_dir, max_r=300, dxy=1)
+            convert_sar_to_xy(file_path, sargeo, output_dir, max_r=max_r, dxy=dxy)
         except Exception as e:
             print(f"❌ Erreur pour {file_path}: {e}")
 
@@ -109,7 +109,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main(2,300)
 
 
 

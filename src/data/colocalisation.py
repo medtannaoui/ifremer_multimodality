@@ -1,143 +1,191 @@
-# This script will be used to collocate SAR data with TCPRIMED data
-import pandas as pd
-import numpy as np
+"""
+This script performs temporal colocation between:
+    - SARGEO IRWIN data
+    - TC_PRIMED overpass data
+
+It generates a CSV listing all matched timestamps and file paths:
+    cyclone_id, date_sargeo, date_tcprimed, path_sargeo, path_tcprimed, count
+"""
+
 import os
-import xarray as xr
-from matplotlib import pyplot as plt
-from datetime import datetime,timedelta
-import importlib
+import pandas as pd
+from datetime import datetime, timedelta
 
 
+# ============================================================
+# ========================== PATHS ============================
+# ============================================================
 
-run = True
+TCPRIMED_DATA_PATH = "/scale/project/ifremer-isi-jumeaunumerique/TC_PRIMED_DATASET/v01r01/final"
+SARGEO_DATA_PATH   = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v01r02/cyclobs"
 
 
-tcprimed_data_path = "/scale/project/ifremer-isi-jumeaunumerique/TC_PRIMED_DATASET/v01r01/final"
-sargeo_data_path = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v01r02/cyclobs"
+# ============================================================
+# ================== TIME MATCHING FUNCTION ==================
+# ============================================================
 
-
-def is_within_deltamin(date1_str, date2_str, delta=10):
+def is_within_time_window(date_sar: str, date_primed: str, delta_minutes: int = 10) -> bool:
     """
-    Checks whether date1 falls within the interval [date2 - delta minutes, date2 + delta minutes].
+    Checks whether a SARGEO timestamp is within ±delta minutes of a TC_PRIMED timestamp.
 
-    Parameters:
-        date1_str (str): first date, e.g. '2019-09-20T22:19:52.000'
-        date2_str (str): second date, e.g. '2019-09-20T22:25:00.000'
-        delta (int or float): time window in minutes
+    Inputs:
+        date_sar     (str)  : format "YYYYMMDDTHHMMSS"
+        date_primed  (str)  : format "YYYY-MM-DDTHH:MM:SS.000"
+        delta_minutes (int) : allowed time difference in minutes
 
     Returns:
-        bool: True if date1 is within the interval, otherwise False
-    
+        bool : True if timestamps are temporally colocated
     """
-    fmt1 = "%Y%m%dT%H%M%S"
-    fmt2 = "%Y-%m-%dT%H:%M:%S.%f"
-    
-    # CConvert to datetime
-    d1 = datetime.strptime(date1_str, fmt1)
-    d2 = datetime.strptime(date2_str, fmt2)
-    
-    # Creation of the ±delta-minute interval
-    delta = timedelta(minutes=delta)
-    
-    return (d2 - delta) <= d1 <= (d2 + delta)
+
+    fmt_sar = "%Y%m%dT%H%M%S"
+    fmt_primed = "%Y-%m-%dT%H:%M:%S.%f"
+
+    sar_dt = datetime.strptime(date_sar, fmt_sar)
+    primed_dt = datetime.strptime(date_primed, fmt_primed)
+
+    delta = timedelta(minutes=delta_minutes)
+    return (primed_dt - delta) <= sar_dt <= (primed_dt + delta)
 
 
+# ============================================================
+# ====================== LOAD TCPRIMED INFO ==================
+# ============================================================
 
-#function which return tcprimed infos 
-def get_tcrpimed_infos():
+def get_tcprimed_overview():
+    """
+    Scans TC_PRIMED directory structure and returns cyclone metadata:
 
-    df_tcprimed = {"year":[],"bassin":[],"cyclone_number":[],"files_count":[]}
-    for year in os.listdir(tcprimed_data_path):
-        year_path = os.path.join(tcprimed_data_path,year)
-    for bassin in os.listdir(year_path):
-        bassin_path = os.path.join(year_path,bassin)
-        for num in os.listdir(bassin_path):
-            files_count = len(os.listdir(os.path.join(bassin_path,num)))
-            df_tcprimed["year"].append(year)
-            df_tcprimed["bassin"].append(bassin)
-            df_tcprimed["cyclone_number"].append(num)
-            df_tcprimed["files_count"].append(files_count)
-    
-    tc_primed_infos = pd.DataFrame(df_tcprimed,columns=list(df_tcprimed.keys()))
-    
-    #add cyclone_id column ( like al022025) for facilate the comparison with sargeo data
-    for i,row in tc_primed_infos.iterrows(): 
-        tc_primed_infos.loc[i,"cyclone_id"] = row["bassin"]+row["cyclone_number"]+row["year"]
+    Output DataFrame columns:
+        year, basin, cyclone_number, files_count, cyclone_id
+    """
 
-    return  tc_primed_infos
+    records = {"year": [], "basin": [], "cyclone_number": [], "files_count": [], "cyclone_id": []}
+
+    for year in os.listdir(TCPRIMED_DATA_PATH):
+        year_path = os.path.join(TCPRIMED_DATA_PATH, year)
+        if not os.path.isdir(year_path):
+            continue
+
+        for basin in os.listdir(year_path):
+            basin_path = os.path.join(year_path, basin)
+
+            for num in os.listdir(basin_path):
+                cyclone_path = os.path.join(basin_path, num)
+                files_count = len(os.listdir(cyclone_path))
+
+                records["year"].append(year)
+                records["basin"].append(basin)
+                records["cyclone_number"].append(num)
+                records["files_count"].append(files_count)
+                records["cyclone_id"].append(basin + num + year)
+
+    return pd.DataFrame(records)
 
 
-#colocate SARGEO and TCPrimed
-def colocate(sargeo_path="excels/SARGEO_cyclones.csv", tcprimed_overpass_path = "excels/TCPrimed_overpass.csv", delta = 30):
-    rslt = {}
-    canal = "IRWIN"
+# ============================================================
+# ======================== COLOCATION ========================
+# ============================================================
 
-    #sargeo data
-    sargeo_data = pd.read_csv(sargeo_path)
-    #tcprimed data overpass
-    tcprimed_data = pd.read_csv(tcprimed_overpass_path,sep=";")
-    
-    for i,row in tcprimed_data.iterrows() : 
-        tcprimed_data.loc[i,"cyclone_id"] = row["bassin"]+str(row["num_cyclone"])+str(row["annee"])
+def colocate_sar_tcprimed(
+    sargeo_csv_path: str = "excels/SARGEO_cyclones.csv",
+    tcprimed_csv_path: str = "excels/TCPrimed_overpass.csv",
+    time_window_minutes: int = 30
+):
+    """
+    Performs temporal colocation between SARGEO IRWIN products and TC_PRIMED overpasses.
 
-    for cyc_exemple in sargeo_data["cyclone"].unique():
+    Inputs:
+        sargeo_csv_path     : CSV with SARGEO IRWIN metadata
+        tcprimed_csv_path   : CSV with TC_PRIMED overpass metadata
+        time_window_minutes : matching threshold in minutes
 
-        extrait_primed = tcprimed_data[tcprimed_data["cyclone_id"] == cyc_exemple.upper()]
-        path_irwin = os.path.join(sargeo_data_path, cyc_exemple, canal)
+    Returns:
+        DataFrame with columns:
+            cyclone_id, count, date_sargeo, date_tcprimed,
+            path_sargeo, path_tcprimed
+    """
 
-        rslt[cyc_exemple] = []
+    results = {}
+    data_sargeo = pd.read_csv(sargeo_csv_path)
+    data_primed = pd.read_csv(tcprimed_csv_path, sep=";")
 
-        for file in os.listdir(path_irwin):
-            path_sargeo = os.path.join(path_irwin, file)
-            date = str(file.split("-")[4])
+    # Build TC_PRIMED cyclone ID
+    data_primed["cyclone_id"] = (
+        data_primed["bassin"] +
+        data_primed["num_cyclone"].astype(str) +
+        data_primed["annee"].astype(str)
+    )
 
-            compt_int = 0
-            tc_paths = []   
-            date_tcprimed = []
-            for _, row in extrait_primed.iterrows():
-                if is_within_deltamin(date, row["date"], delta):
-                    compt_int += 1
-                    tc_paths.append(os.path.basename(row["path"]))
-                    date_tcprimed.append(row["date"])
-                    print(f"date -------------------------------------,{row["date"]}")
+    for cyclone_id in data_sargeo["cyclone"].unique():
 
-            rslt[cyc_exemple].append({
-                # "date": date,
-                "count": compt_int,
-                "path_sargeo": os.path.basename(path_sargeo),
-                "path_tcprimed": tc_paths,
-                "date_sargeo":datetime.strptime(date,"%Y%m%dT%H%M%S").strftime("%Y-%m-%dT%H:%M:%S.000"),
-                "date_tcprimed": date_tcprimed
-            })
+        tc_subset = data_primed[data_primed["cyclone_id"] == cyclone_id.upper()]
+        sargeo_ir_path = os.path.join(SARGEO_DATA_PATH, cyclone_id, "IRWIN")
 
-    # ✅ Conversion en DataFrame
-    rows = []
-    for cyclone_id, entries in rslt.items():
-        for e in entries:
-            rows.append({
+        results[cyclone_id] = []
+
+        for filename in os.listdir(sargeo_ir_path):
+
+            full_sargeo_path = os.path.join(sargeo_ir_path, filename)
+            sar_date_raw = filename.split("-")[4]     # Extract raw date "YYYYMMDDTHHMMSS"
+
+            matches = []
+            matched_tc_paths = []
+            matched_tc_dates = []
+
+            for _, row in tc_subset.iterrows():
+                if is_within_time_window(sar_date_raw, row["date"], time_window_minutes):
+
+                    matches.append(row["date"])
+                    matched_tc_paths.append(os.path.basename(row["path"]))
+                    matched_tc_dates.append(row["date"])
+
+                    print(f"Matched TC_PRIMED date → {row['date']}")
+
+            iso_sar_date = datetime.strptime(sar_date_raw, "%Y%m%dT%H%M%S").strftime("%Y-%m-%dT%H:%M:%S.000")
+
+            results[cyclone_id].append({
                 "cyclone_id": cyclone_id,
-                # "date": e["date"],
-                "count": e["count"],
-                "date_sargeo":e["date_sargeo"],
-                "date_tcprimed": e["date_tcprimed"],
-                "path_sargeo": e["path_sargeo"],
-                "path_tcprimed": e["path_tcprimed"]
+                "count": len(matches),
+                "date_sargeo": iso_sar_date,
+                "date_tcprimed": matched_tc_dates,
+                "path_sargeo": os.path.basename(full_sargeo_path),
+                "path_tcprimed": matched_tc_paths
             })
 
-    return  pd.DataFrame(rows)
+    # Flatten into a DataFrame
+    flat_rows = []
+    for cyclone_id, entries in results.items():
+        flat_rows.extend(entries)
+
+    df = pd.DataFrame(flat_rows)
+    return df
 
 
-#save on csv file
+# ============================================================
+# ========================= SAVE CSV =========================
+# ============================================================
 
-def save_colocate_data(sargeo_path="excels/SARGEO_cyclones.csv", tcprimed_overpass_path = "excels/TCPrimed_overpass.csv", delta = 30, output_dir = "excels/colocates_sargeo_primed_v1.csv"):
-    data = colocate()
-    data.to_csv(output_dir)
-    print("file saved on ",output_dir)
+def save_colocation_csv(
+    output_path: str = "excels/colocates_sargeo_primed_v1.csv",
+    sargeo_csv_path: str = "excels/SARGEO_cyclones.csv",
+    tcprimed_csv_path: str = "excels/TCPrimed_overpass.csv",
+    delta: int = 30
+):
+    """
+    Runs the colocation function and saves the result to CSV.
+    """
+    df = colocate_sar_tcprimed(
+        sargeo_csv_path=sargeo_csv_path,
+        tcprimed_csv_path=tcprimed_csv_path,
+        time_window_minutes=delta
+    )
+    df.to_csv(output_path, index=False)
+    print(f"✓ Colocation CSV saved: {output_path}")
 
+
+# ============================================================
+# ============================ RUN ============================
+# ============================================================
 
 if __name__ == "__main__":
-    # print(colocate().head(10))
-    save_colocate_data(output_dir = "excels/colocates_sargeo_primed_v1.csv")
-
-
-
+    save_colocation_csv(output_path="excels/colocates_sargeo_primed_v1.csv")

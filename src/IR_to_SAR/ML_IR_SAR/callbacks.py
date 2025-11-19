@@ -60,25 +60,23 @@ class LogValidationSamples:
     """
 
     def __init__(self, base_dir, min_ir, max_ir, min_sar, max_sar,
-                 num_samples=3, start_epoch=20,
-                 cmap_ir="gray", cmap_sar="viridis"):
-        
-        self.base_dir = Path(base_dir)
+             num_samples=3, start_epoch=20, every_n_epochs=1,
+             cmap_ir="gray", cmap_sar="viridis"):
 
-        # 🔍 Create unique run directory (train_ir_sar_1, _2, _3...)
+        self.base_dir = Path(base_dir)
         self.output_dir = self._create_unique_dir(self.base_dir)
-        print(f"🗂️ Logging outputs to: {self.output_dir}")
 
         self.num_samples = num_samples
         self.start_epoch = start_epoch
+        self.every_n_epochs = every_n_epochs  
         self.cmap_ir = cmap_ir
         self.cmap_sar = cmap_sar
 
-        # normalization values
         self.min_ir = min_ir
         self.max_ir = max_ir
         self.min_sar = min_sar
         self.max_sar = max_sar
+
 
     def _create_unique_dir(self, base_dir):
         i = 1
@@ -148,4 +146,12 @@ class LogValidationSamples:
             plt.close(fig)
 
             print(f"💾 Saved: {save_path}")
+    
+    def on_validation_plots(self, model, epoch, dataloader, device):
+        """
+        Called manually using fabric.call(...)
+        """
+        print(f"📸 Logging validation samples at epoch {epoch}")
+        batch = next(iter(dataloader))  # get one batch
+        self.log_batch(model, batch, epoch, device)
 

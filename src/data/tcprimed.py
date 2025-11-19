@@ -1,86 +1,129 @@
-# This script will be used to create a csv format for TCPrimed dataset
+"""
+This script scans the TC_PRIMED dataset and extracts cyclone-level metadata
+into a CSV file.
 
-import xarray as xr
-import numpy as np
+For each cyclone, it retrieves:
+    - Year
+    - Basin (AL, EP, WP, IO, SH…)
+    - Cyclone number
+    - Environment file (_env_) used to define time range
+    - Start and end timestamps extracted from filename
+
+Output CSV columns:
+    year, basin, cyclone_number, start_time, end_time, env_file
+"""
+
 import os
-import matplotlib.pyplot as plt
-import netCDF4 as nc
-import pandas as pd
 import re
+import pandas as pd
 
 
-run = True
+# ============================================================
+# ========================== PATHS ============================
+# ============================================================
 
-main_path = "/scale/project/ifremer-isi-jumeaunumerique/TC_PRIMED_DATASET/v01r01/final"   #tcprimed path
-years = [i for i in range(1987, 2025)]    # list of years
-bassins = ['AL', 'CP','EP', 'IO', 'SH', 'WP']   #list of bassins
+TCPRIMED_ROOT = "/scale/project/ifremer-isi-jumeaunumerique/TC_PRIMED_DATASET/v01r01/final"
 
 
-def create_tcprimed_csv():
-    
-    records = []
+# ============================================================
+# ================== TC_PRIMED METADATA SCAN =================
+# ============================================================
 
-    # iterate on the years list
-    for annee in sorted(os.listdir(main_path)):
-        annee_path = os.path.join(main_path, annee)
-        if not os.path.isdir(annee_path):
+def extract_tcprimed_metadata(tcprimed_root: str = TCPRIMED_ROOT):
+    """
+    Scans the full TC_PRIMED directory tree and extracts cyclone metadata
+    based on the "_env_" file, which contains start/end timestamps.
+
+    Expected folder structure:
+        TC_PRIMED/year/basin/cyclone_number/*.nc
+
+    Returns:
+        A list of metadata dictionaries.
+    """
+
+    metadata_records = []
+
+    for year in sorted(os.listdir(tcprimed_root)):
+        year_path = os.path.join(tcprimed_root, year)
+        if not os.path.isdir(year_path):
             continue
 
-        # iiterate on the bassins list
-        for bassin in sorted(os.listdir(annee_path)):
-            bassin_path = os.path.join(annee_path, bassin)
-            if not os.path.isdir(bassin_path):
+        for basin in sorted(os.listdir(year_path)):
+            basin_path = os.path.join(year_path, basin)
+            if not os.path.isdir(basin_path):
                 continue
 
-            # iterate the cyclone numbers for this bassins in this year
-            for cyclone_num in sorted(os.listdir(bassin_path)):
-                cyclone_path = os.path.join(bassin_path, cyclone_num)
+            for cyclone_number in sorted(os.listdir(basin_path)):
+                cyclone_path = os.path.join(basin_path, cyclone_number)
                 if not os.path.isdir(cyclone_path):
                     continue
 
-                # take the env file
-                env_files = [f for f in os.listdir(cyclone_path) if "_env_" in f and f.endswith(".nc")]
+                # Find the environnement file (*_env_*.nc)
+                env_files = [
+                    f for f in os.listdir(cyclone_path)
+                    if "_env_" in f and f.endswith(".nc")
+                ]
+
                 if not env_files:
-                    continue  # no env file found
+                    continue
 
-                # we take the first env file in the list(always there is one file environenetal)
-                env_file = env_files[0]
+                env_file = env_files[0]  # always one environment file per cyclone
 
-                # extract the start and the end of the env file date
+                # ------------------------------------------
+                # Extract start and end timestamps from filename
+                # Pattern: *_sYYYYMMDDHHMMSS_eYYYYMMDDHHMMSS.nc
+                # ------------------------------------------
                 match = re.search(r'_s(\d{14})_e(\d{14})', env_file)
-                if match:
-                    start_str, end_str = match.groups()
-                    # convert to lsisble format
-                    start_fmt = f"{start_str[:4]}-{start_str[4:6]}-{start_str[6:8]}T{start_str[8:10]}:{start_str[10:12]}:{start_str[12:]}"
-                    end_fmt = f"{end_str[:4]}-{end_str[4:6]}-{end_str[6:8]}T{end_str[8:10]}:{end_str[10:12]}:{end_str[12:]}"
+                if not match:
+                    print(f"⚠️ No valid timestamp pattern in {env_file}")
+                    continue
 
-                    records.append({
-                        "annee": annee,
-                        "bassin": bassin,
-                        "cyclone_numero": cyclone_num,
-                        "date_debut": start_fmt,
-                        "date_fin": end_fmt,
-                        "fichier": env_file
-                    })
-    return records
-    
+                start_str, end_str = match.groups()
 
+                # Format into ISO8601: YYYY-MM-DDTHH:MM:SS
+                start_time = f"{start_str[:4]}-{start_str[4:6]}-{start_str[6:8]}T{start_str[8:10]}:{start_str[10:12]}:{start_str[12:]}"
+                end_time   = f"{end_str[:4]}-{end_str[4:6]}-{end_str[6:8]}T{end_str[8:10]}:{end_str[10:12]}:{end_str[12:]}"
 
-def main(out_put_dir = "excels/tcprimed_data_env.csv"):
-    #save the dataframe on to csv file
-    # create a pandas dataframe
-    df = pd.DataFrame(create_tcprimed_csv())
+                metadata_records.append({
+                    "year": year,
+                    "basin": basin,
+                    "cyclone_number": cyclone_number,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "env_file": env_file
+                })
 
-    # sort the observations
-    df = df.sort_values(by=["annee", "bassin", "cyclone_numero"]).reset_index(drop=True)
-
-    # save on csv file
-    df.to_csv(out_put_dir, index=False)
-
-    print(f"file saved in : {out_put_dir}")
+    return metadata_records
 
 
+# ============================================================
+# ======================== SAVE TO CSV ========================
+# ============================================================
+
+def save_tcprimed_csv(
+    output_csv: str = "excels/tcprimed_data_env.csv",
+    tcprimed_root: str = TCPRIMED_ROOT
+):
+    """
+    Extracts metadata and saves it to a CSV file.
+    """
+
+    records = extract_tcprimed_metadata(tcprimed_root)
+    df = pd.DataFrame(records)
+
+    # Sort the table for readability
+    df = df.sort_values(by=["year", "basin", "cyclone_number"]).reset_index(drop=True)
+
+    os.makedirs(os.path.dirname(output_csv), exist_ok=True)
+    df.to_csv(output_csv, index=False)
+
+    print(f"📁 TC_PRIMED metadata CSV saved at: {output_csv}")
+    print(f"📌 Cyclones indexed: {len(df)}")
 
 
-if run :
-    main()
+# ============================================================
+# ============================ RUN ============================
+# ============================================================
+
+if __name__ == "__main__":
+    save_tcprimed_csv()

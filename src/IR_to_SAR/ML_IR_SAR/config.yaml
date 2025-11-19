@@ -1,7 +1,7 @@
 # Configuration for IR → SAR Training
 
 # Image settings
-img_size: 48
+img_size: 128
 
 # Training parameters
 batch_size: 16
@@ -9,9 +9,9 @@ learning_rate: 0.001
 num_epochs: 20
 
 # Dataset split
-train_split: 0.2
-val_split: 0.2
-test_split: 0.6
+train_split: 0.01
+val_split: 0.01
+test_split: 0.98
 
 # Paths
 data_path: "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_v1.pkl"
@@ -22,12 +22,12 @@ early_stop_patience: 10
 early_stop_delta: 0.0005
 
 # Plotting
-start_epoch: 1
-plot_interval: 5
+start_epoch: -1
+plot_interval: 1
 
 # Device
 accelerator: "auto"
-devices: 1   # If you want GPU: use "1", for CPU: "cpu" or "auto"
+devices: 3   # 
 
 # Scheduler
 scheduler_every_n_epochs: 1

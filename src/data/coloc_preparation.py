@@ -1,97 +1,181 @@
-# this script will create a data labelisation (IR - MW - SAR)
+"""
+This script creates colocated data packages (IR - MW - SAR) in .pkl format.
+
+The output file contains 4 datasets:
+    - IR from TC_PRIMED
+    - MW from TC_PRIMED
+    - IR from SARGEO
+    - SAR AEQD product
+"""
 
 import os
 import ast
 import xarray as xr
 import pandas as pd
-import matplotlib.pyplot as plt
 import netCDF4 as nc
 import pickle as pkl
 from datetime import datetime
 
 
+# ============================================================
+# ========================== CONFIG ==========================
+# ============================================================
 
-# === Config ===
-csv_path = "/scale/user/mtannaou/alternance/excels/colocates_sargeo_primed_v1.csv"        #
-sargeo_sar_csv_path = "/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v1.csv"
-tcprimed_path = "/scale/project/ifremer-isi-jumeaunumerique/TC_PRIMED_DATASET/v01r01/final"   #tcprimed path
-sargeo_path = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v01r02/cyclobs"    # sargeo path
-sar_aeqd_path = "/scale/user/mtannaou/alternance/donnees_sar_aeqd" 
+CSV_COLOCATION = "/scale/user/mtannaou/alternance/excels/colocates_sargeo_primed_v1.csv"
+CSV_SARGEO_SAR = "/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v1.csv"
+
+PATH_TCPRIMED = "/scale/project/ifremer-isi-jumeaunumerique/TC_PRIMED_DATASET/v01r01/final"
+PATH_SARGEO   = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v01r02/cyclobs"
+PATH_SAR_AEQD = "/scale/user/mtannaou/alternance/donnees_sar_aeqd"
+
+OUTPUT_DIR    = "/scale/user/mtannaou/alternance/src/data_coloc_pkl"
 
 
-# the goal is to create a pkl files which contains 4 datasets (IR_tcprimed , MW_tcprimed , IR_sargeo , SAR_aeqd)
-def create_coloc_pkl(out_put_path = "/scale/user/mtannaou/alternance/src/data_coloc_pkl"):
-    sargeo_sar_df = pd.read_csv(sargeo_sar_csv_path)   # sargeo datarame
-    df_coloc = pd.read_csv(csv_path)                   #dataframe of colocs
-    for i , row in df_coloc[df_coloc["count"] != 0].reset_index().iterrows():
+# ============================================================
+# ============ MAIN PROCESSING FUNCTION ======================
+# ============================================================
 
-        datas = []
-        
-        cyclone_id = row["cyclone_id"]
-        bassin = cyclone_id[:2].upper()
-        num_cyclone = cyclone_id[2:4]
-        year_cyclone = cyclone_id[4:]
-        
+def create_colocation_pkl(output_path: str = OUTPUT_DIR):
+    """
+    Creates pkl files containing colocated IR, MW, SARGEO IR, and AEQD SAR datasets.
 
-        cyclone_primed_path = os.path.join(tcprimed_path,str(year_cyclone),bassin,str(num_cyclone))
-        liste_file_nc = row["path_tcprimed"].split("]")[0].split("[")[-1].split(",")
-        print("nombre de tcrpimed dans la liste",len(liste_file_nc))
-        
-        for dt_ind,nc_file in enumerate(liste_file_nc) :    #tcprimed files
-            date_tcprimed = datetime.strptime(row["date_tcprimed"].replace(" ","").split("]")[0].split("[")[-1].split(",")[dt_ind],"'%Y-%m-%dT%H:%M:%S.000'")
-            date_sargeo = datetime.strptime(row["date_sargeo"].replace(" ",""),"%Y-%m-%dT%H:%M:%S.000")
-            
-            print("date tcprimed --------------------------------",date_tcprimed)
-            
-            
-            nc_file_path = os.path.join(cyclone_primed_path,nc_file[1:-1].split("'")[-1])
-            print("--------######-------",nc_file_path)
-            netcdf = nc.Dataset(nc_file_path)
-            f = list(netcdf.groups.keys())
-            ds_mw_s1_nc = xr.open_dataset(nc_file_path,group = f"{f[2]}/S1")
-            ds_ir_tcprimed = xr.open_dataset(nc_file_path,group = f[-1])
-            
-            datas.append([ds_mw_s1_nc["x"],ds_mw_s1_nc["y"],ds_mw_s1_nc[list(ds_mw_s1_nc.data_vars.keys())[5]]])     #microwave data
-            if "IRWIN" not in list(ds_ir_tcprimed.data_vars.keys()):
-                
+    Output .pkl structure:
+        [
+            [mw_x, mw_y, mw_value],                   # Microwave
+            [ir_tcprimed, ir_x, ir_y],                # IR from TC_PRIMED
+            [sar_x, sar_y, sar_windspeed],            # SAR AEQD
+            [sargeo_ir, x, y, storm_lat, storm_lon]   # SARGEO IR
+        ]
+    """
+
+    # Load metadata CSV files
+    df_sargeo_sar = pd.read_csv(CSV_SARGEO_SAR)
+    df_coloc      = pd.read_csv(CSV_COLOCATION)
+
+    # Only keep rows with at least one matched product
+    df_coloc = df_coloc[df_coloc["count"] != 0].reset_index(drop=True)
+
+    for idx, row in df_coloc.iterrows():
+
+        cyclone_id    = row["cyclone_id"]
+        basin         = cyclone_id[:2].upper()
+        cyclone_num   = cyclone_id[2:4]
+        cyclone_year  = cyclone_id[4:]
+
+        # Path to TC_PRIMED cyclone folder
+        tcprimed_cyclone_path = os.path.join(PATH_TCPRIMED, str(cyclone_year), basin, str(cyclone_num))
+
+        # Extract all TC_PRIMED NetCDF file names
+        tcprimed_files = row["path_tcprimed"].split("]")[0].split("[")[-1].split(",")
+        print(f"→ Number of TC_PRIMED files found: {len(tcprimed_files)}")
+
+        for dt_index, nc_file in enumerate(tcprimed_files):
+
+            # Parse aligned timestamps
+            tcprimed_timestamp = datetime.strptime(
+                row["date_tcprimed"].replace(" ", "").split("]")[0].split("[")[-1].split(",")[dt_index],
+                "'%Y-%m-%dT%H:%M:%S.000'"
+            )
+            sargeo_timestamp = datetime.strptime(row["date_sargeo"].replace(" ", ""), "%Y-%m-%dT%H:%M:%S.000")
+
+            print(f"TC_PRIMED datetime → {tcprimed_timestamp}")
+
+            # Path to the TC_PRIMED NetCDF file
+            file_name = nc_file[1:-1].split("'")[-1]
+            full_nc_path = os.path.join(tcprimed_cyclone_path, file_name)
+            print("Loading:", full_nc_path)
+
+            # Load NetCDF and extract the correct groups
+            nc_data = nc.Dataset(full_nc_path)
+            groups = list(nc_data.groups.keys())
+
+            ds_mw = xr.open_dataset(full_nc_path, group=f"{groups[2]}/S1")  # Microwave group
+            ds_ir_tc = xr.open_dataset(full_nc_path, group=groups[-1])      # Infrared group
+
+            coloc_data = []
+
+            # ======================================================
+            # 1) MICROWAVE DATA (x, y, value)
+            # ======================================================
+            mw_key = list(ds_mw.data_vars.keys())[5]
+            coloc_data.append([
+                ds_mw["x"].values,
+                ds_mw["y"].values,
+                ds_mw[mw_key].values
+            ])
+
+            # ======================================================
+            # 2) IR FROM TC_PRIMED
+            # ======================================================
+            if "IRWIN" not in ds_ir_tc.data_vars:
                 continue
 
-            datas.append([ds_ir_tcprimed["IRWIN"],ds_ir_tcprimed["x"],ds_ir_tcprimed["y"]])  #infrared tcprimed data
-            inter_sargeo_sar_path = row["path_sargeo"].split("ll")[0][:-7]
-            
-            sar_aeqd_path_sargeo = sargeo_sar_df[sargeo_sar_df["fichier"].str.contains(inter_sargeo_sar_path)]["sar_xy"]
-            if len(sar_aeqd_path_sargeo) == 0:
+            coloc_data.append([
+                ds_ir_tc["IRWIN"].values,
+                ds_ir_tc["x"].values,
+                ds_ir_tc["y"].values
+            ])
+
+            # ======================================================
+            # 3) LOOKUP SAR AEQD PATH FROM SARGEO CSV
+            # ======================================================
+            sargeo_base = row["path_sargeo"].split("ll")[0][:-7]
+
+            sar_path = df_sargeo_sar[df_sargeo_sar["fichier"].str.contains(sargeo_base)]["sar_xy"]
+            if len(sar_path) == 0:
                 continue
-            
 
-            #check of the file exist (if the center in sargeo exist
-            if sargeo_sar_df[sargeo_sar_df["sar_xy"]==sar_aeqd_path_sargeo.values[0]]["lon_centre"].values == 0 :
+            sar_file = sar_path.values[0]
+
+            # Skip if missing SARGEO center
+            if df_sargeo_sar[df_sargeo_sar["sar_xy"] == sar_file]["lon_centre"].values == 0:
                 continue
 
-            sar_aeqd = xr.open_dataset(sar_aeqd_path_sargeo.values[0])
-            datas.append([sar_aeqd["x_sar"],sar_aeqd["y_sar"],sar_aeqd["owiWindSpeed"]])      #sar aeqd data
-            
+            # ======================================================
+            # 4) SAR AEQD DATA (windspeed)
+            # ======================================================
+            ds_sar_aeqd = xr.open_dataset(sar_file)
+            coloc_data.append([
+                ds_sar_aeqd["x_sar"].values,
+                ds_sar_aeqd["y_sar"].values,
+                ds_sar_aeqd["owiWindSpeed"].values
+            ])
 
-            sargeo_file = sargeo_sar_df[sargeo_sar_df["sar_xy"]==sar_aeqd_path_sargeo.values[0]]["fichier"].values[0]
-            
-            sargeo_irwin_path = os.path.join(sargeo_path,cyclone_id,"IRWIN",sargeo_file)
+            # ======================================================
+            # 5) IR FROM SARGEO (t_rel = 0)
+            # ======================================================
+            sargeo_filename = df_sargeo_sar[df_sargeo_sar["sar_xy"] == sar_file]["fichier"].values[0]
+            sargeo_irwin_path = os.path.join(PATH_SARGEO, cyclone_id, "IRWIN", sargeo_filename)
 
-            ds_iriwn_sargeo = xr.open_dataset(sargeo_irwin_path)["IRWIN"]
+            ds_sargeo = xr.open_dataset(sargeo_irwin_path)
+            ir_sargeo = ds_sargeo["IRWIN"].sel(t_rel=0).values
 
-            ds_iriwn_sargeo = xr.open_dataset(sargeo_irwin_path)["IRWIN"]
-            sargeo_ds = xr.open_dataset(sargeo_irwin_path)
-            datas.append([ds_iriwn_sargeo.sel(t_rel=0).values,sargeo_ds["x"].values,sargeo_ds["y"].values,sargeo_ds["storm_latitude"].sel(t_rel=0).values,sargeo_ds["storm_latitude"].sel(t_rel=0).values])
-        
-        
-            
-            os.makedirs(out_put_path,exist_ok=True)
-            with open(os.path.join(out_put_path,f"{cyclone_id}--{str(row["date_sargeo"])}---diff_minutes: {str(int(abs(date_tcprimed - date_sargeo).total_seconds()/60))}.pkl") , "wb") as f : 
-                pkl.dump(datas,f)
-            print(f"fichier {cyclone_id+row['date_sargeo']} enregistré")
+            coloc_data.append([
+                ir_sargeo,
+                ds_sargeo["x"].values,
+                ds_sargeo["y"].values,
+                ds_sargeo["storm_latitude"].sel(t_rel=0).values,
+                ds_sargeo["storm_longitude"].sel(t_rel=0).values
+            ])
 
-    
-        
+            # ======================================================
+            # Save result as pickle
+            # ======================================================
+            os.makedirs(output_path, exist_ok=True)
 
+            diff_min = int(abs(tcprimed_timestamp - sargeo_timestamp).total_seconds() / 60)
+            output_filename = f"{cyclone_id}--{row['date_sargeo']}---diff_minutes_{diff_min}.pkl"
+
+            with open(os.path.join(output_path, output_filename), "wb") as f:
+                pkl.dump(coloc_data, f)
+
+            print(f"✓ Saved: {output_filename}")
+
+
+# ============================================================
+# =========================== RUN ============================
+# ============================================================
 
 if __name__ == "__main__":
-    create_coloc_pkl()
+    create_colocation_pkl()
+    print("\n✨ All colocated PKL files generated successfully.")

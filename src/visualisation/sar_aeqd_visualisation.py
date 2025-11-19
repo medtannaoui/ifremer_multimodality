@@ -38,15 +38,24 @@ def get_geo_path(path_sar_aeqd):
 
     return geo_path
 
-def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alternance/donnees_sar_aeqd",show=True, var_vis = "owiWindSpeed"):
+def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alternance/donnees_sar_aeqd_v1",show=True, var_vis = "owiWindSpeed"):
+    cyc = None
+    matches = [
+    (cyc, f)
+    for cyc in os.listdir(path_sar_folder)
+    for f in os.listdir(os.path.join(path_sar_folder, cyc))
+    if date in f
+    ]
 
-    sar_aeqd_file = [f for f in os.listdir(path_sar_folder) if date in f][0]
+    if len(matches) == 0:
+        raise FileNotFoundError(f"Aucun fichier SAR contenant {date} trouvé.")
 
+    cyc, sar_aeqd_file = matches[0]
     geo_path = get_geo_path(sar_aeqd_file)
 
     ds_sar = xr.open_dataset(geo_path, decode_timedelta=True)
     ds_geo = ds_sar
-    ds_xy = xr.open_dataset(os.path.join(path_sar_folder,sar_aeqd_file))
+    ds_xy = xr.open_dataset(os.path.join(path_sar_folder,cyc,sar_aeqd_file))
 
     # === Chargement des colormaps ===
     cmap_ir = CMAP.cira_ir(units="celsius")
@@ -61,7 +70,7 @@ def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alt
     date_fmt = f"{title[0:4]}-{title[4:6]}-{title[6:8]} {title[9:11]}:{title[11:13]}:{title[13:15]}"
 
     # === Figure ===
-    fig = plt.figure(figsize=(8, 9))
+    fig = plt.figure(figsize=(8, 9),constrained_layout=True)
 
     # Grille bien équilibrée
     gs = fig.add_gridspec(
@@ -159,8 +168,7 @@ def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alt
     # === ALIGNEMENT PARFAIT ===
     fig.align_ylabels([ax11, ax21])
     fig.align_xlabels([ax21, ax22])
-    fig.tight_layout(rect=[0, 0.05, 1, 0.95])
-
+    
     # Créer un dossier de sortie
     os.makedirs("/scale/user/mtannaou/alternance/src/visualisation/outputs", exist_ok=True)
 
