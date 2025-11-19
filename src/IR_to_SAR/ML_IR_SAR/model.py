@@ -6,19 +6,15 @@ from diffusers import UNet2DModel
 
 
 def create_model(
-    image_size=(300, 300),   # patch final utile
+    image_size=(304, 304),   # patch final utile
     in_channels=1,           # IR input (gray-scale)
     out_channels=1,          # SAR output (wind speed map)
-    block_out_channels=(64, 128, 256, 512),  # multiscale feature depth
+    block_out_channels=(64, 128),  # multiscale feature depth
     down_block_types=(
         "DownBlock2D",
         "DownBlock2D",
-        "AttnDownBlock2D",   # Attention sur le latent
-        "DownBlock2D",
     ),
     up_block_types=(
-        "UpBlock2D",
-        "AttnUpBlock2D",
         "UpBlock2D",
         "UpBlock2D",
     ),

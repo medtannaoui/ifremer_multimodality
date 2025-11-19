@@ -20,32 +20,13 @@ from scipy.ndimage import zoom
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import KBinsDiscretizer
+import torch
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 from src.visualisation.utils_colormap import CMAP
 from src.IR_to_SAR.distribution_data_visualisation import detect_sar_quadrants
 
-
-
-# ============================================================
-# ========================= DATA LOADING ======================
-# ============================================================
-
-def load_ir_sar_tensors(pkl_path: str = "/scale/user/mtannaou/alternance/src/IR_to_SAR/irwin_wind_tensors.pkl"):
-    """
-    Loads IR and SAR tensors from a pickle file.
-
-    Returns:
-        ir_tensor  (np.ndarray): shape (H_ir, W_ir)
-        sar_tensor (np.ndarray): shape (H_sar, W_sar)
-    """
-    with open(pkl_path, "rb") as f:
-        data = pkl.load(f)
-
-    # We assume the pickle contains 2 entries only
-    ir_tensor  = data[list(data.keys())[0]]
-    sar_tensor = data[list(data.keys())[1]]
-
-    return ir_tensor, sar_tensor
 
 
 # ============================================================
@@ -285,3 +266,40 @@ def train_val_test_split(
         "val":   (ir_array[X_val],   sar_array[X_val]),
         # "test":  (ir_array[X_test],  sar_array[X_test]),
     }
+
+
+def crop_ir_to_sar(ir):
+          
+    H, W = ir.shape
+    target = 301  # as  SAR data
+    start_h = (H - target) // 2
+    start_w = (W - target) // 2
+
+    return ir[start_h:start_h+target, start_w:start_w+target]
+
+
+def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl"):
+
+    df = pd.read_csv("/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v1.csv")
+    SARGEO_PATH = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v01r02/cyclobs"
+    CANAL = "IRWIN"
+    data_pkl= []
+    for i ,row in df.iterrows():
+        cyclone = row["cyclone"]
+        nc_sargeo_path = os.path.join(SARGEO_PATH,cyclone,CANAL,row["fichier"])
+        nc_aeqd_path = row["sar_xy"]
+        ds_aeqd = xr.open_dataset(nc_aeqd_path)
+        ds_sargeo = xr.open_dataset(nc_sargeo_path)
+        irwin = crop_ir_to_sar(ds_sargeo["IRWIN"].sel(t_rel=0).values)
+
+        
+        wind = ds_aeqd["owiWindSpeed"].values
+        print(irwin.shape,wind.shape)
+        
+        
+        data_pkl.append((irwin,wind))
+    
+    with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_v1.pkl","wb") as f:
+            pkl.dump(data_pkl,f)
+    
+    print("SAR and IR pairs created")

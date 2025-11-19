@@ -51,110 +51,101 @@ class ModelCheckpoint:
 
 
 
+
+
 class LogValidationSamples:
     """
-    Callback to log example predictions for IR → SAR regression.
-
-    For a few validation samples, it plots:
-        - Input IR
-        - Predicted SAR
-        - Target SAR
-
-    Shapes:
-        IR batch   : (B, 1, H, W)
-        SAR batch  : (B, 1, H, W)
+    Callback to log IR → SAR predictions after epoch 20,
+    saving per-sample plots in a unique train directory.
     """
 
-    def __init__(
-        self,
-        output_dir: str,
-        num_samples: int = 4,
-        vmax_ir: float | None = None,
-        vmax_sar: float | None = None,
-    ):
-        """
-        Args:
-            output_dir (str): directory where plots will be saved.
-            num_samples (int): how many samples to plot from a batch.
-            vmax_ir (float or None): fixed max color scale for IR (if None → auto).
-            vmax_sar (float or None): fixed max color scale for SAR (if None → auto).
-        """
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, base_dir, min_ir, max_ir, min_sar, max_sar,
+                 num_samples=3, start_epoch=20,
+                 cmap_ir="gray", cmap_sar="viridis"):
+        
+        self.base_dir = Path(base_dir)
+
+        # 🔍 Create unique run directory (train_ir_sar_1, _2, _3...)
+        self.output_dir = self._create_unique_dir(self.base_dir)
+        print(f"🗂️ Logging outputs to: {self.output_dir}")
+
         self.num_samples = num_samples
-        self.vmax_ir = vmax_ir
-        self.vmax_sar = vmax_sar
+        self.start_epoch = start_epoch
+        self.cmap_ir = cmap_ir
+        self.cmap_sar = cmap_sar
 
-    def log_batch(
-        self,
-        model: torch.nn.Module,
-        batch: tuple[torch.Tensor, torch.Tensor],
-        epoch: int,
-        device: torch.device | str = "cuda",
-    ):
-        """
-        Generate and save a figure with IR input, predicted SAR, and target SAR.
+        # normalization values
+        self.min_ir = min_ir
+        self.max_ir = max_ir
+        self.min_sar = min_sar
+        self.max_sar = max_sar
 
-        Args:
-            model : trained model (in eval mode will be set internally).
-            batch : tuple (ir, sar) from DataLoader.
-                ir  shape: (B, 1, H, W)
-                sar shape: (B, 1, H, W)
-            epoch : current epoch index.
-            device: model/device to use ("cuda" or "cpu").
+    def _create_unique_dir(self, base_dir):
+        i = 1
+        while (base_dir / f"train_ir_sar_{i}").exists():
+            i += 1
+        new_dir = base_dir / f"train_ir_sar_{i}"
+        new_dir.mkdir(parents=True, exist_ok=True)
+        return new_dir
+
+    def denormalize(self, tensor, min_val, max_val):
+        """Convert back from [0,1] to real physical values."""
+        return tensor * (max_val - min_val) + min_val
+
+    def log_batch(self, model, batch, epoch, device):
         """
+        Saves IR / Predicted SAR / Real SAR visualizations 
+        for a single epoch AFTER self.start_epoch.
+        """
+        if epoch < self.start_epoch or (epoch - self.start_epoch) % self.every_n_epochs != 0:
+            return  # 🛑 Do nothing before epoch threshold
+
         model.eval()
         ir, sar = batch
         ir = ir.to(device)
         sar = sar.to(device)
 
         with torch.no_grad():
-            pred = model(ir)  # (B, 1, H, W)
+            pred = model(ir, timestep=0).sample
 
-        ir_np   = ir.squeeze(1).cpu().numpy()    # (B, H, W)
-        sar_np  = sar.squeeze(1).cpu().numpy()   # (B, H, W)
-        pred_np = pred.squeeze(1).cpu().numpy()  # (B, H, W)
+        # ---- Dé-normalisation ----
+        ir_denorm   = self.denormalize(ir, self.min_ir, self.max_ir)
+        sar_denorm  = self.denormalize(sar, self.min_sar, self.max_sar)
+        pred_denorm = self.denormalize(pred, self.min_sar, self.max_sar)
+
+        # ---- Convert to numpy ----
+        ir_np   = ir_denorm.squeeze(1).cpu().numpy()
+        sar_np  = sar_denorm.squeeze(1).cpu().numpy()
+        pred_np = pred_denorm.squeeze(1).cpu().numpy()
 
         num = min(self.num_samples, ir_np.shape[0])
 
-        fig, axes = plt.subplots(num, 3, figsize=(12, 4 * num))
-        if num == 1:
-            axes = np.expand_dims(axes, axis=0)
-
-        fig.suptitle(f"IR → SAR validation samples (Epoch {epoch})", fontsize=16)
-
+        # ---- Save EACH sample as separate PNG ----
         for i in range(num):
-            # IR input
-            ax_in = axes[i, 0]
-            vmin_ir = np.nanmin(ir_np[i])
-            vmax_ir = self.vmax_ir if self.vmax_ir is not None else np.nanmax(ir_np[i])
-            im_in = ax_in.imshow(ir_np[i], cmap="gray", vmin=vmin_ir, vmax=vmax_ir)
-            ax_in.set_title(f"Input IR - Sample {i}")
-            ax_in.axis("off")
-            fig.colorbar(im_in, ax=ax_in, orientation="horizontal", pad=0.15)
+            fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+            # IR Input
+            axes[0].imshow(ir_np[i], cmap=self.cmap_ir)
+            axes[0].set_title(f"IR Input (Real °C)")
+            axes[0].axis("off")
 
             # Predicted SAR
-            ax_pred = axes[i, 1]
-            vmin_sar = np.nanmin([pred_np[i], sar_np[i]])
-            vmax_sar = (
-                self.vmax_sar
-                if self.vmax_sar is not None
-                else np.nanmax([pred_np[i], sar_np[i]])
-            )
-            im_pred = ax_pred.imshow(pred_np[i], cmap="viridis", vmin=vmin_sar, vmax=vmax_sar)
-            ax_pred.set_title("Predicted SAR")
-            ax_pred.axis("off")
-            fig.colorbar(im_pred, ax=ax_pred, orientation="horizontal", pad=0.15)
+            axes[1].imshow(pred_np[i], cmap=self.cmap_sar)
+            axes[1].set_title(f"Predicted SAR (knots)")
+            axes[1].axis("off")
 
-            # Target SAR
-            ax_tar = axes[i, 2]
-            im_tar = ax_tar.imshow(sar_np[i], cmap="viridis", vmin=vmin_sar, vmax=vmax_sar)
-            ax_tar.set_title("Target SAR")
-            ax_tar.axis("off")
-            fig.colorbar(im_tar, ax=ax_tar, orientation="horizontal", pad=0.15)
+            # Real SAR
+            axes[2].imshow(sar_np[i], cmap=self.cmap_sar)
+            axes[2].set_title(f"Target SAR (knots)")
+            axes[2].axis("off")
 
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-        save_path = self.output_dir / f"val_samples_epoch_{epoch}.png"
-        plt.savefig(save_path, dpi=150)
-        plt.close(fig)
-        print(f"📊 Saved validation samples plot to {save_path}")
+            fig.suptitle(f"Sample {i} — Epoch {epoch}", fontsize=14)
+            plt.tight_layout()
+
+            # 📸 Save per-sample image
+            save_path = self.output_dir / f"sample_{i}_epoch_{epoch}.png"
+            plt.savefig(save_path, dpi=150)
+            plt.close(fig)
+
+            print(f"💾 Saved: {save_path}")
+
