@@ -131,7 +131,7 @@ def process_sar_missing_values(
 # ============================================================
 
 
-def min_max_normalize_numpy(tensor):
+def min_max(tensor, eps = 1e-10):
     """
     Min-Max normalization of a NumPy tensor (N, H, W),
     mapping values to [0, 1] while preserving NaN values.
@@ -147,13 +147,20 @@ def min_max_normalize_numpy(tensor):
     min_val = np.nanmin(tensor)
     max_val = np.nanmax(tensor)
 
-    # Avoid division by zero if max == min
-    if max_val - min_val == 0:
-        return tensor.copy(), min_val, max_val
+    
 
-    normalized_tensor = (tensor - min_val) / (max_val - min_val)
+    normalized_tensor = (tensor - min_val) / (max_val - min_val + eps)
 
     return normalized_tensor, min_val, max_val
+
+def z_score(tensor, eps = 1e-10):
+    mean_value = np.mean(tensor)
+    std_value = np.std(tensor)
+
+    normalized_tensor = (tensor - mean_value)/(std_value + eps)
+
+    return normalized_tensor, mean_value, std_value
+
 
 
 
@@ -303,3 +310,53 @@ def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SA
             pkl.dump(data_pkl,f)
     
     print("SAR and IR pairs created")
+
+
+
+# recentring the sar data around their barycenter
+
+def recenter_sar_around_barycenter(sars):
+    """
+    Recentre l'image SAR par translation (shift) sans interpolation.
+    - sar : tableau 2D (H, W) contenant des NaN pour les valeurs invalides.
+    Retourne :
+    - sar_shifted : image translatée, même shape
+    - barycenter (x, y) en pixels
+    - shift (dx, dy) appliqué
+    """
+    sars_recenter = []
+    # get the valid pixel valeus
+    for sar in sars:
+        mask = ~np.isnan(sar)
+        if not np.any(mask):
+            sars_recenter.append((sar.copy(), 0, 0))
+            continue
+
+        ys, xs = np.where(mask)
+
+        x_center = xs.mean()
+        y_center = ys.mean()
+        barycenter = (x_center, y_center)
+
+        H, W = sar.shape
+        target_x = W // 2
+        target_y = H // 2
+
+        dx = int(target_x - x_center)
+        dy = int(target_y - y_center)
+
+        sar_shifted = np.roll(sar, shift=(dy, dx), axis=(0, 1))
+        sars_recenter.append((sar_shifted,dx,dy))
+
+    return sars_recenter
+
+
+def get_mask_of_nan_values(tensor, invalid_values=None):
+    mask = (~torch.isnan(tensor)) & (~torch.isinf(tensor))
+    
+    # Gestion des valeurs spécifiques invalides (ex: -999, 0)
+    if invalid_values is not None:
+        for val in invalid_values:
+            mask &= tensor != val
+    
+    return mask.float()

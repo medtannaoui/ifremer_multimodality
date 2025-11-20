@@ -59,8 +59,8 @@ class LogValidationSamples:
     saving per-sample plots in a unique train directory.
     """
 
-    def __init__(self, base_dir, min_ir, max_ir, min_sar, max_sar,
-             num_samples=3, start_epoch=20, every_n_epochs=1,
+    def __init__(self, base_dir, min_ir, max_ir, min_sar, max_sar,mean_sar,std_sar,mean_ir,std_ir,norm,
+             num_samples=4, start_epoch=20, every_n_epochs=1,
              cmap_ir="gray", cmap_sar="viridis"):
 
         self.base_dir = Path(base_dir)
@@ -76,6 +76,11 @@ class LogValidationSamples:
         self.max_ir = max_ir
         self.min_sar = min_sar
         self.max_sar = max_sar
+        self.mean_ir = mean_ir
+        self.mean_sar = mean_sar
+        self.std_sar = std_sar
+        self.std_ir = std_ir
+        self.norm = norm
 
 
     def _create_unique_dir(self, base_dir):
@@ -86,9 +91,12 @@ class LogValidationSamples:
         new_dir.mkdir(parents=True, exist_ok=True)
         return new_dir
 
-    def denormalize(self, tensor, min_val, max_val):
+    def denormalize(self, tensor, min_val, max_val,mean_val, std_val, eps = 1e-10):
         """Convert back from [0,1] to real physical values."""
-        return tensor * (max_val - min_val) + min_val
+        if self.norm == "z_score":
+            return ((tensor * (std_val + eps)) - mean_val)
+        else : 
+            return tensor * (max_val - min_val + eps) + min_val
 
     def log_batch(self, model, batch, epoch, device):
         """
@@ -107,9 +115,9 @@ class LogValidationSamples:
             pred = model(ir, timestep=0).sample
 
         # ---- Dé-normalisation ----
-        ir_denorm   = self.denormalize(ir, self.min_ir, self.max_ir)
-        sar_denorm  = self.denormalize(sar, self.min_sar, self.max_sar)
-        pred_denorm = self.denormalize(pred, self.min_sar, self.max_sar)
+        ir_denorm   = self.denormalize(ir, self.min_ir, self.max_ir, self.mean_ir, self.std_ir)
+        sar_denorm  = self.denormalize(sar, self.min_sar, self.max_sar, self.mean_sar, self.std_sar)
+        pred_denorm = self.denormalize(pred, self.min_sar, self.max_sar,self.mean_sar, self.std_sar)
 
         # ---- Convert to numpy ----
         ir_np   = ir_denorm.squeeze(1).cpu().numpy()
@@ -124,24 +132,25 @@ class LogValidationSamples:
 
             # IR Input
             axes[0].imshow(ir_np[i], cmap=self.cmap_ir)
-            axes[0].set_title(f"IR Input (Real °C)")
+            axes[0].set_title(f"IRWIN")
             axes[0].axis("off")
 
-            # Predicted SAR
-            axes[1].imshow(pred_np[i], cmap=self.cmap_sar)
-            axes[1].set_title(f"Predicted SAR (knots)")
+            
+            # Real SAR
+            axes[1].imshow(sar_np[i], cmap=self.cmap_sar)
+            axes[1].set_title(f"Target SAR (knots)")
             axes[1].axis("off")
 
-            # Real SAR
-            axes[2].imshow(sar_np[i], cmap=self.cmap_sar)
-            axes[2].set_title(f"Target SAR (knots)")
+            # Predicted SAR
+            axes[2].imshow(pred_np[i], cmap=self.cmap_sar)
+            axes[2].set_title(f"Predicted SAR (knots)")
             axes[2].axis("off")
 
             fig.suptitle(f"Sample {i} — Epoch {epoch}", fontsize=14)
             plt.tight_layout()
 
             # 📸 Save per-sample image
-            save_path = self.output_dir / f"sample_{i}_epoch_{epoch}.png"
+            save_path = self.output_dir / f"sample_{i}_epoch_{epoch + 1}.png"
             plt.savefig(save_path, dpi=150)
             plt.close(fig)
 

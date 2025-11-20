@@ -21,6 +21,9 @@ class IR_SAR_Config:
     accelerator: str
     devices: str | int
     scheduler_every_n_epochs: int
+    norm : str
+    num_val_exemples : int
+    barycenter : str
 
     @staticmethod
     def from_yaml(path: str):
