@@ -8,7 +8,7 @@ barycenter : "no"
 # Training parameters
 batch_size: 32
 learning_rate: 0.001
-num_epochs: 20
+num_epochs: 250
 
 # Dataset split
 train_split: 0.7
@@ -24,7 +24,7 @@ early_stop_delta: 0.001
 
 # Plotting
 start_epoch: 0
-plot_interval: 1
+plot_interval: 10
 num_val_exemples : 5
 
 # Device
