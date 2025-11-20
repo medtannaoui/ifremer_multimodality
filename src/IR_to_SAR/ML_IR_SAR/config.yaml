@@ -23,7 +23,7 @@ early_stop_patience: 10
 early_stop_delta: 0.001
 
 # Plotting
-start_epoch: 0
+start_epoch: 1
 plot_interval: 10
 num_val_exemples : 5
 
