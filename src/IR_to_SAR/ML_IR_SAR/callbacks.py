@@ -150,7 +150,8 @@ class LogValidationSamples:
             plt.tight_layout()
 
             # 📸 Save per-sample image
-            save_path = self.output_dir / f"sample_{i}_epoch_{epoch + 1}.png"
+            os.makedirs(os.path.join(Path(self.output_dir ), "samples"), exist_ok=True)
+            save_path =  os.path.join(os.path.join(Path(self.output_dir ), "samples"), f"sample_{i}_epoch_{epoch + 1}.png")
             plt.savefig(save_path, dpi=150)
             plt.close(fig)
 

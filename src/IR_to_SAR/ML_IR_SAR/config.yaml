@@ -19,12 +19,12 @@ data_path: "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar
 save_dir: "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/train_history_ir_sar"
 
 # Early stopping
-early_stop_patience: 10
-early_stop_delta: 0.001
+early_stop_patience: 25
+early_stop_delta: 0.0001
 
 # Plotting
-start_epoch: 1
-plot_interval: 10
+start_epoch: 0
+plot_interval: 20
 num_val_exemples : 5
 
 # Device
@@ -32,4 +32,4 @@ accelerator: "gpu"
 devices: [0]   # 
 
 # Scheduler
-scheduler_every_n_epochs: 10
+scheduler_every_n_epochs: 20

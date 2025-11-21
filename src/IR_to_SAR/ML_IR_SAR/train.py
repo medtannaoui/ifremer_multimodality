@@ -36,6 +36,9 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 from tqdm import tqdm
 import pickle as pkl
+import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
 
 
 import src.IR_to_SAR.data_preprocessing as dataprep
@@ -276,11 +279,15 @@ def main(cfg: IR_SAR_Config,test=False):
     train_loader, val_loader = fabric.setup_dataloaders(train_loader, val_loader)
 
     # --- Training Loop ---
+    train_loss_history = []
+    val_loss_history = []
     for epoch in range(cfg.num_epochs):
         logger.info(f"===== Epoch {epoch+1}/{cfg.num_epochs} =====")
         
         train_loss, train_metrics = train_one_epoch(fabric, model, train_loader, optimizer, metrics)
         val_loss, val_metrics = validate(fabric, model, val_loader, metrics)
+        train_loss_history.append(train_loss)
+        val_loss_history.append(val_loss)
 
         scheduler.step()
 
@@ -307,7 +314,33 @@ def main(cfg: IR_SAR_Config,test=False):
             f"LR={scheduler.get_last_lr()[0]:.6f}, "
             f"Train metrics={train_metrics}, Val metrics={val_metrics}"
         )
+    history_df = pd.DataFrame({
+    "train_loss": train_loss_history,
+    "val_loss": val_loss_history
+    })
+    base_dir = Path(cfg.save_dir)
 
+    i = 1
+    while (base_dir / f"train_ir_sar_{i}").exists():
+        i += 1
+
+    target_dir = base_dir / f"train_ir_sar_{i-1}"
+
+    # Construire le chemin du CSV
+    csv_path = target_dir / "training_history.csv"
+    history_df.to_csv(csv_path, index=False)
+
+    plt.figure()
+    plt.plot(train_loss_history, label="Train Loss")
+    plt.plot(val_loss_history, label="Validation Loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Training and Validation Loss")
+    plt.legend()
+
+    plot_path = os.path.join(target_dir, "loss_history.png")
+    plt.savefig(plot_path)
+    plt.close()
     logger.info("🎯 Training Complete!")
 
 
