@@ -19,5 +19,9 @@ outputs
 donnees_sar_aeqd_v1
 *.pkl*
 
-*.pt*
-src/IR_to_SAR/ML_IR_SAR/config.yaml
+*.pt
+*.pth
+*.ckpt
+*.pkl
+*.yaml
+first_test

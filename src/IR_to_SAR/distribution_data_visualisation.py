@@ -18,6 +18,10 @@ import pandas as pd
 import xarray as xr
 import matplotlib.pyplot as plt
 from scipy.ndimage import zoom
+from src.visualisation.utils_colormap import CMAP
+
+cmap_ir = CMAP.cira_ir()
+cmap_sar = CMAP.cmap_sar()
 
 
 
@@ -270,7 +274,7 @@ def detect_sar_quadrants(sar_tensor):
     
     Returns a numpy array [NW, NE, SW, SE], each 0 or 1.
     """
-
+    
     H, W = sar_tensor.shape
     center = H // 2
     
@@ -340,3 +344,23 @@ def plot_quadrant_distribution(sar_tensors, ax=None, title = ""):
             va='bottom',
             fontsize=10
         )
+
+
+def plot_sar(tensor, ax=None):
+    if ax is None:
+        ax = plt.gca()
+    
+    x_sar,y_sar = np.linspace(-300,300,tensor.shape[0]) , np.linspace(-300,300,tensor.shape[1])
+    ax.pcolormesh(x_sar, y_sar, tensor, cmap=cmap_sar)
+    ax.set_aspect('equal')
+
+
+def plot_ir(tensor, ax=None):
+    if ax is None : 
+        ax=plt.gca()
+    
+    x_ir, y_ir = np.linspace(-300,300,tensor.shape[0]) , np.linspace(-300,300,tensor.shape[1])
+    ax.pcolormesh(x_ir, y_ir , tensor, cmap=cmap_ir)
+    ax.set_aspect('equal')
+    
+

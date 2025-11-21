@@ -13,6 +13,7 @@ Author: Mohammed Amine Tannaoui
 
 import os
 import numpy as np
+import random
 import xarray as xr
 import pandas as pd
 import pickle as pkl
@@ -21,6 +22,9 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import KBinsDiscretizer
 import torch
+from torchvision import transforms
+from torchvision.transforms import functional as TF
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -360,3 +364,95 @@ def get_mask_of_nan_values(tensor, invalid_values=None):
             mask &= tensor != val
     
     return mask.float()
+
+
+def get_nan_coverage(sar_batch, radius=100, km_per_pixel=2):
+    results = []
+    radius_pix = int(radius / km_per_pixel)
+
+    for idx, sar in enumerate(sar_batch):
+        H, W = sar.shape
+        x0, y0 = W // 2, H // 2  # centre de l’image
+
+        y, x = np.ogrid[:H, :W]
+        mask = (x - x0) ** 2 + (y - y0) ** 2 <= radius_pix ** 2
+
+        total_pixels = mask.sum()
+        nan_pixels = np.isnan(sar[mask]).sum()
+
+        nan_ratio = nan_pixels / total_pixels
+        results.append((idx, nan_ratio))
+
+        print(f"Image {idx}: {nan_ratio*100:.2f}% de NaN dans r ≤ {radius} km")
+
+    return results
+
+
+def remove_sar_nan(ir_batch, sar_batch, radius_km=100, km_per_pixel=2, threshold=0.5):
+    """
+    ir_batch, sar_batch : numpy arrays ou torch tensors (N, H, W)
+    Retourne : ir_filtered, sar_filtered ne contenant que les scènes 
+    où la couverture SAR dans le rayon ≤100km a moins de 50% de NaN.
+    """
+
+    if isinstance(ir_batch, torch.Tensor):
+        ir_batch = ir_batch.cpu().numpy()
+    if isinstance(sar_batch, torch.Tensor):
+        sar_batch = sar_batch.cpu().numpy()
+
+    assert ir_batch.shape == sar_batch.shape, "IR and SAR should have the same shape"
+
+    N, H, W = sar_batch.shape
+    x0, y0 = W // 2, H // 2  # centre
+    radius_pix = int(radius_km / km_per_pixel)
+
+    y, x = np.ogrid[:H, :W]
+    mask = (x - x0)**2 + (y - y0)**2 <= radius_pix**2
+
+    ir_filtered = []
+    sar_filtered = []
+
+    for i in range(N):
+        sar = sar_batch[i]
+
+        total = mask.sum()
+        nan_pixels = np.isnan(sar[mask]).sum()
+        nan_ratio = nan_pixels / total
+
+        if nan_ratio < threshold:  # 50%
+            ir_filtered.append(ir_batch[i])
+            sar_filtered.append(sar_batch[i])
+
+    return np.array(ir_filtered), np.array(sar_filtered)
+
+
+
+
+def augmentation_sar_safe(ir, sar):
+    
+    # convert to tensor
+    ir = torch.tensor(ir, dtype=torch.float32).unsqueeze(0)
+    sar = torch.tensor(sar, dtype=torch.float32).unsqueeze(0)
+
+    
+
+    # Rotation centered
+    angle = random.choice([0, 90, 180, 270])
+    ir = TF.rotate(ir, angle, fill=0)
+    sar = TF.rotate(sar, angle, fill=0)
+
+    return ir.squeeze(0).numpy(), sar.squeeze(0).numpy()
+
+
+def data_augmentation(ir_tensor, sar_tensor):
+    ir_augmented, sar_augmented = [], []
+
+    for ir, sar in zip(ir_tensor, sar_tensor):
+        ir_augmented.append(ir)
+        sar_augmented.append(sar)
+
+        ir_aug, sar_aug = augmentation_sar_safe(ir, sar)
+        ir_augmented.append(ir_aug)
+        sar_augmented.append(sar_aug)
+
+    return np.array(ir_augmented), np.array(sar_augmented)

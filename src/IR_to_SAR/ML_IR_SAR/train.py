@@ -39,6 +39,7 @@ import pickle as pkl
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
+import shutil
 
 
 import src.IR_to_SAR.data_preprocessing as dataprep
@@ -58,6 +59,8 @@ from src.IR_to_SAR.ML_IR_SAR.callbacks import EarlyStopping,ModelCheckpoint,LogV
 import src.IR_to_SAR.ML_IR_SAR.config as config
 reload(config)
 from src.IR_to_SAR.ML_IR_SAR.config import IR_SAR_Config
+import src.IR_to_SAR.data_preparation.prepare_dataset as prep_dataset
+reload(prep_dataset)
 
 
 
@@ -72,63 +75,15 @@ class IRSARDataset(Dataset):
     IR shape:  (N, H_ir, W_ir)
     SAR shape: (N, H_ir, W_ir)
     """
-    def __init__(self,test=False,size=256, norm = "z_score", barycenter = "no" ):
+    def __init__(self,test=False,size=256, norm = "z_score", barycenter = "no" ,augmentation = False, drop_nan_100 = True):
         self.norm = norm
-        if not test : 
-            with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_v1.pkl","rb") as f :
-                data_ir_sar = pkl.load(f)
-
-            if barycenter == "yes":
-                sars_recalib = dataprep.recenter_sar_around_barycenter(np.array(data_ir_sar)[:, 1, :, :])
-                self.sar = np.array([item[0] for item in sars_recalib])
-                self.dx_sar = [item[1] for item in sars_recalib]
-                self.dy_sar = [item[2] for item in sars_recalib]
-
-                print("sar data are recalibred around their barycenter")
-            else : 
-                self.sar = np.array(data_ir_sar)[:, 1, :size, :size]  
-
-
-            
-            self.ir = np.array(data_ir_sar)[:, 0, :size, :size]       
-            self.sar = self.sar[:, :size, :size]
-            # self.mask_sar = dataprep.get_mask_of_nan_values(self.sar)
-            indices_to_remove = [381, 129, 451, 680, 695, 772, 1070, 1285]  # les indices à supprimer
-
-            self.ir  = np.delete(self.ir, indices_to_remove, axis=0) - 273.15
-            self.sar = np.delete(self.sar, indices_to_remove, axis=0) * 1.94384
-            
-            
-        elif test : 
-            self.ir = np.random.rand(10,16*3,16*3)
-            self.sar = np.random.rand(10,16*3,16*3)
         
-            
-        print("NaN dans IR:", np.isnan(self.ir).sum())
-        print("Inf dans IR:", np.isinf(self.ir).sum())
-        print("Min/Max IR:", np.min(self.ir), np.max(self.ir))
-
-        
-        self.ir = np.nan_to_num(self.ir, nan=0.0, posinf=0.0, neginf=0.0)
-        self.sar = np.nan_to_num(self.sar, nan=0.0, posinf=0.0, neginf=0.0)
-        print("NaN dans SAR:", np.isnan(self.sar).sum())
-        print("Inf dans SAR:", np.isinf(self.sar).sum())
-        print("Min/Max SAR:", np.min(self.sar), np.max(self.sar))
-
-        if norm == "z_score":
-            self.ir, self.mean_val_ir, self.std_val_ir = dataprep.z_score(self.ir)
-            self.sar , self.mean_val_sar, self.std_val_sar = dataprep.z_score(self.sar)
-            self.max_val_ir, self.max_val_sar, self.min_val_ir, self.min_val_sar = None, None, None, None
-
-        else : 
-            self.ir, self.min_val_ir, self.max_val_ir = dataprep.min_max(self.ir)
-            self.sar , self.min_val_sar, self.max_val_sar = dataprep.min_max(self.sar)
-            self.mean_val_sar, self.mean_val_ir, self.std_val_sar, self.std_val_ir = None, None, None, None
-            
-
-        print(self.ir.shape,self.sar.shape)
-        print("Data collected and normalized")
-        
+        dataset = prep_dataset.PrepareDataSet(size=size, norm= norm, barycenter= barycenter, augmentation= augmentation, drop_nan_100=drop_nan_100)
+        self.ir = dataset.ir
+        self.sar = dataset.sar   
+        self.dataset = dataset     
+        print("Data preparation finished")
+        print(self.ir.shape, self.sar.shape)
 
     def __len__(self):    #number of observations
         return len(self.ir)
@@ -214,15 +169,15 @@ def main(cfg: IR_SAR_Config,test=False):
 
     # --- Dataset full ---
     
-    full_data = IRSARDataset(test=test, size=cfg.img_size, norm=cfg.norm, barycenter=cfg.barycenter)
-    ir_all, sar_all = full_data.ir, full_data.sar
+    full_data = IRSARDataset(test=test, size=cfg.img_size, norm=cfg.norm, barycenter=cfg.barycenter, drop_nan_100=cfg.drop_nan_sar, augmentation=cfg.augmentation)
+    ir_all, sar_all = full_data.dataset.ir, full_data.dataset.sar
     if cfg.barycenter == "yes" : 
-        dx = full_data.dx_sar
-        dy = full_data.dy_sar
+        dx = full_data.dataset.dx_sar
+        dy = full_data.dataset.dy_sar
     
     # --- Split ---
     dictio = dataprep.train_val_test_split(
-        ir_all, sar_all,
+        np.array(ir_all), np.array(sar_all),
         train_size=cfg.train_split,
         val_size=cfg.val_split,
         test_size=cfg.test_split
@@ -245,15 +200,15 @@ def main(cfg: IR_SAR_Config,test=False):
             LogValidationSamples(
                 base_dir=cfg.save_dir,
                 num_samples=cfg.num_val_exemples,
-                norm = full_data.norm,
-                min_ir=full_data.min_val_ir,
-                max_ir=full_data.max_val_ir,
-                min_sar=full_data.min_val_sar,
-                max_sar=full_data.max_val_sar,
-                mean_sar = full_data.mean_val_sar,
-                std_sar = full_data.std_val_sar,
-                mean_ir = full_data.mean_val_ir,
-                std_ir = full_data.std_val_ir,
+                norm = full_data.dataset.norm,
+                min_ir=full_data.dataset.min_val_ir,
+                max_ir=full_data.dataset.max_val_ir,
+                min_sar=full_data.dataset.min_val_sar,
+                max_sar=full_data.dataset.max_val_sar,
+                mean_sar = full_data.dataset.mean_val_sar,
+                std_sar = full_data.dataset.std_val_sar,
+                mean_ir = full_data.dataset.mean_val_ir,
+                std_ir = full_data.dataset.std_val_ir,
                 cmap_ir=cmap_ir,
                 cmap_sar=cmap_sar,
                 start_epoch=cfg.start_epoch,    
@@ -341,6 +296,10 @@ def main(cfg: IR_SAR_Config,test=False):
     plot_path = os.path.join(target_dir, "loss_history.png")
     plt.savefig(plot_path)
     plt.close()
+
+    # save the config 
+    config_path = "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/config.yaml"
+    shutil.copy(config_path,os.path.join(target_dir,"config_used.yaml"))
     logger.info("🎯 Training Complete!")
 
 

@@ -24,6 +24,8 @@ class IR_SAR_Config:
     norm : str
     num_val_exemples : int
     barycenter : str
+    augmentation : bool
+    drop_nan_sar : bool
 
     @staticmethod
     def from_yaml(path: str):
