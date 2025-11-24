@@ -25,3 +25,7 @@ donnees_sar_aeqd_v1
 *.pkl
 *.yaml
 first_test
+*history*
+src/IR_to_SAR/ML_IR_SAR/train_history_ir_sar
+*.save*
+*tmp*
