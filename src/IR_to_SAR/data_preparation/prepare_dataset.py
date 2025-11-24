@@ -8,7 +8,7 @@ import pickle as pkl
 from importlib import reload
 
 
-import src.IR_to_SAR.data_preprocessing as dataprep
+import src.IR_to_SAR.data_preparation.data_preprocessing as dataprep
 from src.visualisation.utils_colormap import CMAP
 cmap_ir , cmap_sar = CMAP.cira_ir(), CMAP.cmap_sar()
 reload(dataprep)
@@ -24,7 +24,7 @@ class PrepareDataSet():
                  augmentation = False,
                  drop_nan_100 = True
                  ):
-        
+        print("Start preparation dataset : ......................")
         with open(pkl_file, "rb") as f :
             data_ir_sar = pkl.load(f)
         
@@ -34,10 +34,12 @@ class PrepareDataSet():
                 self.dx_sar = [item[1] for item in sars_recalib]
                 self.dy_sar = [item[2] for item in sars_recalib]
         else : 
-                self.sar = np.array(data_ir_sar)[:, 1, :size, :size]  
+                self.sar = np.array(data_ir_sar)[:, 1, :, :]
         
-        self.ir = np.array(data_ir_sar)[:, 0, :size, :size]       
-        self.sar = self.sar[:, :size, :size]
+        N,H,W = self.sar.shape    
+        assert size <= H and size <= W, "Crop size must be <= original dimensions" 
+        self.ir = np.array(data_ir_sar)[:, 0, int(H//2 - size//2):int((H//2) + (size//2)), int((W//2) - (size//2)):int((W//2) + (size//2))]       
+        self.sar = self.sar[:, int(H//2 - size//2):int((H//2) + (size//2)), int((W//2) - (size//2)):int((W//2) + (size//2))]  
             # self.mask_sar = dataprep.get_mask_of_nan_values(self.sar)
         indices_to_remove = [381, 129, 451, 680, 695, 772, 1070, 1285]  # les indices à supprimer
 
@@ -52,9 +54,9 @@ class PrepareDataSet():
             self.ir, self.sar = dataprep.remove_sar_nan(self.ir,self.sar)
         
         if augmentation : 
-            print("before",self.ir.shape, self.sar.shape)
+            print("before augmentation",self.ir.shape, self.sar.shape)
             self.ir, self.sar = dataprep.data_augmentation(self.ir, self.sar)
-            print("after",self.ir.shape, self.sar.shape)
+            print("after augmentation",self.ir.shape, self.sar.shape)
 
             
         self.ir = np.nan_to_num(self.ir, nan=0.0, posinf=0.0, neginf=0.0)

@@ -42,7 +42,7 @@ from pathlib import Path
 import shutil
 
 
-import src.IR_to_SAR.data_preprocessing as dataprep
+import src.IR_to_SAR.data_preparation.data_preprocessing as dataprep
 from src.visualisation.utils_colormap import CMAP
 cmap_ir , cmap_sar = CMAP.cira_ir(), CMAP.cmap_sar()
 reload(dataprep)

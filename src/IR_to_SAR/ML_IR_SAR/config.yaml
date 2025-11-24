@@ -3,7 +3,7 @@
 # Image settings
 img_size: 256
 norm : "z_score"
-barycenter : "yes"
+barycenter : "no"
 augmentation : True
 drop_nan_sar : True
 
@@ -13,9 +13,9 @@ learning_rate: 0.0001
 num_epochs: 150
 
 # Dataset split
-train_split: 0.6
+train_split: 0.7
 val_split: 0.2
-test_split: 0.2
+test_split: 0.1
 # Paths
 data_path: "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_v1.pkl"
 save_dir: "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/train_history_ir_sar"

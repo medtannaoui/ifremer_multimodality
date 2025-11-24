@@ -274,7 +274,7 @@ def detect_sar_quadrants(sar_tensor):
     
     Returns a numpy array [NW, NE, SW, SE], each 0 or 1.
     """
-
+    
     H, W = sar_tensor.shape
     center = H // 2
     
@@ -352,6 +352,7 @@ def plot_sar(tensor, ax=None):
     
     x_sar,y_sar = np.linspace(-300,300,tensor.shape[0]) , np.linspace(-300,300,tensor.shape[1])
     ax.pcolormesh(x_sar, y_sar, tensor, cmap=cmap_sar)
+    ax.set_aspect('equal')
 
 
 def plot_ir(tensor, ax=None):
@@ -360,5 +361,6 @@ def plot_ir(tensor, ax=None):
     
     x_ir, y_ir = np.linspace(-300,300,tensor.shape[0]) , np.linspace(-300,300,tensor.shape[1])
     ax.pcolormesh(x_ir, y_ir , tensor, cmap=cmap_ir)
+    ax.set_aspect('equal')
     
 
