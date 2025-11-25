@@ -175,6 +175,7 @@ from collections import Counter
 def train_val_test_split(
     ir_array,
     sar_array,
+    mask_sar,
     train_size=0.7,
     val_size=0.15,
     test_size=0.15,
@@ -284,6 +285,7 @@ def train_val_test_split(
         "train": (ir_train, sar_train),
         "val":   (ir_array[X_val],   sar_array[X_val]),
         "test":  (ir_array[X_test],  sar_array[X_test]),
+        "mask_sar": mask_sar[X_val]
     }
 
 

@@ -44,17 +44,21 @@ class PrepareDataSet():
         self.ir = self.ir[:, int(H//2 - size//2):int((H//2) + (size//2)), int((W//2) - (size//2)):int((W//2) + (size//2))]       
         self.sar = self.sar[:, int(H//2 - size//2):int((H//2) + (size//2)), int((W//2) - (size//2)):int((W//2) + (size//2))]  
             # self.mask_sar = dataprep.get_mask_of_nan_values(self.sar)
-        indices_to_remove = [381, 129, 451, 680, 695, 772, 1070, 1285]  # les indices à supprimer
+        indices_to_remove = [381, 129, 451, 680, 695, 772, 1070, 1285]  # deleted indexes
 
         self.ir  = np.delete(self.ir, indices_to_remove, axis=0) - 273.15
         self.sar = np.delete(self.sar, indices_to_remove, axis=0) * 1.94384
 
+        
     
         if drop_nan_100 : 
             print("remove the couples where sar has more than 0.5 in 100km around the center")
             self.ir, self.sar = dataprep.remove_sar_nan(self.ir,self.sar)
         
-              
+        
+        #create the mask of sar values 
+        self.mask_sar = np.isfinite(self.sar).astype(np.float32)
+
         self.ir = np.nan_to_num(self.ir, nan=0.0, posinf=0.0, neginf=0.0)
         self.sar = np.nan_to_num(self.sar, nan=0.0, posinf=0.0, neginf=0.0)
         print("NaN dans IR:", np.isnan(self.ir).sum())

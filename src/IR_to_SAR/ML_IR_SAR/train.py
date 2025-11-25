@@ -209,7 +209,8 @@ def main(cfg: IR_SAR_Config,test=False):
         train_size=cfg.train_split,
         val_size=cfg.val_split,
         test_size=cfg.test_split,
-        augmentation=cfg.augmentation
+        augmentation=cfg.augmentation,
+        mask_sar = full_data.dataset.mask_sar
     )
 
     train_ds = PairedDataset(*dictio["train"])  #two attributes (ir and sar)
@@ -241,7 +242,7 @@ def main(cfg: IR_SAR_Config,test=False):
                 cmap_ir=cmap_ir,
                 cmap_sar=cmap_sar,
                 start_epoch=cfg.start_epoch,    
-                 
+                mask= dictio["mask_sar"]
             )
         ],
     )
@@ -294,10 +295,10 @@ def main(cfg: IR_SAR_Config,test=False):
                 print("----- plots saved")
 
         fabric.print(
-            f"📊 Epoch {epoch+1}: Train Loss={train_loss:.4f}, "
-            f"Val Loss={val_loss:.4f}, "
+            f"📊 Epoch {epoch+1}: Train Loss={train_loss:.6f}, "
+            f"Val Loss={val_loss:.6f}, "
             f"LR={scheduler.get_last_lr()[0]:.6f}, "
-            f"Train metrics={train_metrics}, Val metrics={val_metrics}"
+            # f"Train metrics={train_metrics}, Val metrics={val_metrics}"
         )
     history_df = pd.DataFrame({
     "train_loss": train_loss_history,

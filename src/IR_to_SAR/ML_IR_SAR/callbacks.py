@@ -138,16 +138,18 @@ class LogValidationSamples:
 
             
             # Real SAR
-            axes[1].imshow(sar_np[i], cmap=self.cmap_sar)
+            sar_vis = np.where(self.mask[i] == 1, sar_np[i], np.nan)
+            axes[1].imshow(sar_vis, cmap=self.cmap_sar)
             axes[1].set_title(f"Target SAR (knots)")
             axes[1].axis("off")
 
             # Predicted SAR
-            axes[2].imshow(pred_np[i], cmap=self.cmap_sar)
+            pred_vis = np.where(self.mask[i] == 1, pred_np[i], np.nan)
+            axes[2].imshow(pred_vis, cmap=self.cmap_sar)
             axes[2].set_title(f"Predicted SAR (knots)")
             axes[2].axis("off")
 
-            fig.suptitle(f"Sample {i} — Epoch {epoch}", fontsize=14)
+            fig.suptitle(f"Sample {i} — Epoch {epoch + 1}", fontsize=14)
             plt.tight_layout()
 
             # 📸 Save per-sample image
