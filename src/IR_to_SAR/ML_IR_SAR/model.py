@@ -10,6 +10,7 @@ def create_model(
     in_channels=1,           # IR +                  (mask_sar + dx + dy)
     out_channels=1,          # SAR output (wind speed map)
     block_out_channels=(128, 128, 256, 512),
+    dropout= 0.2,
     down_block_types=(
         "DownBlock2D",
         "DownBlock2D",
@@ -33,6 +34,7 @@ def create_model(
         block_out_channels=block_out_channels,
         down_block_types=down_block_types,
         up_block_types=up_block_types,
+        dropout=dropout
     )
     return model
 

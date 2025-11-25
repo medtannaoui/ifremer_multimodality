@@ -15,18 +15,23 @@ os.environ["OMP_NUM_THREADS"] = "1"
 import sys
 from loguru import logger
 import lightning as L  # used for the callbacks
-import dataclasses
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+
 
 
 print("---",os.getcwd())
 from importlib import reload
 import torch
+torch.set_float32_matmul_precision('high')
 print("CUDA available:", torch.cuda.is_available())
 print("GPU count:", torch.cuda.device_count())
 print("GPU name:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "None")
 
 import torch.nn.functional as F
 import torchmetrics
+from torchmetrics.functional import structural_similarity_index_measure as ssim
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # print(f"🚀 Using device: {device}")
 import torch.nn as nn
@@ -78,7 +83,7 @@ class IRSARDataset(Dataset):
     def __init__(self,test=False,size=256, norm = "z_score", barycenter = "no" ,augmentation = False, drop_nan_100 = True):
         self.norm = norm
         
-        dataset = prep_dataset.PrepareDataSet(size=size, norm= norm, barycenter= barycenter, augmentation= augmentation, drop_nan_100=drop_nan_100)
+        dataset = prep_dataset.PrepareDataSet(size=size, norm= norm, barycenter= barycenter, drop_nan_100=drop_nan_100)
         self.ir = dataset.ir
         self.sar = dataset.sar   
         self.dataset = dataset     
@@ -123,20 +128,34 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics):
         optimizer.zero_grad()
 
         # Forward
-        pred = model(ir, timestep=0).sample   # (B,1,H,W)
+        pred = model(ir, timestep=0).sample  # (B,1,H,W)
 
-        # Mask des pixels valides (ni NaN ni Inf)
-        mask = torch.isfinite(sar)           # (B,1,H,W)
+        # Mask des pixels valides
+        mask = torch.isfinite(sar)
 
-        loss = F.mse_loss(pred[mask], sar.nan_to_num()[mask])
+        sar_valid = sar.nan_to_num()
+        pred_valid = pred
 
+        # --- Loss MSE ---
+        loss_mse = F.mse_loss(pred_valid[mask], sar_valid[mask])
+
+        # --- Loss SSIM (on calcule sur toute l’image, sans mask) ---
+        loss_ssim = 1 - ssim(pred_valid, sar_valid)   # (1 - SSIM) car SSIM = similarité
+
+        # --- Combine loss ---
+        loss = 0 * loss_mse + 1 * loss_ssim
+
+      
         fabric.backward(loss)
+        fabric.clip_gradients(model,optimizer, max_norm=1.0)   #gradient clipping
         optimizer.step()
 
         total_loss += loss.item()
-        metrics.update(pred[mask], sar.nan_to_num()[mask])
+        metrics.update(pred_valid[mask], sar_valid[mask])
 
     return total_loss / len(dataloader), metrics.compute()
+
+
 
 
 
@@ -152,11 +171,20 @@ def validate(fabric, model, dataloader, metrics):
             pred = model(ir, timestep=0).sample
 
             mask = torch.isfinite(sar)
+            sar_valid = sar.nan_to_num()
+            pred_valid = pred
 
-            loss = F.mse_loss(pred[mask], sar.nan_to_num()[mask])
+            # Loss MSE
+            loss_mse = F.mse_loss(pred_valid[mask], sar_valid[mask])
+
+            # Loss SSIM (1 - SSIM car SSIM = Similarité)
+            loss_ssim = 1 - ssim(pred_valid, sar_valid)
+
+            # Combine
+            loss = 0 * loss_mse + 1 * loss_ssim
 
             total_loss += loss.item()
-            metrics.update(pred[mask], sar.nan_to_num()[mask])
+            metrics.update(pred_valid[mask], sar_valid[mask])
 
     return total_loss / len(dataloader), metrics.compute()
 
@@ -169,7 +197,7 @@ def main(cfg: IR_SAR_Config,test=False):
 
     # --- Dataset full ---
     
-    full_data = IRSARDataset(test=test, size=cfg.img_size, norm=cfg.norm, barycenter=cfg.barycenter, drop_nan_100=cfg.drop_nan_sar, augmentation=cfg.augmentation)
+    full_data = IRSARDataset(test=test, size=cfg.img_size, norm=cfg.norm, barycenter=cfg.barycenter, drop_nan_100=cfg.drop_nan_sar)
     ir_all, sar_all = full_data.dataset.ir, full_data.dataset.sar
     if cfg.barycenter == "yes" : 
         dx = full_data.dataset.dx_sar
@@ -180,7 +208,8 @@ def main(cfg: IR_SAR_Config,test=False):
         np.array(ir_all), np.array(sar_all),
         train_size=cfg.train_split,
         val_size=cfg.val_split,
-        test_size=cfg.test_split
+        test_size=cfg.test_split,
+        augmentation=cfg.augmentation
     )
 
     train_ds = PairedDataset(*dictio["train"])  #two attributes (ir and sar)
@@ -225,8 +254,9 @@ def main(cfg: IR_SAR_Config,test=False):
     }).to(fabric.device)
 
     # --- Model & Optimizer & Scheduler ---
-    model = create_model(image_size=cfg.img_size).to(fabric.device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate)
+    model = create_model(image_size=cfg.img_size, dropout=cfg.dropout).to(fabric.device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate, weight_decay=1e-4)   #add regularisation
+
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.num_epochs)
 
     # Prepare for Fabric
@@ -253,7 +283,7 @@ def main(cfg: IR_SAR_Config,test=False):
             fabric=fabric
         )
 
-        if (epoch + 1) >= cfg.start_epoch and (epoch + 1) % cfg.plot_interval == 0:
+        if epoch ==0 or ((epoch + 1) >= cfg.start_epoch and (epoch + 1) % cfg.plot_interval == 0):
                 fabric.call(
                 "on_validation_plots",
                 model=model,

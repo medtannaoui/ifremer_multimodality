@@ -26,7 +26,7 @@ class IR_SAR_Config:
     barycenter : str
     augmentation : bool
     drop_nan_sar : bool
-
+    dropout : float
     @staticmethod
     def from_yaml(path: str):
         with open(path, "r") as file:

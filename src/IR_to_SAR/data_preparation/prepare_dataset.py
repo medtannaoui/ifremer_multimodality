@@ -21,7 +21,6 @@ class PrepareDataSet():
                  barycenter = "no",
                  size = 256,
                  norm = "z_score",
-                 augmentation = False,
                  drop_nan_100 = True
                  ):
         print("Start preparation dataset : ......................")
@@ -36,9 +35,13 @@ class PrepareDataSet():
         else : 
                 self.sar = np.array(data_ir_sar)[:, 1, :, :]
         
+        self.ir = np.array(data_ir_sar)[:, 0, :, :]
+        
         N,H,W = self.sar.shape    
         assert size <= H and size <= W, "Crop size must be <= original dimensions" 
-        self.ir = np.array(data_ir_sar)[:, 0, int(H//2 - size//2):int((H//2) + (size//2)), int((W//2) - (size//2)):int((W//2) + (size//2))]       
+
+
+        self.ir = self.ir[:, int(H//2 - size//2):int((H//2) + (size//2)), int((W//2) - (size//2)):int((W//2) + (size//2))]       
         self.sar = self.sar[:, int(H//2 - size//2):int((H//2) + (size//2)), int((W//2) - (size//2)):int((W//2) + (size//2))]  
             # self.mask_sar = dataprep.get_mask_of_nan_values(self.sar)
         indices_to_remove = [381, 129, 451, 680, 695, 772, 1070, 1285]  # les indices à supprimer
@@ -46,19 +49,12 @@ class PrepareDataSet():
         self.ir  = np.delete(self.ir, indices_to_remove, axis=0) - 273.15
         self.sar = np.delete(self.sar, indices_to_remove, axis=0) * 1.94384
 
-        
-        
-        
+    
         if drop_nan_100 : 
             print("remove the couples where sar has more than 0.5 in 100km around the center")
             self.ir, self.sar = dataprep.remove_sar_nan(self.ir,self.sar)
         
-        if augmentation : 
-            print("before augmentation",self.ir.shape, self.sar.shape)
-            self.ir, self.sar = dataprep.data_augmentation(self.ir, self.sar)
-            print("after augmentation",self.ir.shape, self.sar.shape)
-
-            
+              
         self.ir = np.nan_to_num(self.ir, nan=0.0, posinf=0.0, neginf=0.0)
         self.sar = np.nan_to_num(self.sar, nan=0.0, posinf=0.0, neginf=0.0)
         print("NaN dans IR:", np.isnan(self.ir).sum())

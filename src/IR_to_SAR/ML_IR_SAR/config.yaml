@@ -11,11 +11,12 @@ drop_nan_sar : True
 batch_size: 32
 learning_rate: 0.0001
 num_epochs: 150
+dropout : 0.25
 
 # Dataset split
-train_split: 0.7
-val_split: 0.2
-test_split: 0.1
+train_split: 0.6
+val_split: 0.25
+test_split: 0.15
 # Paths
 data_path: "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_v1.pkl"
 save_dir: "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/train_history_ir_sar"
@@ -27,11 +28,11 @@ early_stop_delta: 0.0001
 # Plotting
 start_epoch: 0
 plot_interval: 10
-num_val_exemples : 10
+num_val_exemples : 15
 
 # Device
 accelerator: "gpu"
-devices: [0]   # 
+devices: [1]   # 
 
 # Scheduler
 scheduler_every_n_epochs: 5

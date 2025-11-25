@@ -61,7 +61,7 @@ class LogValidationSamples:
 
     def __init__(self, base_dir, min_ir, max_ir, min_sar, max_sar,mean_sar,std_sar,mean_ir,std_ir,norm,
              num_samples=4, start_epoch=20, every_n_epochs=1,
-             cmap_ir="gray", cmap_sar="viridis"):
+             cmap_ir="gray", cmap_sar="viridis",mask = None):
 
         self.base_dir = Path(base_dir)
         self.output_dir = self._create_unique_dir(self.base_dir)
@@ -81,6 +81,7 @@ class LogValidationSamples:
         self.std_sar = std_sar
         self.std_ir = std_ir
         self.norm = norm
+        self.mask = mask
 
 
     def _create_unique_dir(self, base_dir):

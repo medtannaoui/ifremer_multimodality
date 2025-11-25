@@ -178,7 +178,8 @@ def train_val_test_split(
     train_size=0.7,
     val_size=0.15,
     test_size=0.15,
-    n_bins=5
+    n_bins=3,
+    augmentation = True
 ):
     """
     Split IR→SAR dataset while preserving:
@@ -267,15 +268,22 @@ def train_val_test_split(
     X_val   = np.array([int(i) for i in X_val])
     X_test  = np.array([int(i) for i in X_test])
 
-    # Debug (optional)
-    print("Index types:", type(X_train), X_train.dtype)
-    print("Sample values:", X_train[:10])
+   
     ir_array = np.array(ir_array, dtype=float)
     sar_array = np.array(sar_array, dtype=float)
+    ir_train,sar_train = ir_array[X_train], sar_array[X_train]
+
+    #augmentation data for the train set (rottaion 90° and 180°)
+    if augmentation : 
+        ir_train, sar_train = data_augmentation(ir_train,sar_train)
+        
+
+
+
     return {
-        "train": (ir_array[X_train], sar_array[X_train]),
+        "train": (ir_train, sar_train),
         "val":   (ir_array[X_val],   sar_array[X_val]),
-        # "test":  (ir_array[X_test],  sar_array[X_test]),
+        "test":  (ir_array[X_test],  sar_array[X_test]),
     }
 
 
@@ -428,7 +436,7 @@ def remove_sar_nan(ir_batch, sar_batch, radius_km=100, km_per_pixel=2, threshold
 
 
 
-def augmentation_sar_safe(ir, sar):
+def augmentation_sar_safe(ir, sar, angle):
     
     # convert to tensor
     ir = torch.tensor(ir, dtype=torch.float32).unsqueeze(0)
@@ -437,9 +445,9 @@ def augmentation_sar_safe(ir, sar):
     
 
     # Rotation centered
-    angle = random.choice([45,90, 135, 180, 245, 270])
-    ir = TF.rotate(ir, angle, fill=0)
-    sar = TF.rotate(sar, angle, fill=0)
+    ir = TF.rotate(ir, angle)
+    sar = TF.rotate(sar, angle)
+
 
     return ir.squeeze(0).numpy(), sar.squeeze(0).numpy()
 
@@ -451,8 +459,12 @@ def data_augmentation(ir_tensor, sar_tensor):
         ir_augmented.append(ir)
         sar_augmented.append(sar)
 
-        ir_aug, sar_aug = augmentation_sar_safe(ir, sar)
-        ir_augmented.append(ir_aug)
-        sar_augmented.append(sar_aug)
+        ir_aug_90, sar_aug_90 = augmentation_sar_safe(ir, sar, 90)
+        ir_augmented.append(ir_aug_90)
+        sar_augmented.append(sar_aug_90)
+
+        ir_aug_180, sar_aug_180 = augmentation_sar_safe(ir, sar, 180)
+        ir_augmented.append(ir_aug_180)
+        sar_augmented.append(sar_aug_180)
 
     return np.array(ir_augmented), np.array(sar_augmented)
