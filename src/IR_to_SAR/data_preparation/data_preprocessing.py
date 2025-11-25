@@ -470,3 +470,53 @@ def data_augmentation(ir_tensor, sar_tensor):
         sar_augmented.append(sar_aug_180)
 
     return np.array(ir_augmented), np.array(sar_augmented)
+
+
+
+def compute_global_distributions(model, dataloader, device, save_dir):
+    model.eval()
+
+    all_true = []
+    all_pred = []
+
+    with torch.no_grad():
+        for ir, sar in dataloader:
+            ir = ir.to(device)
+            sar = sar.to(device)
+
+            pred = model(ir, timestep=0).sample
+
+            # Flatten valid pixels
+            mask = torch.isfinite(sar)
+            sar_valid = sar[mask].cpu().numpy()
+            pred_valid = pred[mask].cpu().numpy()
+
+            all_true.append(sar_valid)
+            all_pred.append(pred_valid)
+
+    # Concatenate all batches
+    all_true = np.concatenate(all_true)
+    all_pred = np.concatenate(all_pred)
+
+    # Compute error
+    all_errors = (all_pred - all_true) ** 2
+
+    print(f"Collected {len(all_true)} valid SAR pixels for distribution analysis.")
+
+    # ---- Plot global distributions ----
+    plt.figure(figsize=(8,5))
+    plt.hist(all_true, bins=50, alpha=0.6, density=True, label="Real SAR", color='blue')
+    plt.hist(all_pred, bins=50, alpha=0.6, density=True, label="Predicted SAR", color='green')
+    plt.hist(all_errors, bins=50, alpha=0.6, density=True, label="Squared Error", color='red')
+
+    plt.title("Global Distribution — Validation Dataset")
+    plt.xlabel("Wind speed (knots) or error")
+    plt.ylabel("Density")
+    plt.legend()
+    plt.grid(True)
+
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, "global_distributions.png")
+    plt.savefig(save_path, dpi=150)
+    plt.close()
+    print(f"📊 Saved global distribution plot: {save_path}")

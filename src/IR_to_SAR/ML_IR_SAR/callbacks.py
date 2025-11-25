@@ -38,8 +38,8 @@ class ModelCheckpoint:
     Callback to save the model after an epoch if the validation loss improved.
     """
 
-    def __init__(self, output_dir, filename="best_regression_model.pt"):
-        self.output_path = Path(output_dir) / filename
+    def __init__(self, output_dir, filename="best_regression_model.pt", target_dir= None):
+        self.output_path = Path(output_dir) / target_dir / filename
         self.best_val_loss = float("inf")
 
     def on_validation_epoch_end(self, val_loss, model, fabric, **kwargs):
@@ -157,6 +157,7 @@ class LogValidationSamples:
             save_path =  os.path.join(os.path.join(Path(self.output_dir ), "samples"), f"sample_{i}_epoch_{epoch + 1}.png")
             plt.savefig(save_path, dpi=150)
             plt.close(fig)
+
 
             print(f"💾 Saved: {save_path}")
     

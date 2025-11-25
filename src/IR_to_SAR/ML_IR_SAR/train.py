@@ -220,13 +220,20 @@ def main(cfg: IR_SAR_Config,test=False):
     val_loader   = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False)
 
     # --- Fabric init with callbacks ---   #QUentin
+    base_dir = Path(cfg.save_dir)
+
+    i = 1
+    while (base_dir / f"train_ir_sar_{i}").exists():
+        i += 1
+
+    target_dir = base_dir / f"train_ir_sar_{i}"
     fabric = L.Fabric(
         accelerator=cfg.accelerator,
         devices= cfg.devices,
         strategy= "auto",
         callbacks=[
             EarlyStopping(patience=cfg.early_stop_patience, min_delta=cfg.early_stop_delta),
-            ModelCheckpoint(cfg.save_dir),
+            ModelCheckpoint(cfg.save_dir, target_dir= target_dir),
             LogValidationSamples(
                 base_dir=cfg.save_dir,
                 num_samples=cfg.num_val_exemples,
@@ -304,13 +311,7 @@ def main(cfg: IR_SAR_Config,test=False):
     "train_loss": train_loss_history,
     "val_loss": val_loss_history
     })
-    base_dir = Path(cfg.save_dir)
-
-    i = 1
-    while (base_dir / f"train_ir_sar_{i}").exists():
-        i += 1
-
-    target_dir = base_dir / f"train_ir_sar_{i-1}"
+    
 
     # Construire le chemin du CSV
     csv_path = target_dir / "training_history.csv"
@@ -331,6 +332,7 @@ def main(cfg: IR_SAR_Config,test=False):
     # save the config 
     config_path = "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/config.yaml"
     shutil.copy(config_path,os.path.join(target_dir,"config_used.yaml"))
+    dataprep.compute_global_distributions(model, val_loader, fabric.device, save_dir=os.path.join(target_dir, "distributions"))
     logger.info("🎯 Training Complete!")
 
 
