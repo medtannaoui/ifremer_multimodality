@@ -473,7 +473,7 @@ def data_augmentation(ir_tensor, sar_tensor):
 
 
 
-def compute_global_distributions(model, dataloader, device, save_dir):
+def compute_global_distributions(model, dataloader, device,mean_val_sar, std_val_sar, save_dir, eps= 1e-10):
     model.eval()
 
     all_true = []
@@ -487,7 +487,9 @@ def compute_global_distributions(model, dataloader, device, save_dir):
             pred = model(ir, timestep=0).sample
 
             # Flatten valid pixels
-            mask = torch.isfinite(sar)
+            mask = np.isfinite(sar.cpu().numpy())
+            sar = sar * (std_val_sar + eps) + mean_val_sar
+            pred = pred * (std_val_sar + eps) + mean_val_sar
             sar_valid = sar[mask].cpu().numpy()
             pred_valid = pred[mask].cpu().numpy()
 
@@ -497,6 +499,7 @@ def compute_global_distributions(model, dataloader, device, save_dir):
     # Concatenate all batches
     all_true = np.concatenate(all_true)
     all_pred = np.concatenate(all_pred)
+    
 
     # Compute error
     all_errors = (all_pred - all_true) ** 2
@@ -504,19 +507,21 @@ def compute_global_distributions(model, dataloader, device, save_dir):
     print(f"Collected {len(all_true)} valid SAR pixels for distribution analysis.")
 
     # ---- Plot global distributions ----
+    #without counting the zero value
     plt.figure(figsize=(8,5))
-    plt.hist(all_true, bins=50, alpha=0.6, density=True, label="Real SAR", color='blue')
-    plt.hist(all_pred, bins=50, alpha=0.6, density=True, label="Predicted SAR", color='green')
-    plt.hist(all_errors, bins=50, alpha=0.6, density=True, label="Squared Error", color='red')
+    plt.hist(all_true, bins=50, alpha=0.6, density=False, label="Real SAR", color='blue')
+    plt.hist(all_pred[all_pred > 5], bins=50, alpha=0.6, density=False, label="Predicted SAR", color='green')
+    # plt.hist(all_errors[all_errors > 5], bins=50, alpha=0.6, density=False, label="Squared Error", color='red')
+    plt.xlim(5, 150)
 
     plt.title("Global Distribution — Validation Dataset")
     plt.xlabel("Wind speed (knots) or error")
-    plt.ylabel("Density")
+    plt.ylabel("Count")
     plt.legend()
     plt.grid(True)
 
     os.makedirs(save_dir, exist_ok=True)
-    save_path = os.path.join(save_dir, "global_distributions.png")
+    save_path = os.path.join(save_dir, "wind_speed_distributions.png")
     plt.savefig(save_path, dpi=150)
     plt.close()
     print(f"📊 Saved global distribution plot: {save_path}")

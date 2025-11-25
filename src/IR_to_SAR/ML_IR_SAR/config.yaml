@@ -8,10 +8,10 @@ augmentation : True
 drop_nan_sar : True
 
 # Training parameters
-batch_size: 64
+batch_size: 32
 learning_rate: 0.0001
-num_epochs: 30
-dropout : 0.25
+num_epochs: 50
+dropout : 0.3
 
 # Dataset split
 train_split: 0.55

@@ -332,7 +332,8 @@ def main(cfg: IR_SAR_Config,test=False):
     # save the config 
     config_path = "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/config.yaml"
     shutil.copy(config_path,os.path.join(target_dir,"config_used.yaml"))
-    dataprep.compute_global_distributions(model, val_loader, fabric.device, save_dir=os.path.join(target_dir, "distributions"))
+    dataprep.compute_global_distributions(model, val_loader, fabric.device,full_data.dataset.mean_val_sar, full_data.dataset.std_val_sar,
+                                          save_dir=os.path.join(target_dir, "distributions"))
     logger.info("🎯 Training Complete!")
 
 
