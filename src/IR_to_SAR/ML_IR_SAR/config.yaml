@@ -6,33 +6,35 @@ norm : "z_score"
 barycenter : "no"
 augmentation : True
 drop_nan_sar : True
+in_channels: 1     # ir channel 
+out_channels: 1
 
 # Training parameters
 batch_size: 32
-learning_rate: 0.0001
+learning_rate: 0.001
 num_epochs: 50
-dropout : 0.3
+dropout : 0.2
 
 # Dataset split
-train_split: 0.55
-val_split: 0.25
-test_split: 0.20
+train_split: 0.6
+val_split: 0.39
+test_split: 0.01
 # Paths
 data_path: "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_v1.pkl"
 save_dir: "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/train_history_ir_sar"
 
 # Early stopping
-early_stop_patience: 15
+early_stop_patience: 20
 early_stop_delta: 0.0001
 
 # Plotting
 start_epoch: 0
-plot_interval: 10
-num_val_exemples : 15
+plot_interval: 5
+num_val_exemples : 10
 
 # Device
 accelerator: "gpu"
 devices: [2]   # 
 
 # Scheduler
-scheduler_every_n_epochs: 5
+scheduler_every_n_epochs: 10

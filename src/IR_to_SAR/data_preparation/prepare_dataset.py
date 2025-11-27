@@ -17,16 +17,34 @@ reload(dataprep)
 
 class PrepareDataSet():
 
-    def __init__(self,pkl_file= "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_v1.pkl",
+    def __init__(self,pkl_file= "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_v2.pkl",
                  barycenter = "no",
                  size = 256,
                  norm = "z_score",
                  drop_nan_100 = True
+
+
                  ):
+        
+
+
         print("Start preparation dataset : ......................")
         with open(pkl_file, "rb") as f :
-            data_ir_sar = pkl.load(f)
+            data = pkl.load(f)
         
+        pairs = []
+        infos = []
+
+        for (cyclone, distance_km, sar_time), (irwin, wind) in data:
+            pairs.append([irwin, wind])
+            infos.append([cyclone, distance_km, sar_time])
+
+        data_ir_sar = np.array(pairs)
+        array_info = np.array(infos, dtype=object) 
+        self.cyclone_ids = array_info[:,0]
+        self.distance_km = array_info[:,1].astype(np.float32)
+        self.sar_time = array_info[:,2]
+
         if barycenter == "yes":
                 sars_recalib = dataprep.recenter_sar_around_barycenter(np.array(data_ir_sar)[:, 1, :, :])
                 self.sar = np.array([item[0] for item in sars_recalib])
@@ -44,10 +62,12 @@ class PrepareDataSet():
         self.ir = self.ir[:, int(H//2 - size//2):int((H//2) + (size//2)), int((W//2) - (size//2)):int((W//2) + (size//2))]       
         self.sar = self.sar[:, int(H//2 - size//2):int((H//2) + (size//2)), int((W//2) - (size//2)):int((W//2) + (size//2))]  
             # self.mask_sar = dataprep.get_mask_of_nan_values(self.sar)
-        indices_to_remove = [381, 129, 451, 680, 695, 772, 1070, 1285]  # deleted indexes
+        # indices_to_remove = [381, 129, 451, 680, 695, 772, 1070, 1285]  # deleted indexes
 
-        self.ir  = np.delete(self.ir, indices_to_remove, axis=0) - 273.15
-        self.sar = np.delete(self.sar, indices_to_remove, axis=0) * 1.94384
+        # self.ir  = np.delete(self.ir, indices_to_remove, axis=0) - 273.15
+        # self.sar = np.delete(self.sar, indices_to_remove, axis=0) * 1.94384
+        self.ir = self.ir - 273.15  # Convert IR from Kelvin to Celsius
+        self.sar = self.sar * 1.94384  # Convert SAR from m/s to knots
 
         
     

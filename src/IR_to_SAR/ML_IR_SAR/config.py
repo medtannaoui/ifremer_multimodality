@@ -27,6 +27,8 @@ class IR_SAR_Config:
     augmentation : bool
     drop_nan_sar : bool
     dropout : float
+    in_channels : int
+    out_channels : int
     @staticmethod
     def from_yaml(path: str):
         with open(path, "r") as file:

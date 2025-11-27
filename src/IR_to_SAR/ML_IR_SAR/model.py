@@ -7,7 +7,7 @@ from diffusers import UNet2DModel
 
 def create_model(
     image_size=(256, 256),   # patch final utile
-    in_channels=1,           # IR +                  (mask_sar + dx + dy)
+    in_channels=1,           # IR 
     out_channels=1,          # SAR output (wind speed map)
     block_out_channels=(128, 128, 256, 256, 512),
     dropout= 0.2,
@@ -39,4 +39,3 @@ def create_model(
         dropout=dropout
     )
     return model
-

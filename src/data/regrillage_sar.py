@@ -19,7 +19,7 @@ def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=2):
     # Charger le fichier SAR original
     ds = xr.open_dataset(sar_file)
     # print(ds.data_vars)
-    filename = os.path.basename(sar_file).split(".nc")[0]
+    filename = os.path.basename(sar_file).split(".nc")[0][:-6]
 
     # Trouver le centre correspondant dans le DataFrame
     match = sargeo_df[sargeo_df["sar_inter"].str.contains(filename, case=False, na=False)]
@@ -86,14 +86,14 @@ def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=2):
     # Mettre à jour ton CSVa ton avis 
     current_index = match.index[0]
     sargeo_df.at[current_index, "sar_xy"] = out_file
-    sargeo_df.to_csv("excels/SARGEO_SAR_v1.csv", index=False)
+    sargeo_df.to_csv("excels/SARGEO_SAR_v3.csv", index=False)
 
     print(f"✅ Fichier reprojeté sauvegardé : {out_file}")
 
 
 def main(dxy=2,max_r=300):
-    output_dir = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_v1"
-    sargeo = pd.read_csv("excels/SARGEO_SAR.csv")
+    output_dir = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_v2"
+    sargeo = pd.read_csv("excels/SARGEO_SAR_v3.csv")
 
     # test only for al122024
     # sargeo = sargeo[sargeo["cyclone"] == "al122024"]

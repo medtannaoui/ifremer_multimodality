@@ -19,26 +19,28 @@ def get_inter_path(path):
     inter_path = None
 
     path = os.path.basename(path)   #take the basenime directory
-
+    print(path)
     if "_ll" in path : 
-        return path.split("_ll")[0]
+        
+        return path.split("_ll")[0][:-6]
     else : 
+        print(path.split("_aeqd")[0])
         return path.split("_aeqd")[0]
 
 
 
 def get_geo_path(path_sar_aeqd):
-    sargeo_path = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v01r02/cyclobs"
-    sargeo_df = pd.read_csv("/scale/user/mtannaou/alternance/excels/SARGEO_SAR.csv")
+    sargeo_path = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v00r00/cyclobs"
+    sargeo_df = pd.read_csv("/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v3.csv")
 
     inter_path = get_inter_path(path_sar_aeqd)
-    cyclone = sargeo_df[sargeo_df["sar_inter"] == inter_path+".nc"]["cyclone"].iloc[0]
+    cyclone = sargeo_df[sargeo_df["sar_inter"].str.contains(inter_path)]["cyclone"].iloc[0]
     irwin_path = os.path.join(sargeo_path,cyclone,"IRWIN")
-    geo_path = os.path.join(irwin_path,sargeo_df[sargeo_df["sar_inter"] == inter_path+".nc"]["fichier"].iloc[0])
+    geo_path = os.path.join(irwin_path,sargeo_df[sargeo_df["sar_inter"].str.contains(inter_path)]["fichier"].iloc[0])
 
     return geo_path
 
-def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alternance/donnees_sar_aeqd_v1",show=True, var_vis = "owiWindSpeed"):
+def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alternance/donnees_sar_aeqd_v2",show=True, var_vis = "owiWindSpeed"):
     cyc = None
     matches = [
     (cyc, f)

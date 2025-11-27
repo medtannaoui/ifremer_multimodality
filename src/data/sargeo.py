@@ -16,7 +16,99 @@ import pandas as pd
 # ========================== PATHS ============================
 # ============================================================
 
-SARGEO_ROOT = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v01r02/cyclobs"
+SARGEO_ROOT = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v00r00/cyclobs"
+
+
+
+
+#### Create sargeo_sar csv file ####
+def create_sargeo_sar_csv():
+    # --- Dossier racine SARGEO ---
+    sargeo_path = SARGEO_ROOT
+    # --- Liste des cyclones ---
+    cyclones = os.listdir(sargeo_path)
+
+    infos = []
+
+    for cyclone in cyclones:
+        cyclone_path = os.path.join(sargeo_path, cyclone)
+        if not os.path.isdir(cyclone_path):
+            continue
+
+        # print(f"🌀 Traitement du cyclone : {cyclone}")
+
+        # --- On regarde s'il y a les sous-dossiers IRWIN et WV ---
+        for subdir in ["IRWIN", "WV"]:
+            sub_path = os.path.join(cyclone_path, subdir)
+            if not os.path.exists(sub_path):
+                # print(f"  ⚠️ Pas de dossier {subdir} pour {cyclone}")
+                continue
+
+            # --- Liste des fichiers NetCDF ---
+            nc_files = [f for f in os.listdir(sub_path) if f.endswith(".nc")]
+
+            for nc_file in nc_files:
+                file_path = os.path.join(sub_path, nc_file)
+                try:
+                    ds = xr.open_dataset(file_path)
+
+                    # Vérifie que les champs existent
+                    lat_centre = float(ds["storm_latitude"].values[4]) if "storm_latitude" in ds else None
+                    lon_centre = float(ds["storm_longitude"].values[4]) if "storm_longitude" in ds else None
+                    time = str(ds["sar_acquisition_time"].values) if "sar_acquisition_time" in ds else None
+
+                    infos.append({
+                        "cyclone": cyclone,
+                        "canal": subdir,
+                        "fichier": nc_file,
+                        "lat_centre": lat_centre,
+                        "lon_centre": lon_centre,
+                        "sar_acquisition_time": time
+                    })
+
+                    ds.close()
+
+                except Exception as e:
+                    print(f"  ⚠️ Erreur avec {file_path} : {e}")
+
+
+    # --- Conversion en DataFrame ---
+    df = pd.DataFrame(infos)
+
+    # --- Sauvegarde CSV ---
+    output_csv = "/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v00r00.csv"
+    os.makedirs(os.path.dirname(output_csv), exist_ok=True)
+    df.to_csv(output_csv, index=False)
+
+
+### create sargeo_sar_csv() ###
+def add_sar_listing_path():
+    sargeo_csv_path = "/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v00r00.csv"
+    listing_sar_path = "/scale/user/mtannaou/alternance/excels/listing_res_3km.csv"
+    output_path = "/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v3.csv"
+    listing_df = pd.read_csv(listing_sar_path)
+    sargeo = pd.read_csv(sargeo_csv_path)
+    #add inter column
+    for i, row in sargeo.iterrows():
+        file_path = row["fichier"]
+        #rcm1-sclnd-owi-cm-20250217t134001-20250217t134117-00003
+        sargeo.loc[i, "sar_inter"] = file_path.split(".nc")[0][:-22]
+        # search in listing_sar_path for matching sar_inter
+        match = listing_df[listing_df["L2M path"].str.contains(sargeo.loc[i, "sar_inter"])]
+        
+        if len(match) > 0:
+            sargeo.loc[i, "sar_path"] = match["L2M path"].values[0]
+    sargeo.to_csv(output_path, index=False)
+    print(f"SARGEO with SAR path saved to {output_path}")
+    
+        
+
+
+
+
+
+
+
 
 
 # ============================================================
@@ -111,4 +203,4 @@ def save_sargeo_csv(
 # ============================================================
 
 if __name__ == "__main__":
-    save_sargeo_csv()
+    add_sar_listing_path()

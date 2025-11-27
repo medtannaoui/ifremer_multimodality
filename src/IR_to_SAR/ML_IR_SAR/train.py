@@ -143,7 +143,7 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics):
         loss_ssim = 1 - ssim(pred_valid, sar_valid)   # (1 - SSIM) car SSIM = similarité
 
         # --- Combine loss ---
-        loss = 0 * loss_mse + 1 * loss_ssim
+        loss = 0.4 * loss_mse + 0.6 * loss_ssim
 
       
         fabric.backward(loss)
@@ -181,7 +181,7 @@ def validate(fabric, model, dataloader, metrics):
             loss_ssim = 1 - ssim(pred_valid, sar_valid)
 
             # Combine
-            loss = 0 * loss_mse + 1 * loss_ssim
+            loss = 0.4 * loss_mse + 0.6* loss_ssim
 
             total_loss += loss.item()
             metrics.update(pred_valid[mask], sar_valid[mask])
@@ -249,7 +249,9 @@ def main(cfg: IR_SAR_Config,test=False):
                 cmap_ir=cmap_ir,
                 cmap_sar=cmap_sar,
                 start_epoch=cfg.start_epoch,    
-                mask= dictio["mask_sar"]
+                mask= dictio["mask_sar"],
+                cyclone_ids= full_data.dataset.cyclone_ids,
+                sar_times= full_data.dataset.sar_time
             )
         ],
     )
@@ -332,8 +334,7 @@ def main(cfg: IR_SAR_Config,test=False):
     # save the config 
     config_path = "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/config.yaml"
     shutil.copy(config_path,os.path.join(target_dir,"config_used.yaml"))
-    dataprep.compute_global_distributions(model, val_loader, fabric.device,full_data.dataset.mean_val_sar, full_data.dataset.std_val_sar,
-                                          save_dir=os.path.join(target_dir, "distributions"))
+    
     logger.info("🎯 Training Complete!")
 
 

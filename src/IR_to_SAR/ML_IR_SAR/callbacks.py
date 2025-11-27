@@ -61,7 +61,7 @@ class LogValidationSamples:
 
     def __init__(self, base_dir, min_ir, max_ir, min_sar, max_sar,mean_sar,std_sar,mean_ir,std_ir,norm,
              num_samples=4, start_epoch=20, every_n_epochs=1,
-             cmap_ir="gray", cmap_sar="viridis",mask = None):
+             cmap_ir="gray", cmap_sar="viridis",mask = None, num_epochs=0, cyclone_ids=None, sar_times=None, distance_km=None):
 
         self.base_dir = Path(base_dir)
         self.output_dir = self._create_unique_dir(self.base_dir)
@@ -82,6 +82,10 @@ class LogValidationSamples:
         self.std_ir = std_ir
         self.norm = norm
         self.mask = mask
+        self.num_epochs = num_epochs
+        self.cyclone_ids = cyclone_ids
+        self.sar_times = sar_times
+        self.distance_km = distance_km
 
 
     def _create_unique_dir(self, base_dir):
@@ -94,10 +98,9 @@ class LogValidationSamples:
 
     def denormalize(self, tensor, min_val, max_val,mean_val, std_val, eps = 1e-10):
         """Convert back from [0,1] to real physical values."""
-        if self.norm == "z_score":
-            return ((tensor * (std_val + eps)) - mean_val)
-        else : 
-            return tensor * (max_val - min_val + eps) + min_val
+        
+        return ((tensor * (std_val + eps)) + mean_val)
+        
 
     def log_batch(self, model, batch, epoch, device):
         """
@@ -108,12 +111,22 @@ class LogValidationSamples:
             return  # 🛑 Do nothing before epoch threshold
 
         model.eval()
-        ir, sar = batch
-        ir = ir.to(device)
-        sar = sar.to(device)
+        if len(batch) == 3:
+            ir, sar, distance = batch
+            ir = ir.to(device)
+            distance = distance.to(device)
+            with torch.no_grad():
+                distance_map = distance.unsqueeze(1).unsqueeze(2).unsqueeze(3)  # (B,1,1,1)
+                distance_map = distance_map.expand(-1, 1, ir.shape[2], ir.shape[3])  # (B,1,H,W)
+                ir_cond = torch.cat([ir, distance_map], dim=1)  # (B,2,H,W)
+                pred = model(ir_cond, timestep=0).sample
+        else:
+            ir, sar = batch
+            ir = ir.to(device)
+            sar = sar.to(device)
 
-        with torch.no_grad():
-            pred = model(ir, timestep=0).sample
+            with torch.no_grad():
+                pred = model(ir, timestep=0).sample
 
         # ---- Dé-normalisation ----
         ir_denorm   = self.denormalize(ir, self.min_ir, self.max_ir, self.mean_ir, self.std_ir)
@@ -148,8 +161,15 @@ class LogValidationSamples:
             axes[2].imshow(pred_vis, cmap=self.cmap_sar)
             axes[2].set_title(f"Predicted SAR (knots)")
             axes[2].axis("off")
-
-            fig.suptitle(f"Sample {i} — Epoch {epoch + 1}", fontsize=14)
+            
+            # add cyclone name and sar time to the fig title
+            if self.cyclone_ids is not None and self.sar_times is not None :
+                cyclone_id = self.cyclone_ids[i]
+                sar_time = self.sar_times[i]
+                
+                fig.suptitle(f"Cyclone: {cyclone_id} — SAR Time: {sar_time} — Epoch {epoch + 1}", fontsize=10)
+            else:   
+                fig.suptitle(f"Sample {i} — Epoch {epoch + 1}", fontsize=14)
             plt.tight_layout()
 
             # 📸 Save per-sample image
@@ -158,9 +178,49 @@ class LogValidationSamples:
             plt.savefig(save_path, dpi=150)
             plt.close(fig)
 
+            #normaize denorm between 0 and 1
+            sar_plot = (sar_denorm - sar_denorm.min()) / (sar_denorm.max() - sar_denorm.min() + 1e-10)
+            pred_plot = (pred_denorm - pred_denorm.min()) / (pred_denorm.max() - pred_denorm.min() + 1e-10)
+            
+            # 💾 Save the denormalized tensors
+            sar_sample = sar_denorm[i].squeeze(0)       # → (H, W)
+            pred_sample = pred_denorm[i].squeeze(0)     # → (H, W)
+
+            mask_valid = self.mask[i] == 1             # → (H, W)
+
+            # Filtrer seulement les pixels valides
+            sar_valid = sar_sample[mask_valid]
+            pred_valid = pred_sample[mask_valid]
+
+            # Normalisation entre 0 et 1
+            sar_plot = (sar_valid - sar_valid.min()) / (sar_valid.max() - sar_valid.min() + 1e-10)
+            pred_plot = (pred_valid - pred_valid.min()) / (pred_valid.max() - pred_valid.min() + 1e-10)
+
+            # Sauvegarde distributions
+            self.save_wind_sistribution(sar_valid, pred_valid)
+            self.save_wind_sistribution(sar_plot, pred_plot, output="normalized")
 
             print(f"💾 Saved: {save_path}")
-    
+
+        # save distribution of wind speed of pred and true val to compare it
+        #just in the lkast epoch
+    def save_wind_sistribution(self, sar_denorm, pred_denorm, output= None):
+        
+            wind_true = sar_denorm.cpu().numpy().flatten()
+            wind_pred = pred_denorm.cpu().numpy().flatten()
+            min_value = min(wind_true.min(), wind_pred.min())
+            plt.figure(figsize=(8,6))
+        
+            # plot the histograms
+            plt.hist((wind_true ), bins=50, alpha=0.5, label='True SAR', color='blue', density=True)
+            plt.hist((wind_pred ), bins=50, alpha=0.5, label='Predicted SAR', color='orange', density=True)
+            plt.legend()
+            plt.title("Distribution of Wind Speed: True vs Predicted SAR")
+            plt.xlabel("Wind Speed (knots)")
+            plt.ylabel("Density")
+            plt.savefig(os.path.join(Path(self.output_dir ), f"wind_speed_distribution_{output}.png"), dpi=150)
+            plt.close()
+
     def on_validation_plots(self, model, epoch, dataloader, device):
         """
         Called manually using fabric.call(...)

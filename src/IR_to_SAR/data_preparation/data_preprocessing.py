@@ -301,14 +301,24 @@ def crop_ir_to_sar(ir):
 
 def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl"):
 
-    df = pd.read_csv("/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v1.csv")
-    SARGEO_PATH = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v01r02/cyclobs"
+    df = pd.read_csv("/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v4.csv")
+    SARGEO_PATH = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v00r00/cyclobs"
+    SARAEQD_PATH = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_v2"
+
     CANAL = "IRWIN"
     data_pkl= []
     for i ,row in df.iterrows():
         cyclone = row["cyclone"]
+        if cyclone not in os.listdir(SARAEQD_PATH):
+            # print(cyclone, "D'ont exist in TCPRIMED data")
+            continue
+        env_path = None
+        
         nc_sargeo_path = os.path.join(SARGEO_PATH,cyclone,CANAL,row["fichier"])
         nc_aeqd_path = row["sar_xy"]
+        print(nc_aeqd_path)
+        if nc_aeqd_path is np.nan :
+            continue
         ds_aeqd = xr.open_dataset(nc_aeqd_path)
         ds_sargeo = xr.open_dataset(nc_sargeo_path)
         irwin = crop_ir_to_sar(ds_sargeo["IRWIN"].sel(t_rel=0).values)
@@ -316,11 +326,37 @@ def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SA
         
         wind = ds_aeqd["owiWindSpeed"].values
         print(irwin.shape,wind.shape)
+
+        for nc_files in os.listdir(os.path.join(SARAEQD_PATH,cyclone)):
+            if "env" in nc_files:
+                env_path = nc_files
+                break
+        try :
+            ds_env= xr.open_dataset(os.path.join(SARAEQD_PATH,cyclone,env_path), group="diagnostics")
+        except:
+            continue
+        # extract the nearest index for our cyclone (date in nc filename)
+        try:
+            timestamp_str = os.path.basename(nc_aeqd_path).split("-")[4]  # ex: '20240620t004603'
+            sar_time = pd.to_datetime(timestamp_str, format="%Y%m%dT%H%M%S")
+        except:
+            continue
+            
+        env_times = ds_env["time"].values
+        sar_time_np = np.datetime64(sar_time)
+        idx = np.abs(env_times - sar_time_np).argmin()
+
+        shear_magnitude = ds_env["shear_magnitude"].values[idx]
+        shear_direction = ds_env["shear_direction"].values[idx]
+        cyclone_phase_space_symmetry = ds_env["cyclone_phase_space_symmetry"].values[idx]
+        cyclone_phase_space_depth = ds_env["cyclone_phase_space_depth"].values[idx]
+
+
         
         
-        data_pkl.append((irwin,wind))
+        data_pkl.append((irwin,wind,shear_magnitude,shear_direction,cyclone_phase_space_symmetry,cyclone_phase_space_depth))
     
-    with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_v1.pkl","wb") as f:
+    with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_v3.pkl","wb") as f:
             pkl.dump(data_pkl,f)
     
     print("SAR and IR pairs created")
@@ -525,3 +561,7 @@ def compute_global_distributions(model, dataloader, device,mean_val_sar, std_val
     plt.savefig(save_path, dpi=150)
     plt.close()
     print(f"📊 Saved global distribution plot: {save_path}")
+
+
+if __name__ =="__main__":
+    create_coloc_pkl()
