@@ -1,7 +1,7 @@
 # Configuration for IR → SAR Training
 
 # Image settings
-img_size: 256
+img_size: 128
 norm : "z_score"
 barycenter : "no"
 augmentation : True
@@ -10,14 +10,14 @@ in_channels: 1     # ir channel
 out_channels: 1
 
 # Training parameters
-batch_size: 32
-learning_rate: 0.001
+batch_size: 64
+learning_rate: 0.0001
 num_epochs: 50
 dropout : 0.2
 
 # Dataset split
-train_split: 0.6
-val_split: 0.39
+train_split: 0.7
+val_split: 0.29
 test_split: 0.01
 # Paths
 data_path: "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_v1.pkl"

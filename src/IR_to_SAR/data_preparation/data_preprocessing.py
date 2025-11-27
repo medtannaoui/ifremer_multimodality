@@ -316,19 +316,20 @@ def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SA
         
         nc_sargeo_path = os.path.join(SARGEO_PATH,cyclone,CANAL,row["fichier"])
         nc_aeqd_path = row["sar_xy"]
-        print(nc_aeqd_path)
-        if nc_aeqd_path is np.nan :
+        
+        try :
+            ds_aeqd = xr.open_dataset(nc_aeqd_path)
+        except:
             continue
-        ds_aeqd = xr.open_dataset(nc_aeqd_path)
+
         ds_sargeo = xr.open_dataset(nc_sargeo_path)
         irwin = crop_ir_to_sar(ds_sargeo["IRWIN"].sel(t_rel=0).values)
 
         
         wind = ds_aeqd["owiWindSpeed"].values
-        print(irwin.shape,wind.shape)
 
         for nc_files in os.listdir(os.path.join(SARAEQD_PATH,cyclone)):
-            if "env" in nc_files:
+            if "TCPRIMED" in nc_files:
                 env_path = nc_files
                 break
         try :

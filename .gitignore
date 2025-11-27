@@ -29,4 +29,4 @@ first_test
 src/IR_to_SAR/ML_IR_SAR/train_history_ir_sar
 *.save*
 *tmp*
-src/IR_to_SAR/ML_IR_SAR/config.yaml
+*.yaml*

@@ -9,19 +9,19 @@ def create_model(
     image_size=(256, 256),   # patch final utile
     in_channels=1,           # IR 
     out_channels=1,          # SAR output (wind speed map)
-    block_out_channels=(128, 128, 256, 256, 512),
+    block_out_channels=(128, 128, 256, 512),
     dropout= 0.2,
     down_block_types=(
         "DownBlock2D",
         "DownBlock2D",
-        "DownBlock2D",
+        # "DownBlock2D",
         "AttnDownBlock2D",   # block with attention
         "DownBlock2D",
     ),
     up_block_types=(
         "UpBlock2D",
         "AttnUpBlock2D",
-        "UpBlock2D",
+        # "UpBlock2D",
         "UpBlock2D",
         "UpBlock2D",
     ),

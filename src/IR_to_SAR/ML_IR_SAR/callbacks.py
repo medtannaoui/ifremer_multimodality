@@ -111,22 +111,14 @@ class LogValidationSamples:
             return  # 🛑 Do nothing before epoch threshold
 
         model.eval()
-        if len(batch) == 3:
-            ir, sar, distance = batch
-            ir = ir.to(device)
-            distance = distance.to(device)
-            with torch.no_grad():
-                distance_map = distance.unsqueeze(1).unsqueeze(2).unsqueeze(3)  # (B,1,1,1)
-                distance_map = distance_map.expand(-1, 1, ir.shape[2], ir.shape[3])  # (B,1,H,W)
-                ir_cond = torch.cat([ir, distance_map], dim=1)  # (B,2,H,W)
-                pred = model(ir_cond, timestep=0).sample
-        else:
-            ir, sar = batch
-            ir = ir.to(device)
-            sar = sar.to(device)
+    
+        
+        ir, sar = batch
+        ir = ir.to(device)
+        sar = sar.to(device)
 
-            with torch.no_grad():
-                pred = model(ir, timestep=0).sample
+        with torch.no_grad():
+            pred = model(ir, timestep=0).sample
 
         # ---- Dé-normalisation ----
         ir_denorm   = self.denormalize(ir, self.min_ir, self.max_ir, self.mean_ir, self.std_ir)
@@ -141,7 +133,8 @@ class LogValidationSamples:
         num = min(self.num_samples, ir_np.shape[0])
 
         # ---- Save EACH sample as separate PNG ----
-        for i in range(num):
+        np.random.seed(0)
+        for i in np.random.choice(len(ir_np),size=num,replace=False):
             fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
             # IR Input
@@ -169,7 +162,7 @@ class LogValidationSamples:
                 
                 fig.suptitle(f"Cyclone: {cyclone_id} — SAR Time: {sar_time} — Epoch {epoch + 1}", fontsize=10)
             else:   
-                fig.suptitle(f"Sample {i} — Epoch {epoch + 1}", fontsize=14)
+                fig.suptitle(f"Epoch {epoch + 1}", fontsize=14)
             plt.tight_layout()
 
             # 📸 Save per-sample image
@@ -222,10 +215,22 @@ class LogValidationSamples:
             plt.close()
 
     def on_validation_plots(self, model, epoch, dataloader, device):
-        """
-        Called manually using fabric.call(...)
-        """
-        print(f"📸 Logging validation samples at epoch {epoch}")
-        batch = next(iter(dataloader))  # get one batch
-        self.log_batch(model, batch, epoch, device)
+        print(f"📸 Logging validation samples at epoch {epoch +1}")
+
+        all_ir = []
+        all_sar = []
+
+        # Parcourir tout le DataLoader et accumuler IR et SAR
+        for ir, sar in dataloader:
+            all_ir.append(ir)
+            all_sar.append(sar)
+
+        # Concaténer sur la dimension batch (dim=0)
+        ir_full = torch.cat(all_ir, dim=0)   # → (Total, 1, H, W)
+        sar_full = torch.cat(all_sar, dim=0) # → (Total, 1, H, W)
+
+        # Créer un tuple exactement comme un batch
+        batch_full = (ir_full, sar_full)
+
+        self.log_batch(model, batch_full, epoch, device)
 
