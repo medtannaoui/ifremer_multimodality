@@ -370,17 +370,20 @@ def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SA
     SARAEQD_PATH = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_v2"
 
     CANAL = "IRWIN"
-    data_pkl= {}
-    data_pkl["cyclone_id"] = []
-    data_pkl["sar_time"] = []
-    data_pkl["env_time"] = []
-    data_pkl["shear_direction"] = []
-    data_pkl["cyclone_phase_space_symmetry"] = []
-    data_pkl["cyclone_phase_space_depth"] = []
-    data_pkl["u_wind_mean"] = []
-    data_pkl["v_wind_mean"]=[]
-    data_pkl["t_wind"] = []
-    data_pkl["vorticity"] = []
+    data_pkl= {
+        "cyclone_id": [],
+        "sar_time": [],
+        "env_time": [],
+        "shear_magnitude": [],
+        "shear_direction": [],
+        "cyclone_phase_space_symmetry": [],
+        "cyclone_phase_space_depth": [],
+        "u_wind_mean": [],
+        "v_wind_mean": [],
+        "t_wind": [],
+        "vorticity": []
+    }
+
     for i ,row in df[df["canal"] == CANAL].iterrows():
         cyclone = row["cyclone"]
         if cyclone not in os.listdir(SARAEQD_PATH):
