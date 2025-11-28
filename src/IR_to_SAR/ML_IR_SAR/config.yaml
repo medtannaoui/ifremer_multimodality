@@ -1,18 +1,28 @@
 # Configuration for IR → SAR Training
 
 # Image settings
-img_size: 256
+img_size: 128
 norm : "z_score"
 barycenter : "no"
 augmentation : True
 drop_nan_sar : True
 in_channels: 1     # ir channel 
 out_channels: 1
+input_channels: ["vorticity"]          
+
+# "shear_magnitude"
+# "shear_direction"
+# "cyclone_phase_space_symmetry"
+# "cyclone_phase_space_depth"
+# "u_wind_mean"
+# "v_wind_mean"
+# "t_wind"
+# "vorticity"
 
 # Training parameters
 batch_size: 32
 learning_rate: 0.0001
-num_epochs: 200
+num_epochs: 50
 dropout : 0.3
 
 # Dataset split
@@ -24,12 +34,12 @@ data_path: "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar
 save_dir: "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/train_history_ir_sar"
 
 # Early stopping
-early_stop_patience: 30
+early_stop_patience: 20
 early_stop_delta: 0.0001
 
 # Plotting
 start_epoch: 0
-plot_interval: 5
+plot_interval: 10
 num_val_exemples : 10
 
 # Device

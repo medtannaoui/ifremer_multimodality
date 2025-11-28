@@ -15,98 +15,143 @@ reload(dataprep)
 
 
 
+
 class PrepareDataSet():
-
-    def __init__(self,pkl_file= "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_v2.pkl",
-                 barycenter = "no",
-                 size = 256,
-                 norm = "z_score",
-                 drop_nan_100 = True
-
-
-                 ):
-        
-
-
-        print("Start preparation dataset : ......................")
-        with open(pkl_file, "rb") as f :
-            data = pkl.load(f)
-        
-        pairs = []
-        infos = []
-
-        for (cyclone, distance_km, sar_time), (irwin, wind) in data:
-            pairs.append([irwin, wind])
-            infos.append([cyclone, distance_km, sar_time])
-
-        data_ir_sar = np.array(pairs)
-        array_info = np.array(infos, dtype=object) 
-        self.cyclone_ids = array_info[:,0]
-        self.distance_km = array_info[:,1].astype(np.float32)
-        self.sar_time = array_info[:,2]
-
-        if barycenter == "yes":
-                sars_recalib = dataprep.recenter_sar_around_barycenter(np.array(data_ir_sar)[:, 1, :, :])
-                self.sar = np.array([item[0] for item in sars_recalib])
-                self.dx_sar = [item[1] for item in sars_recalib]
-                self.dy_sar = [item[2] for item in sars_recalib]
-        else : 
-                self.sar = np.array(data_ir_sar)[:, 1, :, :]
-        
-        self.ir = np.array(data_ir_sar)[:, 0, :, :]
-        
-        N,H,W = self.sar.shape    
-        assert size <= H and size <= W, "Crop size must be <= original dimensions" 
-
-
-        self.ir = self.ir[:, int(H//2 - size//2):int((H//2) + (size//2)), int((W//2) - (size//2)):int((W//2) + (size//2))]       
-        self.sar = self.sar[:, int(H//2 - size//2):int((H//2) + (size//2)), int((W//2) - (size//2)):int((W//2) + (size//2))]  
-            # self.mask_sar = dataprep.get_mask_of_nan_values(self.sar)
-        # indices_to_remove = [381, 129, 451, 680, 695, 772, 1070, 1285]  # deleted indexes
-
-        # self.ir  = np.delete(self.ir, indices_to_remove, axis=0) - 273.15
-        # self.sar = np.delete(self.sar, indices_to_remove, axis=0) * 1.94384
-        self.ir = self.ir - 273.15  # Convert IR from Kelvin to Celsius
-        self.sar = self.sar * 1.94384  # Convert SAR from m/s to knots
-
-        
     
-        if drop_nan_100 : 
-            print("remove the couples where sar has more than 0.5 in 100km around the center")
-            self.ir, self.sar = dataprep.remove_sar_nan(self.ir,self.sar)
+    def __init__(self, pkl_file="/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_v3.pkl",
+                  input_channels=None, 
+                  barycenter="no", 
+                  size=256, 
+                  norm="z_score", 
+                  drop_nan_100=True):
+
+        print("🔹 Loading PKL data...")
+        with open(pkl_file, "rb") as f:
+            data = pkl.load(f)   # dictionary
+
+        #  IRWIN is always included as the first channel ===
+        final_channels = ["irwin"]
+        if input_channels is not None:
+            final_channels += input_channels   # append additional channels
+
+        print(f"📎 Using input channels: {final_channels}")
+
+        #  Extract metadata ===
+        self.cyclone_ids = np.array(data["cyclone_id"])
+        self.sar_time = np.array(data["sar_time"])
+
+        #  Extract X channels ===
+        X_list = []
+
+        # Always add IRWIN first
+        irwin = np.array(data["irwin"])  # (N,H,W)
+        N,H,W = irwin.shape
+        X_list.append(irwin)
+
+        # Process additional input channels
         
-        
-        #create the mask of sar values 
+        for var in input_channels:
+            arr = np.array(data[var])
+
+        if arr.ndim == 1:
+            arr = np.tile(arr[:, None, None], (1, H, W))
+            X_list.append(arr)
+
+        elif arr.ndim == 2:
+            for c in range(arr.shape[1]):
+                expanded = np.tile(arr[:, c][:, None, None], (1, H, W))
+                X_list.append(expanded)
+
+        elif arr.ndim == 3:
+            # 🎯 Case (N, H’, 1) → Flatten into H' scalar channels
+            if arr.shape[2] == 1:
+                H_prime = arr.shape[1]
+                print(f"Expanding {var}: shape (N,{H_prime},1) → {H_prime} scalar channels")
+
+                arr_2d = arr.reshape(arr.shape[0], H_prime)  # (N, H')
+                for c in range(H_prime):
+                    expanded = np.tile(arr_2d[:, c][:, None, None], (1, H, W))
+                    X_list.append(expanded)
+
+                 
+
+            elif arr.shape[1:] == (H, W):
+                X_list.append(arr)  # Normal (N,H,W) image channel
+
+            else:
+                raise ValueError(f"Invalid shape for {var}: {arr.shape}")
+
+        else:
+            raise ValueError(f"Unsupported number of dimensions for {var}: {arr.shape}")
+
+
+
+        # Final stack → (N,C,H,W)
+        self.X = np.stack(X_list, axis=1)
+
+        #  Extract SAR windspeed as target ===
+        self.sar = np.array(data["owiwindspeed"])
+
+        # Center crop ===
+        N, C, H, W = self.X.shape
+        self.X = self.X[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2]
+        self.sar = self.sar[:, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2]
+
+        #  Convert IR from Kelvin to Celsius ===
+        self.X[:, 0] = self.X[:, 0] - 273.15   # always channel 0 = irwin
+
+        # Optional: remove SAR samples with too many NaNs ===
+        if drop_nan_100:
+            self.X, self.sar = dataprep.remove_sar_nan(self.X, self.sar)
+
+        #  Create SAR valid pixel mask ===
         self.mask_sar = np.isfinite(self.sar).astype(np.float32)
 
-        self.ir = np.nan_to_num(self.ir, nan=0.0, posinf=0.0, neginf=0.0)
+        # Replace NaN & Inf ===
+        self.X = np.nan_to_num(self.X, nan=0.0, posinf=0.0, neginf=0.0)
         self.sar = np.nan_to_num(self.sar, nan=0.0, posinf=0.0, neginf=0.0)
-        print("NaN dans IR:", np.isnan(self.ir).sum())
-        print("Inf dans IR:", np.isinf(self.ir).sum())
-        print("Min/Max IR:", np.min(self.ir), np.max(self.ir))
-        print(np.shape(np.array(self.ir)))
+
+        #  Normalization for SAR (always continuous) ===
+        if norm == "z_score":
+            self.sar, self.mean_sar, self.std_sar = dataprep.z_score(self.sar)
+        else:
+            self.sar, self.min_sar, self.max_sar = dataprep.min_max(self.sar)
+
+        print("📌 SAR normalized.")
+
+        #  Normalize only continuous input channels ===
+        self.mean_X = {}
+        self.std_X = {}
+        self.min_X = {}
+        self.max_X = {}
+
+        C = self.X.shape[1]  # number of channels
+        for c in range(C):
+            channel_data = self.X[:, c, :, :]
+            unique_vals = np.unique(channel_data)
+
+            if len(unique_vals) > 20:   # Continuous channel → normalize
+                if norm == "z_score":
+                    norm_data, mean_val, std_val = dataprep.z_score(channel_data)
+                    self.X[:, c, :, :] = norm_data
+                    self.mean_X[c] = mean_val
+                    self.std_X[c] = std_val
+                else:  # Min-max normalization
+                    norm_data, min_val, max_val = dataprep.min_max(channel_data)
+                    self.X[:, c, :, :] = norm_data
+                    self.min_X[c] = min_val
+                    self.max_X[c] = max_val
+
+               
+
+            else:
+                print(f"⏭️ Skipped channel {c} — only {len(unique_vals)} unique values (categorical)")
 
         
-        
-        print("NaN dans SAR:", np.isnan(self.sar).sum())
-        print("Inf dans SAR:", np.isinf(self.sar).sum())
-        print("Min/Max SAR:", np.min(self.sar), np.max(self.sar))
-        print(np.shape(np.array(self.sar)))
-        self.norm = norm 
-        if self.norm == "z_score":
-            self.ir, self.mean_val_ir, self.std_val_ir = dataprep.z_score(self.ir)
-            self.sar , self.mean_val_sar, self.std_val_sar = dataprep.z_score(self.sar)
-            self.max_val_ir, self.max_val_sar, self.min_val_ir, self.min_val_sar = None, None, None, None
-
-        else : 
-            self.ir, self.min_val_ir, self.max_val_ir = dataprep.min_max(self.ir)
-            self.sar , self.min_val_sar, self.max_val_sar = dataprep.min_max(self.sar)
-            self.mean_val_sar, self.mean_val_ir, self.std_val_sar, self.std_val_ir = None, None, None, None
-            
-        
+        print("🔍 Final X shape:", self.X.shape)  # (N, C, size, size)
+        print("🔍 Final SAR shape:", np.expand_dims(self.sar, axis=1).shape)
 
 
-        print(self.ir.shape,self.sar.shape)
-        print("Data collected and normalized")
-            
-        
+
+        print(f"🎯 Dataset prepared successfully with {self.X.shape[1]} input channels.")
+

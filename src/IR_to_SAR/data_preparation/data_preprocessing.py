@@ -293,7 +293,7 @@ def train_val_test_split(
 
 
 def train_val_test_split_random(
-    ir_array,
+    X_array,
     sar_array,
     mask_sar,
     train_size=0.7,
@@ -307,8 +307,8 @@ def train_val_test_split_random(
     Keeps original NaNs and supports optional augmentation on the train set.
     """
 
-    assert abs(train_size + val_size + test_size - 1) < 1e-6
-    N = len(ir_array)
+    # assert abs(train_size + val_size + test_size - 1) < 1e-6
+    N = len(X_array)
 
     # --- Generate all indices ---
     all_indices = np.arange(N)
@@ -336,10 +336,10 @@ def train_val_test_split_random(
           "| Test:", len(test_indices))
 
     # --- Extract arrays from original data (NaN preserved) ---
-    ir_array = np.array(ir_array, dtype=float)
+    X_array = np.array(X_array, dtype=float)
     sar_array = np.array(sar_array, dtype=float)
 
-    ir_train, sar_train = ir_array[train_indices], sar_array[train_indices]
+    ir_train, sar_train = X_array[train_indices], sar_array[train_indices]
 
     # --- Data augmentation only for train ---
     if augmentation:
@@ -347,8 +347,8 @@ def train_val_test_split_random(
 
     return {
         "train": (ir_train, sar_train),
-        "val":   (ir_array[val_indices], sar_array[val_indices]),
-        "test":  (ir_array[test_indices], sar_array[test_indices]),
+        "val":   (X_array[val_indices], sar_array[val_indices]),
+        "test":  (X_array[test_indices], sar_array[test_indices]),
         "mask_sar": mask_sar[val_indices]  # Mask only for validation plot usage
     }
 
@@ -362,18 +362,25 @@ def crop_ir_to_sar(ir):
 
     return ir[start_h:start_h+target, start_w:start_w+target]
 
-
 def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl"):
+    import pandas as pd
+    import numpy as np
+    import xarray as xr
+    import os
+    import pickle as pkl
 
     df = pd.read_csv("/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v4.csv")
     SARGEO_PATH = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v00r00/cyclobs"
     SARAEQD_PATH = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_v2"
 
     CANAL = "IRWIN"
-    data_pkl= {
+
+    data_pkl = {
         "cyclone_id": [],
         "sar_time": [],
         "env_time": [],
+        "irwin": [],               
+        "owiwindspeed": [],         
         "shear_magnitude": [],
         "shear_direction": [],
         "cyclone_phase_space_symmetry": [],
@@ -384,47 +391,40 @@ def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SA
         "vorticity": []
     }
 
-    for i ,row in df[df["canal"] == CANAL].iterrows():
+    for i, row in df[df["canal"] == CANAL].iterrows():
         cyclone = row["cyclone"]
-        if cyclone not in os.listdir(SARAEQD_PATH):
-            # print(cyclone, "D'ont exist in TCPRIMED data")
-            continue
-        env_path = None
-        
-        nc_sargeo_path = os.path.join(SARGEO_PATH,cyclone,CANAL,row["fichier"])
-        nc_aeqd_path = row["sar_xy"]
-        
-        
-        ds_aeqd = xr.open_dataset(nc_aeqd_path)
-        
-        ds_sargeo = xr.open_dataset(nc_sargeo_path)
-        irwin = crop_ir_to_sar(ds_sargeo["IRWIN"].sel(t_rel=0).values)
 
-        
+        if cyclone not in os.listdir(SARAEQD_PATH):
+            continue
+
+        nc_sargeo_path = os.path.join(SARGEO_PATH, cyclone, CANAL, row["fichier"])
+        nc_aeqd_path = row["sar_xy"]
+
+        ds_aeqd = xr.open_dataset(nc_aeqd_path)
+        ds_sargeo = xr.open_dataset(nc_sargeo_path)
+
+        # Load data
+        irwin = crop_ir_to_sar(ds_sargeo["IRWIN"].sel(t_rel=0).values)
         wind = ds_aeqd["owiWindSpeed"].values
 
-        for nc_files in os.listdir(os.path.join(SARAEQD_PATH,cyclone)):
-            if "TCPRIMED" in nc_files:
-                env_path = nc_files
-                
-        with xr.open_dataset(os.path.join(SARAEQD_PATH,cyclone,env_path), group="diagnostics") as ds_env:
-        
-        
-            # extract the nearest index for our cyclone (date in nc filename)
-            
-            timestamp_str = os.path.basename(nc_aeqd_path).split("-")[4]  # ex: '20240620t004603'
-            sar_time = pd.to_datetime(timestamp_str, format="%Y%m%dT%H%M%S")
-            
-                
-            env_times = ds_env["time"].values
-            sar_time_np = np.datetime64(sar_time)
-            idx = np.abs(env_times - sar_time_np).argmin()
+        # Find associated environmental file
+        env_file = next((f for f in os.listdir(os.path.join(SARAEQD_PATH, cyclone)) if "TCPRIMED" in f), None)
+        if not env_file:
+            continue
 
-            
-            
+        with xr.open_dataset(os.path.join(SARAEQD_PATH, cyclone, env_file), group="diagnostics") as ds_env:
+            timestamp_str = os.path.basename(nc_aeqd_path).split("-")[4]
+            sar_time = pd.to_datetime(timestamp_str, format="%Y%m%dT%H%M%S")
+
+            env_times = ds_env["time"].values
+            idx = np.abs(env_times - np.datetime64(sar_time)).argmin()
+
+            # Append values
             data_pkl["cyclone_id"].append(cyclone)
             data_pkl["sar_time"].append(sar_time)
             data_pkl["env_time"].append(env_times[idx])
+            data_pkl["irwin"].append(irwin)
+            data_pkl["owiwindspeed"].append(wind)
             data_pkl["shear_magnitude"].append(ds_env["shear_magnitude"].values[idx])
             data_pkl["shear_direction"].append(ds_env["shear_direction"].values[idx])
             data_pkl["cyclone_phase_space_symmetry"].append(ds_env["cyclone_phase_space_symmetry"].values[idx])
@@ -434,16 +434,13 @@ def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SA
             data_pkl["t_wind"].append(ds_env["t_wind"].values[idx])
             data_pkl["vorticity"].append(ds_env["vorticity"].values[idx])
 
+    # Save to file
+    output_path = os.path.join(output_folder, "ir_sar_pairs_v3.pkl")
+    with open(output_path, "wb") as f:
+        pkl.dump(data_pkl, f)
 
+    print(f"🎯 PKL file created: {output_path}")
 
-        
-        
-    
-    
-    with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_v3.pkl","wb") as f:
-            pkl.dump(data_pkl,f)
-    
-    print("SAR and IR pairs created")
 
 
 
@@ -518,42 +515,48 @@ def get_nan_coverage(sar_batch, radius=100, km_per_pixel=2):
     return results
 
 
-def remove_sar_nan(ir_batch, sar_batch, radius_km=100, km_per_pixel=2, threshold=0.5):
+def remove_sar_nan(X_batch, sar_batch, radius_km=100, km_per_pixel=2, threshold=0.5):
     """
-    ir_batch, sar_batch : numpy arrays ou torch tensors (N, H, W)
-    Retourne : ir_filtered, sar_filtered ne contenant que les scènes 
-    où la couverture SAR dans le rayon ≤100km a moins de 50% de NaN.
+    X_batch : numpy array (N, C, H, W) or (N, 1, H, W)
+    sar_batch : numpy array (N, H, W)
+    Returns:
+      - X_filtered (N_filtered, C, H, W)
+      - sar_filtered (N_filtered, H, W)
+      - kept_indices (list of indices kept)
     """
 
-    if isinstance(ir_batch, torch.Tensor):
-        ir_batch = ir_batch.cpu().numpy()
+    # Convert tensors to numpy
+    if isinstance(X_batch, torch.Tensor):
+        X_batch = X_batch.cpu().numpy()
     if isinstance(sar_batch, torch.Tensor):
         sar_batch = sar_batch.cpu().numpy()
 
-    assert ir_batch.shape == sar_batch.shape, "IR and SAR should have the same shape"
+    N, C, H, W = X_batch.shape
+    assert sar_batch.shape == (N, H, W), "Shapes do not match"
 
-    N, H, W = sar_batch.shape
-    x0, y0 = W // 2, H // 2  # centre
+    # Create circular mask
+    x0, y0 = W // 2, H // 2
     radius_pix = int(radius_km / km_per_pixel)
 
     y, x = np.ogrid[:H, :W]
     mask = (x - x0)**2 + (y - y0)**2 <= radius_pix**2
 
-    ir_filtered = []
+    X_filtered = []
     sar_filtered = []
+    kept_indices = []
 
     for i in range(N):
-        sar = sar_batch[i]
-
         total = mask.sum()
-        nan_pixels = np.isnan(sar[mask]).sum()
+        nan_pixels = np.isnan(sar_batch[i][mask]).sum()
         nan_ratio = nan_pixels / total
 
-        if nan_ratio < threshold:  # 50%
-            ir_filtered.append(ir_batch[i])
+        if nan_ratio < threshold:
+            X_filtered.append(X_batch[i])
             sar_filtered.append(sar_batch[i])
+            kept_indices.append(i)
 
-    return np.array(ir_filtered), np.array(sar_filtered)
+    return np.array(X_filtered), np.array(sar_filtered)
+
 
 
 

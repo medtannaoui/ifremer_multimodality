@@ -59,7 +59,7 @@ class LogValidationSamples:
     saving per-sample plots in a unique train directory.
     """
 
-    def __init__(self, base_dir, min_ir, max_ir, min_sar, max_sar,mean_sar,std_sar,mean_ir,std_ir,norm,
+    def __init__(self, base_dir, mean_X, std_X, mean_sar, std_sar, norm,
              num_samples=4, start_epoch=20, every_n_epochs=1,
              cmap_ir="gray", cmap_sar="viridis",mask = None, num_epochs=0, cyclone_ids=None, sar_times=None, distance_km=None):
 
@@ -72,20 +72,17 @@ class LogValidationSamples:
         self.cmap_ir = cmap_ir
         self.cmap_sar = cmap_sar
 
-        self.min_ir = min_ir
-        self.max_ir = max_ir
-        self.min_sar = min_sar
-        self.max_sar = max_sar
-        self.mean_ir = mean_ir
         self.mean_sar = mean_sar
+        self.mean_X = mean_X
         self.std_sar = std_sar
-        self.std_ir = std_ir
+        self.std_X = std_X
+        
         self.norm = norm
         self.mask = mask
         self.num_epochs = num_epochs
         self.cyclone_ids = cyclone_ids
         self.sar_times = sar_times
-        self.distance_km = distance_km
+        
 
 
     def _create_unique_dir(self, base_dir):
@@ -96,34 +93,41 @@ class LogValidationSamples:
         new_dir.mkdir(parents=True, exist_ok=True)
         return new_dir
 
-    def denormalize(self, tensor, min_val, max_val,mean_val, std_val, eps = 1e-10):
+    def denormalize(self, tensor,mean_val, std_val, eps = 1e-10):
         """Convert back from [0,1] to real physical values."""
         
         return ((tensor * (std_val + eps)) + mean_val)
         
 
     def log_batch(self, model, batch, epoch, device):
-        """
-        Saves IR / Predicted SAR / Real SAR visualizations 
-        for a single epoch AFTER self.start_epoch.
-        """
+        # Skip epochs that do not trigger logging
         if epoch < self.start_epoch or (epoch - self.start_epoch) % self.every_n_epochs != 0:
-            return  # 🛑 Do nothing before epoch threshold
+            return
 
         model.eval()
-    
-        
-        ir, sar = batch
-        ir = ir.to(device)
+
+        # Unpack (X has multiple channels, SAR is target)
+        x, sar = batch
+        x = x.to(device)
         sar = sar.to(device)
 
         with torch.no_grad():
-            pred = model(ir, timestep=0).sample
+            pred = model(x, timestep=0).sample  # (B,1,H,W)
 
-        # ---- Dé-normalisation ----
-        ir_denorm   = self.denormalize(ir, self.min_ir, self.max_ir, self.mean_ir, self.std_ir)
-        sar_denorm  = self.denormalize(sar, self.min_sar, self.max_sar, self.mean_sar, self.std_sar)
-        pred_denorm = self.denormalize(pred, self.min_sar, self.max_sar,self.mean_sar, self.std_sar)
+        # --- Select only IRWIN channel (channel 0) for visualization ---
+        ir_only = x[:, 0:1, :, :]   # (B,1,H,W) keep as 4D tensor
+
+        # ---- De-normalization ----
+        if not isinstance(self.mean_X, (list, tuple, np.ndarray, dict)):
+            mean = self.mean_X
+            std = self.std_X
+        else :
+            mean = self.mean_X[0]
+            std = self.std_X[0]
+
+        ir_denorm   = self.denormalize(ir_only, mean , std)
+        sar_denorm  = self.denormalize(sar, self.mean_sar, self.std_sar)
+        pred_denorm = self.denormalize(pred, self.mean_sar, self.std_sar)
 
         # ---- Convert to numpy ----
         ir_np   = ir_denorm.squeeze(1).cpu().numpy()
@@ -132,64 +136,50 @@ class LogValidationSamples:
 
         num = min(self.num_samples, ir_np.shape[0])
 
-        # ---- Save EACH sample as separate PNG ----
         np.random.seed(0)
-        for i in np.random.choice(len(ir_np),size=num,replace=False):
+        for i in np.random.choice(len(ir_np), size=num, replace=False):
             fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
-            # IR Input
+            # IRWIN input (only channel 0)
             axes[0].imshow(ir_np[i], cmap=self.cmap_ir)
-            axes[0].set_title(f"IRWIN")
+            axes[0].set_title("IRWIN (Channel 0)")
             axes[0].axis("off")
 
-            
             # Real SAR
             sar_vis = np.where(self.mask[i] == 1, sar_np[i], np.nan)
             axes[1].imshow(sar_vis, cmap=self.cmap_sar)
-            axes[1].set_title(f"Target SAR (knots)")
+            axes[1].set_title("Target SAR (knots)")
             axes[1].axis("off")
 
             # Predicted SAR
             pred_vis = np.where(self.mask[i] == 1, pred_np[i], np.nan)
             axes[2].imshow(pred_vis, cmap=self.cmap_sar)
-            axes[2].set_title(f"Predicted SAR (knots)")
+            axes[2].set_title("Predicted SAR (knots)")
             axes[2].axis("off")
-            
-            # add cyclone name and sar time to the fig title
-            if self.cyclone_ids is not None and self.sar_times is not None :
-                cyclone_id = self.cyclone_ids[i]
-                sar_time = self.sar_times[i]
-                
-                fig.suptitle(f"Cyclone: {cyclone_id} — SAR Time: {sar_time} — Epoch {epoch + 1}", fontsize=10)
-            else:   
-                fig.suptitle(f"Epoch {epoch + 1}", fontsize=14)
+
+            if self.cyclone_ids is not None and self.sar_times is not None:
+                fig.suptitle(f"Cyclone: {self.cyclone_ids[i]} — SAR Time: {self.sar_times[i]} — Epoch {epoch + 1}", fontsize=10)
+            else:
+                fig.suptitle(f"Epoch {epoch+1}", fontsize=14)
+
             plt.tight_layout()
 
-            # 📸 Save per-sample image
-            os.makedirs(os.path.join(Path(self.output_dir ), "samples"), exist_ok=True)
-            save_path =  os.path.join(os.path.join(Path(self.output_dir ), "samples"), f"sample_{i}_epoch_{epoch + 1}.png")
+            os.makedirs(os.path.join(Path(self.output_dir), "samples"), exist_ok=True)
+            save_path = os.path.join(Path(self.output_dir), "samples", f"sample_{i}_epoch_{epoch + 1}.png")
             plt.savefig(save_path, dpi=150)
             plt.close(fig)
 
-            #normaize denorm between 0 and 1
-            sar_plot = (sar_denorm - sar_denorm.min()) / (sar_denorm.max() - sar_denorm.min() + 1e-10)
-            pred_plot = (pred_denorm - pred_denorm.min()) / (pred_denorm.max() - pred_denorm.min() + 1e-10)
-            
-            # 💾 Save the denormalized tensors
-            sar_sample = sar_denorm[i].squeeze(0)       # → (H, W)
-            pred_sample = pred_denorm[i].squeeze(0)     # → (H, W)
+            # Save distributions (unchanged)
+            sar_sample = sar_denorm[i].squeeze(0)
+            pred_sample = pred_denorm[i].squeeze(0)
+            mask_valid = self.mask[i] == 1
 
-            mask_valid = self.mask[i] == 1             # → (H, W)
-
-            # Filtrer seulement les pixels valides
             sar_valid = sar_sample[mask_valid]
             pred_valid = pred_sample[mask_valid]
 
-            # Normalisation entre 0 et 1
             sar_plot = (sar_valid - sar_valid.min()) / (sar_valid.max() - sar_valid.min() + 1e-10)
             pred_plot = (pred_valid - pred_valid.min()) / (pred_valid.max() - pred_valid.min() + 1e-10)
 
-            # Sauvegarde distributions
             self.save_wind_sistribution(sar_valid, pred_valid)
             self.save_wind_sistribution(sar_plot, pred_plot, output="normalized")
 

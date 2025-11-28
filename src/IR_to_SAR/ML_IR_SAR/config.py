@@ -29,6 +29,7 @@ class IR_SAR_Config:
     dropout : float
     in_channels : int
     out_channels : int
+    input_channels: list[str]
     @staticmethod
     def from_yaml(path: str):
         with open(path, "r") as file:
