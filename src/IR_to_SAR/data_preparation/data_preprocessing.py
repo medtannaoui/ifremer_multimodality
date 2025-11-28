@@ -10,6 +10,9 @@ This module provides:
 
 Author: Mohammed Amine Tannaoui
 """
+import warnings
+warnings.filterwarnings("ignore")
+
 
 import os
 import numpy as np
@@ -289,6 +292,67 @@ def train_val_test_split(
     }
 
 
+def train_val_test_split_random(
+    ir_array,
+    sar_array,
+    mask_sar,
+    train_size=0.7,
+    val_size=0.15,
+    test_size=0.15,
+    augmentation=True
+):
+    """
+    Randomly split the dataset into train, validation, and test sets.
+    No stratification, no quadrant/brightness/wind-based grouping.
+    Keeps original NaNs and supports optional augmentation on the train set.
+    """
+
+    assert abs(train_size + val_size + test_size - 1) < 1e-6
+    N = len(ir_array)
+
+    # --- Generate all indices ---
+    all_indices = np.arange(N)
+
+    # --- First split: Train vs Temp (Val+Test) ---
+    train_indices, temp_indices = train_test_split(
+        all_indices,
+        test_size=(1 - train_size),
+        random_state=0,
+        shuffle=True,
+    )
+
+    # --- Second split: Temp → Val & Test ---
+    val_rel_size = val_size / (val_size + test_size)
+
+    val_indices, test_indices = train_test_split(
+        temp_indices,
+        test_size=(1 - val_rel_size),
+        random_state=0,
+        shuffle=True,
+    )
+
+    print("🎯 Split sizes — Train:", len(train_indices), 
+          "| Val:", len(val_indices), 
+          "| Test:", len(test_indices))
+
+    # --- Extract arrays from original data (NaN preserved) ---
+    ir_array = np.array(ir_array, dtype=float)
+    sar_array = np.array(sar_array, dtype=float)
+
+    ir_train, sar_train = ir_array[train_indices], sar_array[train_indices]
+
+    # --- Data augmentation only for train ---
+    if augmentation:
+        ir_train, sar_train = data_augmentation(ir_train, sar_train)
+
+    return {
+        "train": (ir_train, sar_train),
+        "val":   (ir_array[val_indices], sar_array[val_indices]),
+        "test":  (ir_array[test_indices], sar_array[test_indices]),
+        "mask_sar": mask_sar[val_indices]  # Mask only for validation plot usage
+    }
+
+
 def crop_ir_to_sar(ir):
           
     H, W = ir.shape
@@ -306,8 +370,18 @@ def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SA
     SARAEQD_PATH = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_v2"
 
     CANAL = "IRWIN"
-    data_pkl= []
-    for i ,row in df.iterrows():
+    data_pkl= {}
+    data_pkl["cyclone_id"] = []
+    data_pkl["sar_time"] = []
+    data_pkl["env_time"] = []
+    data_pkl["shear_direction"] = []
+    data_pkl["cyclone_phase_space_symmetry"] = []
+    data_pkl["cyclone_phase_space_depth"] = []
+    data_pkl["u_wind_mean"] = []
+    data_pkl["v_wind_mean"]=[]
+    data_pkl["t_wind"] = []
+    data_pkl["vorticity"] = []
+    for i ,row in df[df["canal"] == CANAL].iterrows():
         cyclone = row["cyclone"]
         if cyclone not in os.listdir(SARAEQD_PATH):
             # print(cyclone, "D'ont exist in TCPRIMED data")
@@ -317,11 +391,9 @@ def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SA
         nc_sargeo_path = os.path.join(SARGEO_PATH,cyclone,CANAL,row["fichier"])
         nc_aeqd_path = row["sar_xy"]
         
-        try :
-            ds_aeqd = xr.open_dataset(nc_aeqd_path)
-        except:
-            continue
-
+        
+        ds_aeqd = xr.open_dataset(nc_aeqd_path)
+        
         ds_sargeo = xr.open_dataset(nc_sargeo_path)
         irwin = crop_ir_to_sar(ds_sargeo["IRWIN"].sel(t_rel=0).values)
 
@@ -331,31 +403,39 @@ def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SA
         for nc_files in os.listdir(os.path.join(SARAEQD_PATH,cyclone)):
             if "TCPRIMED" in nc_files:
                 env_path = nc_files
-                break
-        try :
-            ds_env= xr.open_dataset(os.path.join(SARAEQD_PATH,cyclone,env_path), group="diagnostics")
-        except:
-            continue
-        # extract the nearest index for our cyclone (date in nc filename)
-        try:
+                
+        with xr.open_dataset(os.path.join(SARAEQD_PATH,cyclone,env_path), group="diagnostics") as ds_env:
+        
+        
+            # extract the nearest index for our cyclone (date in nc filename)
+            
             timestamp_str = os.path.basename(nc_aeqd_path).split("-")[4]  # ex: '20240620t004603'
             sar_time = pd.to_datetime(timestamp_str, format="%Y%m%dT%H%M%S")
-        except:
-            continue
             
-        env_times = ds_env["time"].values
-        sar_time_np = np.datetime64(sar_time)
-        idx = np.abs(env_times - sar_time_np).argmin()
+                
+            env_times = ds_env["time"].values
+            sar_time_np = np.datetime64(sar_time)
+            idx = np.abs(env_times - sar_time_np).argmin()
 
-        shear_magnitude = ds_env["shear_magnitude"].values[idx]
-        shear_direction = ds_env["shear_direction"].values[idx]
-        cyclone_phase_space_symmetry = ds_env["cyclone_phase_space_symmetry"].values[idx]
-        cyclone_phase_space_depth = ds_env["cyclone_phase_space_depth"].values[idx]
+            
+            
+            data_pkl["cyclone_id"].append(cyclone)
+            data_pkl["sar_time"].append(sar_time)
+            data_pkl["env_time"].append(env_times[idx])
+            data_pkl["shear_magnitude"].append(ds_env["shear_magnitude"].values[idx])
+            data_pkl["shear_direction"].append(ds_env["shear_direction"].values[idx])
+            data_pkl["cyclone_phase_space_symmetry"].append(ds_env["cyclone_phase_space_symmetry"].values[idx])
+            data_pkl["cyclone_phase_space_depth"].append(ds_env["cyclone_phase_space_depth"].values[idx])
+            data_pkl["u_wind_mean"].append(ds_env["u_wind_mean"].values[idx])
+            data_pkl["v_wind_mean"].append(ds_env["v_wind_mean"].values[idx])
+            data_pkl["t_wind"].append(ds_env["t_wind"].values[idx])
+            data_pkl["vorticity"].append(ds_env["vorticity"].values[idx])
+
 
 
         
         
-        data_pkl.append((irwin,wind,shear_magnitude,shear_direction,cyclone_phase_space_symmetry,cyclone_phase_space_depth))
+    
     
     with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_v3.pkl","wb") as f:
             pkl.dump(data_pkl,f)

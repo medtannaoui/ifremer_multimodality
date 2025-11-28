@@ -1,6 +1,7 @@
 # This script wil be used to test a simple U-NET for a regression simple (IR -> SAR)
 
 import os
+import gc
 import sys
 os.chdir("/scale/user/mtannaou/alternance")
 sys.path.append(os.path.abspath(os.path.join(os.getcwd(), "")))
@@ -12,7 +13,6 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
-import sys
 from loguru import logger
 import lightning as L  # used for the callbacks
 import warnings
@@ -194,6 +194,7 @@ def validate(fabric, model, dataloader, metrics):
 
 def main(cfg: IR_SAR_Config,test=False):
     logger.info(f"Starting Lightning training with config: {cfg}")
+    stop_training = False
 
     # --- Dataset full ---
     
@@ -204,7 +205,7 @@ def main(cfg: IR_SAR_Config,test=False):
         dy = full_data.dataset.dy_sar
     
     # --- Split ---
-    dictio = dataprep.train_val_test_split(
+    dictio = dataprep.train_val_test_split_random(
         np.array(ir_all), np.array(sar_all),
         train_size=cfg.train_split,
         val_size=cfg.val_split,
@@ -281,6 +282,9 @@ def main(cfg: IR_SAR_Config,test=False):
         
         train_loss, train_metrics = train_one_epoch(fabric, model, train_loader, optimizer, metrics)
         val_loss, val_metrics = validate(fabric, model, val_loader, metrics)
+
+        # torch.cuda.empty_cache()
+        # gc.collect()
         train_loss_history.append(train_loss)
         val_loss_history.append(val_loss)
 
@@ -309,6 +313,18 @@ def main(cfg: IR_SAR_Config,test=False):
             f"LR={scheduler.get_last_lr()[0]:.6f}, "
             # f"Train metrics={train_metrics}, Val metrics={val_metrics}"
         )
+      
+        for callback in fabric._callbacks:
+            if getattr(callback, "should_stop", False):
+                fabric.print("\n⛔ Early stopping activated — stopping training.")
+                early_stop_epoch = epoch
+                stop_training = True
+                break
+
+        if stop_training:
+            break
+
+
     history_df = pd.DataFrame({
     "train_loss": train_loss_history,
     "val_loss": val_loss_history
