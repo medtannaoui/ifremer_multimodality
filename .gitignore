@@ -16,7 +16,7 @@ donnees_sar_aeqd
 data_coloc_pkl
 outputs
 *without*
-donnees_sar_aeqd_v*
+donnees_sar_aeqd*
 *.pkl*
 
 *.pt
@@ -30,3 +30,4 @@ src/IR_to_SAR/ML_IR_SAR/train_history_ir_sar
 *.save*
 *tmp*
 *.yaml*
+/train_history_ir_sar
