@@ -30,6 +30,7 @@ class IR_SAR_Config:
     in_channels : int
     out_channels : int
     input_channels: list[str]
+    diffusion : bool
     @staticmethod
     def from_yaml(path: str):
         with open(path, "r") as file:

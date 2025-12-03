@@ -27,12 +27,14 @@ from sklearn.preprocessing import KBinsDiscretizer
 import torch
 from torchvision import transforms
 from torchvision.transforms import functional as TF
+import torchvision.transforms as T
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 from src.visualisation.utils_colormap import CMAP
 from src.IR_to_SAR.data_preparation.distribution_data_visualisation import detect_sar_quadrants
+from src.IR_to_SAR.data_preparation.distribution_data_visualisation import plot_ir, plot_sar,plot_ir_hist,plot_sar_hist
 
 
 
@@ -296,6 +298,8 @@ def train_val_test_split_random(
     X_array,
     sar_array,
     mask_sar,
+    cyclone_ids,
+    sar_times,
     train_size=0.7,
     val_size=0.15,
     test_size=0.15,
@@ -343,13 +347,21 @@ def train_val_test_split_random(
 
     # --- Data augmentation only for train ---
     if augmentation:
-        ir_train, sar_train = data_augmentation(ir_train, sar_train)
+        ir_train, sar_train, mask_train, cyclone_ids_train, sar_time_train = data_augmentation(ir_train, sar_train, mask_sar[train_indices],
+                                                                                               cyclone_ids[train_indices], sar_times[train_indices])
 
     return {
         "train": (ir_train, sar_train),
         "val":   (X_array[val_indices], sar_array[val_indices]),
         "test":  (X_array[test_indices], sar_array[test_indices]),
-        "mask_sar": mask_sar[val_indices]  # Mask only for validation plot usage
+        "mask_sar_val": mask_sar[val_indices],  # Mask only for validation plot usage,
+        "mask_sar_train": mask_train,
+        "val_index" : val_indices,
+        "train_index": train_indices,
+        "cyclone_id_train":cyclone_ids_train,
+        "cyclone_id_val":cyclone_ids[val_indices],
+        "sar_time_train": sar_time_train,
+        "sar_time_val" : sar_times[val_indices]
     }
 
 
@@ -362,7 +374,7 @@ def crop_ir_to_sar(ir):
 
     return ir[start_h:start_h+target, start_w:start_w+target]
 
-def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl"):
+def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl", tcprimed = False):
     import pandas as pd
     import numpy as np
     import xarray as xr
@@ -371,7 +383,7 @@ def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SA
 
     df = pd.read_csv("/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v4.csv")
     SARGEO_PATH = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v00r00/cyclobs"
-    SARAEQD_PATH = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_v2"
+    SARAEQD_PATH = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_eye"
 
     CANAL = "IRWIN"
 
@@ -389,13 +401,26 @@ def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SA
         "v_wind_mean": [],
         "t_wind": [],
         "vorticity": []
-    }
+    } if tcprimed else {
+        "cyclone_id": [],
+        "sar_time": [],
+        "irwin": [],               
+        "owiwindspeed": [],    }     
+        
+
 
     for i, row in df[df["canal"] == CANAL].iterrows():
         cyclone = row["cyclone"]
 
-        if cyclone not in os.listdir(SARAEQD_PATH):
-            continue
+        if tcprimed : 
+            if cyclone not in os.listdir(SARAEQD_PATH):
+                continue
+        else :
+            for cyc in os.listdir(SARAEQD_PATH):
+                if cyc[:8] == cyclone:
+                    cyclone = cyc[:8]
+                    break
+        
 
         nc_sargeo_path = os.path.join(SARGEO_PATH, cyclone, CANAL, row["fichier"])
         nc_aeqd_path = row["sar_xy"]
@@ -404,38 +429,49 @@ def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SA
         ds_sargeo = xr.open_dataset(nc_sargeo_path)
 
         # Load data
-        irwin = crop_ir_to_sar(ds_sargeo["IRWIN"].sel(t_rel=0).values)
+        irwins = []
+        for rel in [-4,-3,-2,-1,0,1,2,3,4]:
+            irwin = crop_ir_to_sar(ds_sargeo["IRWIN"].sel(t_rel=rel).values)
+            irwins.append(irwin)
         wind = ds_aeqd["owiWindSpeed"].values
 
+        timestamp_str = os.path.basename(nc_aeqd_path).split("-")[4]
+        sar_time = pd.to_datetime(timestamp_str, format="%Y%m%dT%H%M%S")
         # Find associated environmental file
-        env_file = next((f for f in os.listdir(os.path.join(SARAEQD_PATH, cyclone)) if "TCPRIMED" in f), None)
-        if not env_file:
-            continue
+        if tcprimed : 
+            env_file = next((f for f in os.listdir(os.path.join(SARAEQD_PATH, cyclone)) if "TCPRIMED" in f), None)
+            if not env_file:
+                continue
 
-        with xr.open_dataset(os.path.join(SARAEQD_PATH, cyclone, env_file), group="diagnostics") as ds_env:
-            timestamp_str = os.path.basename(nc_aeqd_path).split("-")[4]
-            sar_time = pd.to_datetime(timestamp_str, format="%Y%m%dT%H%M%S")
+            with xr.open_dataset(os.path.join(SARAEQD_PATH, cyclone, env_file), group="diagnostics") as ds_env:
+                
 
-            env_times = ds_env["time"].values
-            idx = np.abs(env_times - np.datetime64(sar_time)).argmin()
+                env_times = ds_env["time"].values
+                idx = np.abs(env_times - np.datetime64(sar_time)).argmin()
 
-            # Append values
-            data_pkl["cyclone_id"].append(cyclone)
-            data_pkl["sar_time"].append(sar_time)
-            data_pkl["env_time"].append(env_times[idx])
-            data_pkl["irwin"].append(irwin)
-            data_pkl["owiwindspeed"].append(wind)
-            data_pkl["shear_magnitude"].append(ds_env["shear_magnitude"].values[idx])
-            data_pkl["shear_direction"].append(ds_env["shear_direction"].values[idx])
-            data_pkl["cyclone_phase_space_symmetry"].append(ds_env["cyclone_phase_space_symmetry"].values[idx])
-            data_pkl["cyclone_phase_space_depth"].append(ds_env["cyclone_phase_space_depth"].values[idx])
-            data_pkl["u_wind_mean"].append(ds_env["u_wind_mean"].values[idx])
-            data_pkl["v_wind_mean"].append(ds_env["v_wind_mean"].values[idx])
-            data_pkl["t_wind"].append(ds_env["t_wind"].values[idx])
-            data_pkl["vorticity"].append(ds_env["vorticity"].values[idx])
+                # Append values
+                if tcprimed : 
+                    data_pkl["cyclone_id"].append(cyclone)
+                    data_pkl["sar_time"].append(sar_time)
+                    data_pkl["env_time"].append(env_times[idx])
+                    data_pkl["irwin"].append(irwins)
+                    data_pkl["owiwindspeed"].append(wind)
+                    data_pkl["shear_magnitude"].append(ds_env["shear_magnitude"].values[idx])
+                    data_pkl["shear_direction"].append(ds_env["shear_direction"].values[idx])
+                    data_pkl["cyclone_phase_space_symmetry"].append(ds_env["cyclone_phase_space_symmetry"].values[idx])
+                    data_pkl["cyclone_phase_space_depth"].append(ds_env["cyclone_phase_space_depth"].values[idx])
+                    data_pkl["u_wind_mean"].append(ds_env["u_wind_mean"].values[idx])
+                    data_pkl["v_wind_mean"].append(ds_env["v_wind_mean"].values[idx])
+                    data_pkl["t_wind"].append(ds_env["t_wind"].values[idx])
+                    data_pkl["vorticity"].append(ds_env["vorticity"].values[idx])
+        else :
+                data_pkl["cyclone_id"].append(cyclone)
+                data_pkl["sar_time"].append(sar_time)
+                data_pkl["irwin"].append(irwins)
+                data_pkl["owiwindspeed"].append(wind)
 
     # Save to file
-    output_path = os.path.join(output_folder, "ir_sar_pairs_v3.pkl")
+    output_path = os.path.join(output_folder, "ir_sar_pairs_eye_center_tcprimed.pkl")
     with open(output_path, "wb") as f:
         pkl.dump(data_pkl, f)
 
@@ -561,38 +597,101 @@ def remove_sar_nan(X_batch, sar_batch, radius_km=100, km_per_pixel=2, threshold=
 
 
 
-def augmentation_sar_safe(ir, sar, angle):
+def augmentation_sar_safe(ir, sar, mask, angle=None, flip=None):
     
-    # convert to tensor
-    ir = torch.tensor(ir, dtype=torch.float32).unsqueeze(0)
-    sar = torch.tensor(sar, dtype=torch.float32).unsqueeze(0)
+    ir_t = torch.tensor(ir, dtype=torch.float32).unsqueeze(0)
+    sar_t = torch.tensor(sar, dtype=torch.float32).unsqueeze(0)
+    mask_t = torch.tensor(mask, dtype=torch.float32).unsqueeze(0)
 
+    if angle is not None:
+        ir_t = TF.rotate(ir_t, angle)
+        sar_t = TF.rotate(sar_t, angle)
+        mask_t = TF.rotate(mask_t, angle)
+
+    if flip == "h":
+        ir_t = TF.hflip(ir_t)
+        sar_t = TF.hflip(sar_t)
+        mask_t = TF.hflip(mask_t)
+
+    elif flip == "v":
+        ir_t = TF.vflip(ir_t)
+        sar_t = TF.vflip(sar_t)
+        mask_t = TF.vflip(mask_t)
+
+    return (
+        ir_t.squeeze(0).numpy(),
+        sar_t.squeeze(0).numpy(),
+        mask_t.squeeze(0).numpy(),
+    )
+
+
+def realistic_cyclone_augmentation(ir, sar):
+    """
+    ir : numpy array (H,W) or (1,H,W)
+    sar : numpy array (H,W)
+    """
+    # 1️⃣ Convertir numpy → Tensor (C,H,W)
+    if isinstance(ir, np.ndarray):
+        ir = torch.tensor(ir, dtype=torch.float32)
+    if isinstance(sar, np.ndarray):
+        sar = torch.tensor(sar, dtype=torch.float32)
+
+    if ir.ndim == 2:  # (H,W) → (1,H,W)
+        ir = ir.unsqueeze(0)
+    if sar.ndim == 2:
+        sar = sar.unsqueeze(0)
+
+    transforms = T.Compose([
+        T.RandomResizedCrop(256, scale=(0.8, 1.0)),
+        T.RandomHorizontalFlip(),
+        T.RandomVerticalFlip(),
+    ])
+
+    # 2️⃣ Appliquer les mêmes transformations aux deux images
+    seed = np.random.randint(0, 100000)
+
+    torch.manual_seed(seed)
+    ir_aug = transforms(ir)
+
+    torch.manual_seed(seed)
+    sar_aug = transforms(sar)
+
+    # 3️⃣ Retour numpy (H,W)
+    ir_aug = ir_aug.squeeze(0).numpy()
+    sar_aug = sar_aug.squeeze(0).numpy()
+
+    return ir_aug, sar_aug
+
+
+def data_augmentation(ir_tensor, sar_tensor, mask_tensor, cyc_ids, sar_times):
     
+    ir_aug, sar_aug, mask_aug, cycs_aug, sar_times_aug = [], [], [], [], []
 
-    # Rotation centered
-    ir = TF.rotate(ir, angle)
-    sar = TF.rotate(sar, angle)
+    for ir, sar, mask, cyc, sart in zip(ir_tensor, sar_tensor, mask_tensor, cyc_ids, sar_times):
 
+        # original
+        ir_aug.append(ir)
+        sar_aug.append(sar)
+        mask_aug.append(mask)
+        cycs_aug.append(cyc)
+        sar_times_aug.append(sart)
 
-    return ir.squeeze(0).numpy(), sar.squeeze(0).numpy()
+        # rotations
+        for angle in [90, 180, 270]:
+            ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
+            ir_aug.append(ir_r)
+            sar_aug.append(sar_r)
+            mask_aug.append(mask_r)
+            cycs_aug.append(cyc)
+            sar_times_aug.append(sart)
 
-
-def data_augmentation(ir_tensor, sar_tensor):
-    ir_augmented, sar_augmented = [], []
-
-    for ir, sar in zip(ir_tensor, sar_tensor):
-        ir_augmented.append(ir)
-        sar_augmented.append(sar)
-
-        ir_aug_90, sar_aug_90 = augmentation_sar_safe(ir, sar, 90)
-        ir_augmented.append(ir_aug_90)
-        sar_augmented.append(sar_aug_90)
-
-        ir_aug_180, sar_aug_180 = augmentation_sar_safe(ir, sar, 180)
-        ir_augmented.append(ir_aug_180)
-        sar_augmented.append(sar_aug_180)
-
-    return np.array(ir_augmented), np.array(sar_augmented)
+    return (
+        np.array(ir_aug),
+        np.array(sar_aug),
+        np.array(mask_aug),
+        np.array(cycs_aug),
+        np.array(sar_times_aug)
+    )
 
 
 
@@ -650,5 +749,102 @@ def compute_global_distributions(model, dataloader, device,mean_val_sar, std_val
     print(f"📊 Saved global distribution plot: {save_path}")
 
 
+
+def visualize_dataset_statistics(dictio, target_dir, mask=None):
+    """
+    Génère une figure 4x2 :
+        1) Moyenne IR   (train / val)
+        2) Moyenne SAR  (train / val)
+        3) Histogrammes IR (train / val)
+        4) Histogrammes SAR (train / val)
+    """
+
+    # --- Récupération des datasets ---
+    train_ir = dictio["train"][0]          # (N,C,H,W)
+    train_sar = dictio["train"][1]         # (N,H,W)
+    val_ir   = dictio["val"][0]            # (N,C,H,W)
+    val_sar  = dictio["val"][1]            # (N,H,W)
+
+    # --- Récupération masques ---
+    mask_train = dictio["mask_sar_train"]  # (N,H,W)
+    mask_val   = dictio["mask_sar_val"]    # (N,H,W)
+
+    # --- Moyennes ---
+    mean_train_ir  = np.nanmean(train_ir[:,0], axis=0)
+    mean_val_ir    = np.nanmean(val_ir[:,0], axis=0)
+
+    mean_train_sar = np.nanmean(train_sar, axis=0)
+    mean_val_sar   = np.nanmean(val_sar, axis=0)
+
+    # --- Figure ---
+    fig, axs = plt.subplots(4, 2, figsize=(18, 20))
+
+    # -------------------------------
+    # 1) IR MEAN IMAGES
+    # -------------------------------
+    plot_ir(mean_train_ir, ax=axs[0,0])
+    axs[0,0].set_title("Train — Mean IR")
+
+    plot_ir(mean_val_ir, ax=axs[0,1])
+    axs[0,1].set_title("Validation — Mean IR")
+
+    # -------------------------------
+    # 2) SAR MEAN IMAGES
+    # -------------------------------
+    plot_sar(mean_train_sar, ax=axs[1,0])
+    axs[1,0].set_title("Train — Mean SAR")
+
+    plot_sar(mean_val_sar, ax=axs[1,1])
+    axs[1,1].set_title("Validation — Mean SAR")
+
+    # -------------------------------
+    # 3) IR HISTOGRAMS (mask ignored)
+    # -------------------------------
+    ir_train_flat = train_ir[:,0].reshape(-1)
+    ir_val_flat = val_ir[:,0].reshape(-1)
+
+    ir_train_valid = ir_train_flat[np.isfinite(ir_train_flat)]
+    ir_val_valid   = ir_val_flat[np.isfinite(ir_val_flat)]
+
+    plot_ir_hist(ir_train_valid, ax=axs[2,0])
+    axs[2,0].set_title("Train — IR Histogram (no NaN)")
+
+    plot_ir_hist(ir_val_valid, ax=axs[2,1])
+    axs[2,1].set_title("Validation — IR Histogram (no NaN)")
+
+    # -------------------------------
+    # 4) SAR HISTOGRAMS (mask applied)
+    # -------------------------------
+    sar_train_flat = train_sar.reshape(-1)
+    sar_val_flat   = val_sar.reshape(-1)
+
+    mask_train_flat = mask_train.reshape(-1)
+    mask_val_flat   = mask_val.reshape(-1)
+
+    # garder uniquement les pixels où mask == 1
+    sar_train_valid = sar_train_flat[(mask_train_flat == 1) & np.isfinite(sar_train_flat)]
+    sar_val_valid   = sar_val_flat[(mask_val_flat == 1) & np.isfinite(sar_val_flat)]
+
+    plot_sar_hist(sar_train_valid, ax=axs[3,0])
+    axs[3,0].set_title("Train — SAR Histogram (mask applied)")
+
+    plot_sar_hist(sar_val_valid, ax=axs[3,1])
+    axs[3,1].set_title("Validation — SAR Histogram (mask applied)")
+
+    plt.tight_layout()
+
+    # --- Save ---
+    save_dir = os.path.join(target_dir, "visualizations")
+    os.makedirs(save_dir, exist_ok=True)
+
+    save_path = os.path.join(save_dir, "dataset_overview.png")
+    fig.savefig(save_path, dpi=200)
+
+    plt.close(fig)
+
+    print(f"📊 Dataset visualization saved to: {save_path}")
+
+
+    
 if __name__ =="__main__":
     create_coloc_pkl()

@@ -61,7 +61,7 @@ class LogValidationSamples:
 
     def __init__(self, base_dir, mean_X, std_X, mean_sar, std_sar, norm,
              num_samples=4, start_epoch=20, every_n_epochs=1,
-             cmap_ir="gray", cmap_sar="viridis",mask = None, num_epochs=0, cyclone_ids=None, sar_times=None, distance_km=None):
+             cmap_ir="gray", cmap_sar="viridis", num_epochs=0, cyclone_ids=None, sar_times=None, distance_km=None, mask_train=None, mask_val = None):
 
         self.base_dir = Path(base_dir)
         self.output_dir = self._create_unique_dir(self.base_dir)
@@ -78,7 +78,8 @@ class LogValidationSamples:
         self.std_X = std_X
         
         self.norm = norm
-        self.mask = mask
+        self.mask_train = mask_train
+        self.mask_val = mask_val
         self.num_epochs = num_epochs
         self.cyclone_ids = cyclone_ids
         self.sar_times = sar_times
@@ -92,135 +93,195 @@ class LogValidationSamples:
         new_dir = base_dir / f"train_ir_sar_{i}"
         new_dir.mkdir(parents=True, exist_ok=True)
         return new_dir
-
-    def denormalize(self, tensor,mean_val, std_val, eps = 1e-10):
-        """Convert back from [0,1] to real physical values."""
-        
-        return ((tensor * (std_val + eps)) + mean_val)
         
 
-    def log_batch(self, model, batch, epoch, device):
-        # Skip epochs that do not trigger logging
+    def log_batch(self, model, batch, epoch, device, set="validation"):
+        """
+        Log l'ensemble d'un batch : images + distributions pixel-par-pixel.
+        Compatible avec un batch normal ou avec 'toute la validation concaténée'.
+        """
         if epoch < self.start_epoch or (epoch - self.start_epoch) % self.every_n_epochs != 0:
             return
 
         model.eval()
 
-        # Unpack (X has multiple channels, SAR is target)
-        x, sar = batch
+        x, sar, mask, cyclone_id, sar_time = batch
         x = x.to(device)
         sar = sar.to(device)
-
+        mask = mask.to(device)
+        
+        # ------------------------------------------------------------
+        # 1) Prédiction
+        # ------------------------------------------------------------
         with torch.no_grad():
             pred = model(x, timestep=0).sample  # (B,1,H,W)
 
-        # --- Select only IRWIN channel (channel 0) for visualization ---
-        ir_only = x[:, 0:1, :, :]   # (B,1,H,W) keep as 4D tensor
+        # ------------------------------------------------------------
+        # 2) Dé-normalisation
+        # ------------------------------------------------------------
 
-        # ---- De-normalization ----
-        if not isinstance(self.mean_X, (list, tuple, np.ndarray, dict)):
-            mean = self.mean_X
-            std = self.std_X
-        else :
-            mean = self.mean_X[0]
-            std = self.std_X[0]
+        def denorm(t, mean, std):
+            return t * (std + 1e-10) + mean
 
-        ir_denorm   = self.denormalize(ir_only, mean , std)
-        sar_denorm  = self.denormalize(sar, self.mean_sar, self.std_sar)
-        pred_denorm = self.denormalize(pred, self.mean_sar, self.std_sar)
+        # On ne visualise que le canal IRWIN (canal 0)
+        ir = x[:, 0:1, :, :]
 
-        # ---- Convert to numpy ----
+        ir_denorm   = denorm(ir,  self.mean_X[0],   self.std_X[0])
+        sar_denorm  = denorm(sar, self.mean_sar,    self.std_sar)
+        pred_denorm = denorm(pred, self.mean_sar,   self.std_sar)
+
+        # Conversion numpy
         ir_np   = ir_denorm.squeeze(1).cpu().numpy()
         sar_np  = sar_denorm.squeeze(1).cpu().numpy()
         pred_np = pred_denorm.squeeze(1).cpu().numpy()
+        if isinstance(mask, torch.Tensor):
+            mask_np = mask.cpu().numpy()
 
-        num = min(self.num_samples, ir_np.shape[0])
+        batch_size = ir_np.shape[0]
+        num = min(self.num_samples, batch_size)
 
+        # Tirage aléatoire d'exemples
         np.random.seed(0)
-        for i in np.random.choice(len(ir_np), size=num, replace=False):
+        sample_ids = np.random.choice(batch_size, size=num, replace=False)
+
+        # ------------------------------------------------------------
+        # 3) Plots par échantillon
+        # ------------------------------------------------------------
+        os.makedirs(os.path.join(self.output_dir, "samples", set), exist_ok=True)
+        
+           
+        for i in sample_ids:
             fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
-            # IRWIN input (only channel 0)
+            # IRWIN
             axes[0].imshow(ir_np[i], cmap=self.cmap_ir)
             axes[0].set_title("IRWIN (Channel 0)")
             axes[0].axis("off")
 
             # Real SAR
-            sar_vis = np.where(self.mask[i] == 1, sar_np[i], np.nan)
+            sar_vis = np.where(mask_np[i]==1, sar_np[i],np.nan)
             axes[1].imshow(sar_vis, cmap=self.cmap_sar)
             axes[1].set_title("Target SAR (knots)")
             axes[1].axis("off")
 
             # Predicted SAR
-            pred_vis = np.where(self.mask[i] == 1, pred_np[i], np.nan)
+            pred_vis = np.where(mask_np[i] == 1, pred_np[i], np.nan)
             axes[2].imshow(pred_vis, cmap=self.cmap_sar)
             axes[2].set_title("Predicted SAR (knots)")
             axes[2].axis("off")
 
-            if self.cyclone_ids is not None and self.sar_times is not None:
-                fig.suptitle(f"Cyclone: {self.cyclone_ids[i]} — SAR Time: {self.sar_times[i]} — Epoch {epoch + 1}", fontsize=10)
+            # Title with cyclone & SAR timestamp
+            if cyclone_id is not None and sar_time is not None:
+                fig.suptitle(
+                    f"Cyclone: {cyclone_id[i]} — SAR Time: {sar_time[i]} — Epoch {epoch+1}",
+                    fontsize=10
+                )
             else:
                 fig.suptitle(f"Epoch {epoch+1}", fontsize=14)
 
             plt.tight_layout()
-
-            os.makedirs(os.path.join(Path(self.output_dir), "samples"), exist_ok=True)
-            save_path = os.path.join(Path(self.output_dir), "samples", f"sample_{i}_epoch_{epoch + 1}.png")
+            save_path = os.path.join(self.output_dir, "samples",set,  f"sample_{i}_epoch_{epoch+1}.png")
             plt.savefig(save_path, dpi=150)
             plt.close(fig)
 
-            # Save distributions (unchanged)
-            sar_sample = sar_denorm[i].squeeze(0)
-            pred_sample = pred_denorm[i].squeeze(0)
-            mask_valid = self.mask[i] == 1
+        print(f"💾 Saved {num} sample images.")
 
-            sar_valid = sar_sample[mask_valid]
-            pred_valid = pred_sample[mask_valid]
+        # ------------------------------------------------------------
+        # 4) Distribution globale TRUE vs PRED sur tout le batch
+        # ------------------------------------------------------------
 
-            sar_plot = (sar_valid - sar_valid.min()) / (sar_valid.max() - sar_valid.min() + 1e-10)
-            pred_plot = (pred_valid - pred_valid.min()) / (pred_valid.max() - pred_valid.min() + 1e-10)
+        # Convert to numpy
+        sar_all  = sar_denorm.cpu().numpy().flatten()
+        pred_all = pred_denorm.cpu().numpy().flatten()
+        mask_all = mask_np.flatten()
 
-            self.save_wind_sistribution(sar_valid, pred_valid)
-            self.save_wind_sistribution(sar_plot, pred_plot, output="normalized")
+        # Garder seulement les valeurs valides du masque
+        valid = mask_all == 1
 
-            print(f"💾 Saved: {save_path}")
+        sar_valid  = sar_all[valid]
+        pred_valid = pred_all[valid]
+
+        # Convertir en noeuds
+        sar_knots  = sar_valid * 1.94384
+        pred_knots = pred_valid * 1.94384
+
+        plt.figure(figsize=(8, 6))
+        plt.hist(sar_knots, bins=60, alpha=0.5, density=True, label="True SAR", color="blue")
+        plt.hist(pred_knots, bins=60, alpha=0.5, density=True, label="Predicted SAR", color="orange")
+        plt.legend()
+        plt.xlabel("Wind Speed (knots)")
+        plt.ylabel("Density")
+        plt.title(f"Global Wind Speed Distribution — Epoch {epoch+1}")
+        out_path = os.path.join(self.output_dir, f"wind_distribution_{set}.png")
+        plt.savefig(out_path, dpi=150)
+        plt.close('all')
+
+        print(f"📈 Saved global distribution: {out_path}")
+
 
         # save distribution of wind speed of pred and true val to compare it
         #just in the lkast epoch
     def save_wind_sistribution(self, sar_denorm, pred_denorm, output= None):
         
-            wind_true = sar_denorm.cpu().numpy().flatten()
-            wind_pred = pred_denorm.cpu().numpy().flatten()
+            wind_true = (sar_denorm*1.94384).cpu().numpy().flatten()
+            wind_pred = (pred_denorm*1.94384).cpu().numpy().flatten()
             min_value = min(wind_true.min(), wind_pred.min())
             plt.figure(figsize=(8,6))
         
             # plot the histograms
-            plt.hist((wind_true ), bins=50, alpha=0.5, label='True SAR', color='blue', density=True)
-            plt.hist((wind_pred ), bins=50, alpha=0.5, label='Predicted SAR', color='orange', density=True)
+            plt.hist((wind_true), bins=50, alpha=0.5, label='True SAR', color='blue', density=True)
+            plt.hist((wind_pred), bins=50, alpha=0.5, label='Predicted SAR', color='orange', density=True)
             plt.legend()
             plt.title("Distribution of Wind Speed: True vs Predicted SAR")
             plt.xlabel("Wind Speed (knots)")
             plt.ylabel("Density")
             plt.savefig(os.path.join(Path(self.output_dir ), f"wind_speed_distribution_{output}.png"), dpi=150)
-            plt.close()
+            plt.close('all')
 
     def on_validation_plots(self, model, epoch, dataloader, device):
         print(f"📸 Logging validation samples at epoch {epoch +1}")
 
-        all_ir = []
-        all_sar = []
+        all_ir_val = []
+        all_sar_val = []
+        all_ir_train = []
+        all_sar_train = []
+        mask_train = []
+        mask_val = []
+        cyclone_id_train, cyclone_id_val = [], []
+        sar_time_train , sar_time_val = [], []
 
         # Parcourir tout le DataLoader et accumuler IR et SAR
-        for ir, sar in dataloader:
-            all_ir.append(ir)
-            all_sar.append(sar)
+        for ir, sar, mask, cyc, sart in dataloader[1]:
+            all_ir_val.append(ir)
+            all_sar_val.append(sar)
+            mask_val.append(mask)
+            cyclone_id_val.append(cyc)
+            sar_time_val.append(sart)
+        
+        for ir, sar, mask, cyc, sart in dataloader[0]:
+            all_ir_train.append(ir)
+            all_sar_train.append(sar)
+            mask_train.append(mask)
+            cyclone_id_train.append(cyc)
+            sar_time_train.append(sart)
 
         # Concaténer sur la dimension batch (dim=0)
-        ir_full = torch.cat(all_ir, dim=0)   # → (Total, 1, H, W)
-        sar_full = torch.cat(all_sar, dim=0) # → (Total, 1, H, W)
+        ir_full_val = torch.cat(all_ir_val, dim=0)   # → (Total, 1, H, W)
+        sar_full_val = torch.cat(all_sar_val, dim=0) # → (Total, 1, H, W)
+        mask_val = torch.cat(mask_val, dim=0)
+        cyclone_id_val = sum(cyclone_id_val, [])   # concat lists
+        sar_time_val   = sum(sar_time_val, [])
+
+        ir_full_train = torch.cat(all_ir_train, dim=0)   # → (Total, 1, H, W)
+        sar_full_train = torch.cat(all_sar_train, dim=0) # → (Total, 1, H, W)
+        mask_train = torch.cat(mask_train, dim=0)
+        cyclone_id_train = sum(cyclone_id_train, [])   # concat lists
+        sar_time_train   = sum(sar_time_train, [])
 
         # Créer un tuple exactement comme un batch
-        batch_full = (ir_full, sar_full)
+        batch_full_val = (ir_full_val, sar_full_val, mask_val, cyclone_id_val, sar_time_val)
+        batch_full_train = (ir_full_train, sar_full_train, mask_train, cyclone_id_train, sar_time_train)
 
-        self.log_batch(model, batch_full, epoch, device)
+        self.log_batch(model, batch_full_val, epoch, device)
+        self.log_batch(model, batch_full_train, epoch, device, set="train")
 

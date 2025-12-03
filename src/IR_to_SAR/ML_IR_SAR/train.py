@@ -47,6 +47,7 @@ from pathlib import Path
 import shutil
 
 
+
 import src.IR_to_SAR.data_preparation.data_preprocessing as dataprep
 from src.visualisation.utils_colormap import CMAP
 cmap_ir , cmap_sar = CMAP.cira_ir(), CMAP.cmap_sar()
@@ -80,10 +81,12 @@ class IRSARDataset(Dataset):
     IR shape:  (N, H_ir, W_ir)
     SAR shape: (N, H_ir, W_ir)
     """
-    def __init__(self,test=False,size=256, norm = "z_score", barycenter = "no" ,augmentation = False, drop_nan_100 = True,input_channels=None):
+    def __init__(self,test=False,size=256, norm = "z_score", barycenter = "no" ,augmentation = False, drop_nan_100 = True,input_channels=None,
+                 data_path=None):
         self.norm = norm
         
-        dataset = prep_dataset.PrepareDataSet(size=size, norm= norm, barycenter= barycenter, drop_nan_100=drop_nan_100,input_channels=input_channels)
+        dataset = prep_dataset.PrepareDataSet(size=size, norm= norm, barycenter= barycenter, drop_nan_100=drop_nan_100,input_channels=input_channels,
+                                              pkl_file=data_path)
         self.X = dataset.X
         self.sar = dataset.sar   
         self.dataset = dataset     
@@ -104,21 +107,25 @@ class IRSARDataset(Dataset):
 
 
 class PairedDataset(Dataset):
-    def __init__(self, X, sar_array):
-        """
-        X: numpy array or list of input tensors with shape (N, C, H, W)
-        sar_array: numpy array or list of target tensors with shape (N, 1, H, W)
-        """
-        self.X = X  # Input features: IRWIN + additional channels
-        self.sar = sar_array  # Target SAR wind maps
-
+    def __init__(self, X, sar_array, mask, cyclone_id, sar_time):
+        self.X = X
+        self.sar = sar_array
+        self.mask = mask
+        self.cyclone_id =  cyclone_id
+        self.sar_time = sar_time
+    
     def __len__(self):
-        return len(self.sar)
+        return len(self.X)
 
     def __getitem__(self, idx):
-        x = torch.tensor(self.X[idx], dtype=torch.float32)  # Already (C,H,W)
-        y = torch.tensor(self.sar[idx], dtype=torch.float32)  # (1,H,W)
-        return x, y
+        return (
+            torch.tensor(self.X[idx], dtype=torch.float32),
+            torch.tensor(self.sar[idx], dtype=torch.float32),
+            torch.tensor(self.mask[idx], dtype=torch.float32),
+            self.cyclone_id[idx],
+            self.sar_time[idx]
+        )
+
 
 
 
@@ -131,15 +138,15 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics):
     total_loss = 0
     metrics.reset()
 
-    for x, sar in tqdm(dataloader, desc="Training"):
-        x, sar = x.to(fabric.device), sar.to(fabric.device)
+    for x, sar, mask, _, _ in tqdm(dataloader, desc="Training"):
+        x, sar, mask= x.to(fabric.device), sar.to(fabric.device), mask.to(fabric.device)
         optimizer.zero_grad()
 
         # Forward pass
         pred = model(x, timestep=0).sample  # (B,1,H,W)
 
         # Mask des pixels valides
-        mask = torch.isfinite(sar)
+        # mask = torch.isfinite(sar)
 
         sar_valid = sar.nan_to_num()
         pred_valid = pred
@@ -147,10 +154,10 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics):
         # Losses
         if sar_valid.ndim == 3:
             sar_valid = sar_valid.unsqueeze(1)
-        loss_mse = F.mse_loss(pred_valid*mask, sar_valid*mask)
+        loss_mse = F.l1_loss(pred_valid*mask, sar_valid*mask)
         loss_ssim = 1 - ssim(pred_valid, sar_valid)
 
-        loss = 0.4 * loss_mse + 0.6 * loss_ssim
+        loss = 1.0 * loss_mse + 0.0 * loss_ssim
 
         # Backpropagation
         fabric.backward(loss)
@@ -169,21 +176,21 @@ def validate(fabric, model, dataloader, metrics):
     metrics.reset()
 
     with torch.no_grad():
-        for x, sar in tqdm(dataloader, desc="Validating"):
-            x, sar = x.to(fabric.device), sar.to(fabric.device)
+        for x, sar, mask, _, _ in tqdm(dataloader, desc="Validating"):
+            x, sar, mask = x.to(fabric.device), sar.to(fabric.device), mask.to(fabric.device)
 
             pred = model(x, timestep=0).sample
 
-            mask = torch.isfinite(sar)
+            # mask = torch.isfinite(sar)
             sar_valid = sar.nan_to_num()
             pred_valid = pred
             if sar_valid.ndim == 3:
                 sar_valid = sar_valid.unsqueeze(1)
 
-            loss_mse = F.mse_loss(pred_valid*mask, sar_valid*mask)
+            loss_mse = F.l1_loss(pred_valid*mask, sar_valid*mask)
             loss_ssim = 1 - ssim(pred_valid, sar_valid)
 
-            loss = 0.4 * loss_mse + 0.6 * loss_ssim
+            loss = 1.0 * loss_mse + 0.0 * loss_ssim
 
             total_loss += loss.item()
             metrics.update(pred_valid*mask, sar_valid*mask)
@@ -194,6 +201,21 @@ def validate(fabric, model, dataloader, metrics):
 # =============================
 # 🚀 3) Main Training Lightning Fabric
 # =============================
+def custom_collate(batch):
+    """
+    batch = [
+        (x, sar, mask, cyclone_id, sar_time),
+        ...
+    ]
+    """
+    xs        = torch.stack([item[0] for item in batch])
+    sars      = torch.stack([item[1] for item in batch])
+    masks     = torch.stack([item[2] for item in batch])
+
+    cyclone_ids = [item[3] for item in batch]   # stay as list of strings
+    sar_times   = [item[4] for item in batch]   # stay as list of strings
+
+    return xs, sars, masks, cyclone_ids, sar_times
 
 def main(cfg: IR_SAR_Config,test=False):
     logger.info(f"Starting training with config:\n{cfg.__dict__}")
@@ -201,7 +223,9 @@ def main(cfg: IR_SAR_Config,test=False):
 
     # --- Dataset full ---
     
-    full_data = IRSARDataset(test=test, size=cfg.img_size, norm=cfg.norm, barycenter=cfg.barycenter, drop_nan_100=cfg.drop_nan_sar,input_channels=cfg.input_channels)
+    full_data = IRSARDataset(test=test, size=cfg.img_size, norm=cfg.norm, barycenter=cfg.barycenter, drop_nan_100=cfg.drop_nan_sar,
+                             input_channels=cfg.input_channels,
+                             data_path = cfg.data_path)
     X_all, sar_all = full_data.dataset.X, full_data.dataset.sar
 
     if cfg.barycenter == "yes" : 
@@ -215,14 +239,16 @@ def main(cfg: IR_SAR_Config,test=False):
         val_size=cfg.val_split,
         test_size=cfg.test_split,
         augmentation=cfg.augmentation,
-        mask_sar = full_data.dataset.mask_sar
+        mask_sar = full_data.dataset.mask_sar,
+        cyclone_ids=full_data.dataset.cyclone_ids,
+        sar_times= full_data.dataset.sar_time
     )
+    
+    train_ds = PairedDataset(*dictio["train"],dictio["mask_sar_train"], dictio["cyclone_id_train"], dictio["sar_time_train"])  #X (multi-channel input), SAR target
+    val_ds   = PairedDataset(*dictio["val"],dictio["mask_sar_val"], dictio["cyclone_id_val"], dictio["sar_time_val"])
 
-    train_ds = PairedDataset(*dictio["train"])  #X (multi-channel input), SAR target
-    val_ds   = PairedDataset(*dictio["val"])
-
-    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True)
-    val_loader   = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False)
+    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=custom_collate)
+    val_loader   = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=custom_collate)
 
     # --- Fabric init with callbacks ---   #QUentin
     base_dir = Path(cfg.save_dir)
@@ -232,6 +258,7 @@ def main(cfg: IR_SAR_Config,test=False):
         i += 1
 
     target_dir = base_dir / f"train_ir_sar_{i}"
+    
     fabric = L.Fabric(
         accelerator=cfg.accelerator,
         devices= cfg.devices,
@@ -250,13 +277,15 @@ def main(cfg: IR_SAR_Config,test=False):
                 cmap_ir=cmap_ir,
                 cmap_sar=cmap_sar,
                 start_epoch=cfg.start_epoch,    
-                mask= dictio["mask_sar"],
+                mask_train = dictio["mask_sar_train"],
+                mask_val = full_data.dataset.mask_sar[dictio["val_index"]],
                 cyclone_ids= full_data.dataset.cyclone_ids,
                 sar_times= full_data.dataset.sar_time
             )
         ],
     )
     fabric.launch()
+    dataprep.visualize_dataset_statistics(dictio,target_dir,full_data.dataset.mask_sar)
 
     # --- Metrics ---
     metrics = torchmetrics.MetricCollection({
@@ -308,7 +337,7 @@ def main(cfg: IR_SAR_Config,test=False):
                 "on_validation_plots",
                 model=model,
                 epoch=epoch,
-                dataloader=val_loader,
+                dataloader=[train_loader,val_loader],
                 device=fabric.device
             )
                 print("----- plots saved")
@@ -319,6 +348,8 @@ def main(cfg: IR_SAR_Config,test=False):
             f"LR={scheduler.get_last_lr()[0]:.6f}, "
             # f"Train metrics={train_metrics}, Val metrics={val_metrics}"
         )
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
       
         for callback in fabric._callbacks:
             if getattr(callback, "should_stop", False):
@@ -339,6 +370,7 @@ def main(cfg: IR_SAR_Config,test=False):
 
     # Construire le chemin du CSV
     csv_path = target_dir / "training_history.csv"
+    
     history_df.to_csv(csv_path, index=False)
 
     plt.figure()
@@ -364,3 +396,15 @@ if __name__ == "__main__":
     from src.IR_to_SAR.ML_IR_SAR.config import IR_SAR_Config
     cfg = IR_SAR_Config.from_yaml("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/config.yaml")
     main(cfg,test=False)
+
+
+
+
+
+
+
+
+
+
+
+

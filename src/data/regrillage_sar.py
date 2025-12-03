@@ -27,9 +27,9 @@ def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=2):
         print(f"⚠️ Aucun centre trouvé pour {filename}")
         return
     cyclone_name = match.iloc[0]["cyclone"]
-    lat_centre = float(match.iloc[0]["lat_centre"])
+    lat_centre = float(match.iloc[0]["eye_center_lat"])          #use the eye_center
 
-    lon_centre = float(match.iloc[0]["lon_centre"])
+    lon_centre = float(match.iloc[0]["eye_center_lon"])
     lon_centre = (lon_centre + 180) % 360 - 180  # longitude center normalisation
 
     print(f"📡 Traitement du fichier {filename} — centre cyclone : ({lat_centre}, {lon_centre})")
@@ -92,8 +92,8 @@ def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=2):
 
 
 def main(dxy=2,max_r=300):
-    output_dir = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_v2"
-    sargeo = pd.read_csv("excels/SARGEO_SAR_v3.csv")
+    output_dir = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_eye"
+    sargeo = pd.read_csv("excels/SARGEO_SAR_v4.csv")
 
     # test only for al122024
     # sargeo = sargeo[sargeo["cyclone"] == "al122024"]

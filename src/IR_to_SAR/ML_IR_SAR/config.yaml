@@ -8,7 +8,8 @@ augmentation : True
 drop_nan_sar : True
 in_channels: 1     # ir channel 
 out_channels: 1
-input_channels: ["vorticity"]          
+diffusion: True
+input_channels: []          
 
 # "shear_magnitude"
 # "shear_direction"
@@ -20,31 +21,31 @@ input_channels: ["vorticity"]
 # "vorticity"
 
 # Training parameters
-batch_size: 32
+batch_size: 64
 learning_rate: 0.0001
-num_epochs: 50
-dropout : 0.3
+num_epochs: 200
+dropout : 0.1
 
 # Dataset split
-train_split: 0.7
-val_split: 0.29
+train_split: 0.6
+val_split: 0.39
 test_split: 0.01
 # Paths
-data_path: "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_v1.pkl"
+data_path: "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_dict_all_sargeo.pkl"
 save_dir: "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/train_history_ir_sar"
 
 # Early stopping
-early_stop_patience: 20
-early_stop_delta: 0.0001
+early_stop_patience: 80
+early_stop_delta: 0.001
 
 # Plotting
 start_epoch: 0
 plot_interval: 10
-num_val_exemples : 10
+num_val_exemples : 8
 
 # Device
 accelerator: "gpu"
-devices: [2]   # 
+devices: [7]   # 
 
 # Scheduler
 scheduler_every_n_epochs: 10

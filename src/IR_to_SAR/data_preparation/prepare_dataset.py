@@ -6,19 +6,21 @@ import numpy as np
 from loguru import logger
 import pickle as pkl
 from importlib import reload
+import matplotlib.pyplot as plt
 
 
 import src.IR_to_SAR.data_preparation.data_preprocessing as dataprep
 from src.visualisation.utils_colormap import CMAP
 cmap_ir , cmap_sar = CMAP.cira_ir(), CMAP.cmap_sar()
 reload(dataprep)
+from src.IR_to_SAR.data_preparation.distribution_data_visualisation import plot_ir, plot_sar,plot_ir_hist,plot_sar_hist
 
 
 
 
 class PrepareDataSet():
     
-    def __init__(self, pkl_file="/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_v3.pkl",
+    def __init__(self, pkl_file="/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_eye_dictv1.pkl",
                   input_channels=None, 
                   barycenter="no", 
                   size=256, 
@@ -39,12 +41,18 @@ class PrepareDataSet():
         #  Extract metadata ===
         self.cyclone_ids = np.array(data["cyclone_id"])
         self.sar_time = np.array(data["sar_time"])
+        # self.eye_cenetr_lat = np.array(data["eye_center_lat"])
+        # self.eye_center_lon = np.array(data["eye_center_lon"])
+        # self.storm_center_lat = np.array(data["storm_center_lat"])
+        # self.storm_center_lon = np.array(data["storm_center_lon"])
 
         #  Extract X channels ===
         X_list = []
 
         # Always add IRWIN first
         irwin = np.array(data["irwin"])  # (N,H,W)
+        
+
         N,H,W = irwin.shape
         X_list.append(irwin)
 
@@ -53,40 +61,48 @@ class PrepareDataSet():
         for var in input_channels:
             arr = np.array(data[var])
 
-        if arr.ndim == 1:
-            arr = np.tile(arr[:, None, None], (1, H, W))
-            X_list.append(arr)
+            if arr.ndim == 1:
+                arr = np.tile(arr[:, None, None], (1, H, W))
+                X_list.append(arr)
 
-        elif arr.ndim == 2:
-            for c in range(arr.shape[1]):
-                expanded = np.tile(arr[:, c][:, None, None], (1, H, W))
-                X_list.append(expanded)
-
-        elif arr.ndim == 3:
-            # 🎯 Case (N, H’, 1) → Flatten into H' scalar channels
-            if arr.shape[2] == 1:
-                H_prime = arr.shape[1]
-                print(f"Expanding {var}: shape (N,{H_prime},1) → {H_prime} scalar channels")
-
-                arr_2d = arr.reshape(arr.shape[0], H_prime)  # (N, H')
-                for c in range(H_prime):
-                    expanded = np.tile(arr_2d[:, c][:, None, None], (1, H, W))
+            elif arr.ndim == 2:
+                for c in range(arr.shape[1]):
+                    expanded = np.tile(arr[:, c][:, None, None], (1, H, W))
                     X_list.append(expanded)
 
-                 
+            elif arr.ndim == 3:
+                # 🎯 Case (N, H’, 1) → Flatten into H' scalar channels
+                if arr.shape[2] == 1:
+                    H_prime = arr.shape[1]
+                    print(f"Expanding {var}: shape (N,{H_prime},1) → {H_prime} scalar channels")
 
-            elif arr.shape[1:] == (H, W):
-                X_list.append(arr)  # Normal (N,H,W) image channel
+                    arr_2d = arr.reshape(arr.shape[0], H_prime)  # (N, H')
+                    for c in range(H_prime):
+                        expanded = np.tile(arr_2d[:, c][:, None, None], (1, H, W))
+                        X_list.append(expanded)
+
+                    
+
+                elif arr.shape[1:] == (H, W):
+                    X_list.append(arr)  # Normal (N,H,W) image channel
+
+                else:
+                    arr = arr.reshape(arr.shape[0],arr.shape[1]*arr.shape[2])
+                    for c in range(arr.shape[1]):
+                        expanded = np.tile(arr[:, c][:, None, None], (1, H, W))
+                    X_list.append(expanded)
+                    
+                    
 
             else:
-                raise ValueError(f"Invalid shape for {var}: {arr.shape}")
-
-        else:
-            raise ValueError(f"Unsupported number of dimensions for {var}: {arr.shape}")
+                raise ValueError(f"Unsupported number of dimensions for {var}: {arr.shape}")
+            
+            print(f"{var}-------{arr.shape}")
 
 
 
         # Final stack → (N,C,H,W)
+   
         self.X = np.stack(X_list, axis=1)
 
         #  Extract SAR windspeed as target ===
@@ -102,7 +118,7 @@ class PrepareDataSet():
 
         # Optional: remove SAR samples with too many NaNs ===
         if drop_nan_100:
-            self.X, self.sar = dataprep.remove_sar_nan(self.X, self.sar)
+            self.X, self.sar = dataprep.remove_sar_nan(self.X, self.sar, radius_km=100, threshold=0.1)
 
         #  Create SAR valid pixel mask ===
         self.mask_sar = np.isfinite(self.sar).astype(np.float32)

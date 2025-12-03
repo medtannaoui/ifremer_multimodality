@@ -169,7 +169,7 @@ def save_colocation_csv(
     output_path: str = "excels/colocates_sargeo_primed_v1.csv",
     sargeo_csv_path: str = "excels/SARGEO_cyclones.csv",
     tcprimed_csv_path: str = "excels/TCPrimed_overpass.csv",
-    delta: int = 30
+    delta: int = 60
 ):
     """
     Runs the colocation function and saves the result to CSV.
