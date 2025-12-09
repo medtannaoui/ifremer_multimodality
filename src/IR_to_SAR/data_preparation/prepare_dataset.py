@@ -9,23 +9,23 @@ from importlib import reload
 import matplotlib.pyplot as plt
 
 
-import src.IR_to_SAR.data_preparation.data_preprocessing as dataprep
-from src.visualisation.utils_colormap import CMAP
+import src_new.IR_to_SAR.data_preparation.data_preprocessing as dataprep
+from src_new.visualisation.utils_colormap import CMAP
 cmap_ir , cmap_sar = CMAP.cira_ir(), CMAP.cmap_sar()
 reload(dataprep)
-from src.IR_to_SAR.data_preparation.distribution_data_visualisation import plot_ir, plot_sar,plot_ir_hist,plot_sar_hist
 
 
 
 
 class PrepareDataSet():
     
-    def __init__(self, pkl_file="/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_eye_dictv1.pkl",
+    def __init__(self, pkl_file=None,
                   input_channels=None, 
                   barycenter="no", 
                   size=256, 
                   norm="z_score", 
-                  drop_nan_100=True):
+                  drop_nan_100=True,
+                 ):
 
         print("🔹 Loading PKL data...")
         with open(pkl_file, "rb") as f:
@@ -41,74 +41,61 @@ class PrepareDataSet():
         #  Extract metadata ===
         self.cyclone_ids = np.array(data["cyclone_id"])
         self.sar_time = np.array(data["sar_time"])
-        # self.eye_cenetr_lat = np.array(data["eye_center_lat"])
-        # self.eye_center_lon = np.array(data["eye_center_lon"])
-        # self.storm_center_lat = np.array(data["storm_center_lat"])
-        # self.storm_center_lon = np.array(data["storm_center_lon"])
+       
 
         #  Extract X channels ===
-        X_list = []
+        #  image_channels : (N, H, W)
+        #  feature_arrays : (N, F_i) qu'on concaténera en (N, F_total)
+        image_channels = []
+        feature_arrays = []
+        feature_names = []   # for debug
 
-        # Always add IRWIN first
-        irwin = np.array(data["irwin"])  # (N,H,W)
-        
+        # all irwins (9)
+        irwin_all = np.array(data["irwin"])    # (N, 9, H, W) par ex.
+        N, _, H, W = irwin_all.shape
 
-        N,H,W = irwin.shape
-        X_list.append(irwin)
+        # for i in [4]:
+        #     irwin = irwin_all[:, i, :, :]      # (N, H, W)  # add multiple irs
+        #     image_channels.append(irwin)
 
-        # Process additional input channels
-        
-        for var in input_channels:
-            arr = np.array(data[var])
+        image_channels.append(np.nanmean(irwin_all,axis=1)) #mean of th nine irs
 
-            if arr.ndim == 1:
-                arr = np.tile(arr[:, None, None], (1, H, W))
-                X_list.append(arr)
+        if input_channels is not None:
+            for var in input_channels:
+                arr = np.array(data[var])   # shape variable (N, ...) 
 
-            elif arr.ndim == 2:
-                for c in range(arr.shape[1]):
-                    expanded = np.tile(arr[:, c][:, None, None], (1, H, W))
-                    X_list.append(expanded)
+                # if a feature has already a shape like irwin (N,H,W) we add it to the features list
+                if arr.ndim == 3 and arr.shape[1:] == (H, W):
+                    print(f"{var}: traité comme IMAGE (N,H,W) = {arr.shape}")
+                    image_channels.append(arr)
 
-            elif arr.ndim == 3:
-                # 🎯 Case (N, H’, 1) → Flatten into H' scalar channels
-                if arr.shape[2] == 1:
-                    H_prime = arr.shape[1]
-                    print(f"Expanding {var}: shape (N,{H_prime},1) → {H_prime} scalar channels")
-
-                    arr_2d = arr.reshape(arr.shape[0], H_prime)  # (N, H')
-                    for c in range(H_prime):
-                        expanded = np.tile(arr_2d[:, c][:, None, None], (1, H, W))
-                        X_list.append(expanded)
-
-                    
-
-                elif arr.shape[1:] == (H, W):
-                    X_list.append(arr)  # Normal (N,H,W) image channel
-
+                # flatt the last dimensions so we have (N,F)
                 else:
-                    arr = arr.reshape(arr.shape[0],arr.shape[1]*arr.shape[2])
-                    for c in range(arr.shape[1]):
-                        expanded = np.tile(arr[:, c][:, None, None], (1, H, W))
-                    X_list.append(expanded)
-                    
-                    
+                    # 
+                    arr_flat = arr.reshape(N, -1)   # (N, F_var)
+                    feature_arrays.append(arr_flat)
+                    feature_names.append(var)
+                    print(f"{var}: Features with shape = {arr_flat.shape}")
 
-            else:
-                raise ValueError(f"Unsupported number of dimensions for {var}: {arr.shape}")
-            
-            print(f"{var}-------{arr.shape}")
+        # 3) stack the pictures list
+        self.X = np.stack(image_channels, axis=1)   # (N, C, H, W)
 
+        # concatenate the faetures primed
+        if len(feature_arrays) > 0:
+            self.X_features = np.concatenate(feature_arrays, axis=1)  # (N, F_total)
+            self.feature_names = feature_names
+            print("🔍 Final features shape:", self.X_features.shape)
+            print("📎 Feature names:", self.feature_names)
+        else:
+            self.X_features = None
+            self.feature_names = []
+            print("ℹ️ No features added to the blotelneck")
 
-
-        # Final stack → (N,C,H,W)
-   
-        self.X = np.stack(X_list, axis=1)
-
-        #  Extract SAR windspeed as target ===
+        #  Extract SAR windspeed as target
         self.sar = np.array(data["owiwindspeed"])
 
-        # Center crop ===
+
+        # Center crop 
         N, C, H, W = self.X.shape
         self.X = self.X[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2]
         self.sar = self.sar[:, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2]
@@ -118,7 +105,7 @@ class PrepareDataSet():
 
         # Optional: remove SAR samples with too many NaNs ===
         if drop_nan_100:
-            self.X, self.sar = dataprep.remove_sar_nan(self.X, self.sar, radius_km=100, threshold=0.1)
+            self.X, self.sar = dataprep.remove_sar_nan(self.X, self.sar, radius_km=100, threshold=0.4)
 
         #  Create SAR valid pixel mask ===
         self.mask_sar = np.isfinite(self.sar).astype(np.float32)

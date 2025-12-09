@@ -71,7 +71,8 @@ class NESDIS:
         return cls.get_lonlat_from_xy(sar_org, i, j)
 
     @classmethod
-    def aeqd(cls, sar_org, clon, clat, max_r=300, dxy=0.5, kind="nearest", varnames=["sar_wind"], include_org=False, org_varnames=["sar_wind"]):
+    def aeqd(cls, sar_org, clon, clat, max_r=300, dxy=0.5, kind="nearest", varnames=["sar_wind"], include_org=False, 
+             org_varnames=["sar_wind"],match=None):
         """
         Project SAR data on azimuthal equidistant projection centered at (clon, clat)
         
@@ -117,6 +118,7 @@ class NESDIS:
         sar_aeqd = xr.Dataset(coords={"x_sar":xax.astype(np.float32), "y_sar":yax.astype(np.float32)})
         sar_aeqd["clon"] = ([], clon, {"standard_name": "clon", "long_name": "center longitude", "units": "degrees"})
         sar_aeqd["clat"] = ([], clat, {"standard_name": "clat", "long_name": "center latitude", "units": "degrees"})
+        
         # sar_aeqd["sar_lon"] = (("sar_lon",), sar_org["owiLon"].values)
         # sar_aeqd["sar_lat"] = (("sar_lat",), sar_org["owiLat"].values)
         # sar_aeqd["sar_acquisition_time"] = sar_org["sar_acquisition_time"]

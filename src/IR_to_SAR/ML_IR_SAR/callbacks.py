@@ -3,6 +3,9 @@ from pathlib import Path
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
+import importlib
+import src_new.IR_to_SAR.data_preparation.distribution_data_visualisation as distdata
+importlib.reload(distdata)
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -17,11 +20,13 @@ class EarlyStopping:
         self.min_delta = min_delta
         self.epochs_without_improvement = 0
         self.best_val_loss = float("inf")
+        self.best_epoch = 0
         self.should_stop = False
 
-    def on_validation_epoch_end(self, val_loss, **kwargs):
+    def on_validation_epoch_end(self, val_loss, epoch, **kwargs):
         if val_loss < self.best_val_loss - self.min_delta:
             self.best_val_loss = val_loss
+            self.best_epoch = epoch
             self.epochs_without_improvement = 0
         else:
             self.epochs_without_improvement += 1
@@ -148,7 +153,76 @@ class LogValidationSamples:
         # 3) Plots par échantillon
         # ------------------------------------------------------------
         os.makedirs(os.path.join(self.output_dir, "samples", set), exist_ok=True)
-        
+        # Convert to numpy
+        sar_all  = sar_denorm.cpu().numpy().flatten()
+        pred_all = pred_denorm.cpu().numpy().flatten()
+        mask_all = mask_np.flatten()
+
+        valid = mask_all == 1
+
+        sar_valid  = sar_all[valid]
+        pred_valid = pred_all[valid]
+
+        # Conversion en knots
+        sar_knots_flat  = sar_valid * 1.94384
+        pred_knots_flat = pred_valid * 1.94384
+
+        # → Seulement pour la distribution
+        distdata.compare_sar_distribution(
+            sar_knots_flat,
+            pred_knots_flat,
+            self.output_dir,
+            set=set,
+            epoch=epoch
+        )
+
+        # =================================================
+        # 2) Vmax & radial → PAS de flatten (2D + masque)
+        # =================================================
+        sar_2d  = sar_denorm.squeeze(1).cpu().numpy()    # (B, H, W)
+        pred_2d = pred_denorm.squeeze(1).cpu().numpy()  # (B, H, W)
+        mask_2d = mask_np                                # (B, H, W)
+
+        # Conversion en knots
+        sar_2d_knots  = sar_2d * 1.94384
+        pred_2d_knots = pred_2d * 1.94384
+
+        # → Vmax utilise les champs 2D
+        distdata.vmax_compare(
+            sar_2d_knots,
+            pred_2d_knots,
+            self.output_dir,
+            set=set,
+            epoch=epoch
+        )
+
+        distdata.rmax_compare(
+            sar_2d_knots,
+            pred_2d_knots,
+            self.output_dir,
+            set=set,
+            epoch=epoch
+        )
+
+        # → Radial Vmax utilise aussi les champs 2D
+        distdata.compare_radial_vmax(
+            sar_2d_knots,
+            pred_2d_knots,
+            output_dir=self.output_dir,
+            set=set,
+            epoch=epoch,
+            plot=False
+        )
+
+        # mae 
+        distdata.compute_mae_metric(
+            sar_2d_knots,
+            pred_2d_knots,
+            output_dir=self.output_dir,
+            set=set,
+            epoch=epoch,
+            plot=False
+        )
            
         for i in sample_ids:
             fig, axes = plt.subplots(1, 3, figsize=(15, 5))
@@ -166,7 +240,7 @@ class LogValidationSamples:
 
             # Predicted SAR
             pred_vis = np.where(mask_np[i] == 1, pred_np[i], np.nan)
-            axes[2].imshow(pred_vis, cmap=self.cmap_sar)
+            axes[2].imshow(pred_np[i], cmap=self.cmap_sar)
             axes[2].set_title("Predicted SAR (knots)")
             axes[2].axis("off")
 
@@ -186,57 +260,12 @@ class LogValidationSamples:
 
         print(f"💾 Saved {num} sample images.")
 
-        # ------------------------------------------------------------
-        # 4) Distribution globale TRUE vs PRED sur tout le batch
-        # ------------------------------------------------------------
-
-        # Convert to numpy
-        sar_all  = sar_denorm.cpu().numpy().flatten()
-        pred_all = pred_denorm.cpu().numpy().flatten()
-        mask_all = mask_np.flatten()
-
-        # Garder seulement les valeurs valides du masque
-        valid = mask_all == 1
-
-        sar_valid  = sar_all[valid]
-        pred_valid = pred_all[valid]
-
-        # Convertir en noeuds
-        sar_knots  = sar_valid * 1.94384
-        pred_knots = pred_valid * 1.94384
-
-        plt.figure(figsize=(8, 6))
-        plt.hist(sar_knots, bins=60, alpha=0.5, density=True, label="True SAR", color="blue")
-        plt.hist(pred_knots, bins=60, alpha=0.5, density=True, label="Predicted SAR", color="orange")
-        plt.legend()
-        plt.xlabel("Wind Speed (knots)")
-        plt.ylabel("Density")
-        plt.title(f"Global Wind Speed Distribution — Epoch {epoch+1}")
-        out_path = os.path.join(self.output_dir, f"wind_distribution_{set}.png")
-        plt.savefig(out_path, dpi=150)
-        plt.close('all')
-
-        print(f"📈 Saved global distribution: {out_path}")
+        
+        
 
 
         # save distribution of wind speed of pred and true val to compare it
         #just in the lkast epoch
-    def save_wind_sistribution(self, sar_denorm, pred_denorm, output= None):
-        
-            wind_true = (sar_denorm*1.94384).cpu().numpy().flatten()
-            wind_pred = (pred_denorm*1.94384).cpu().numpy().flatten()
-            min_value = min(wind_true.min(), wind_pred.min())
-            plt.figure(figsize=(8,6))
-        
-            # plot the histograms
-            plt.hist((wind_true), bins=50, alpha=0.5, label='True SAR', color='blue', density=True)
-            plt.hist((wind_pred), bins=50, alpha=0.5, label='Predicted SAR', color='orange', density=True)
-            plt.legend()
-            plt.title("Distribution of Wind Speed: True vs Predicted SAR")
-            plt.xlabel("Wind Speed (knots)")
-            plt.ylabel("Density")
-            plt.savefig(os.path.join(Path(self.output_dir ), f"wind_speed_distribution_{output}.png"), dpi=150)
-            plt.close('all')
 
     def on_validation_plots(self, model, epoch, dataloader, device):
         print(f"📸 Logging validation samples at epoch {epoch +1}")
@@ -245,6 +274,7 @@ class LogValidationSamples:
         all_sar_val = []
         all_ir_train = []
         all_sar_train = []
+
         mask_train = []
         mask_val = []
         cyclone_id_train, cyclone_id_val = [], []
@@ -257,6 +287,7 @@ class LogValidationSamples:
             mask_val.append(mask)
             cyclone_id_val.append(cyc)
             sar_time_val.append(sart)
+    
         
         for ir, sar, mask, cyc, sart in dataloader[0]:
             all_ir_train.append(ir)
@@ -264,6 +295,7 @@ class LogValidationSamples:
             mask_train.append(mask)
             cyclone_id_train.append(cyc)
             sar_time_train.append(sart)
+      
 
         # Concaténer sur la dimension batch (dim=0)
         ir_full_val = torch.cat(all_ir_val, dim=0)   # → (Total, 1, H, W)

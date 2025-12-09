@@ -8,8 +8,9 @@ from SAR_NESDIS import NESDIS
 import shutil
 
 tcprimed_path = "/scale/project/ifremer-isi-jumeaunumerique/TC_PRIMED_DATASET/v01r01/final"   #tcprimed path
+tcprimed_path_preliminary = "/scale/project/ifremer-isi-jumeaunumerique/TC_PRIMED_DATASET/v01r01/preliminary"
 
-def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=2):
+def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=2, center="storm"):
     """
     Convertit un fichier SAR en coordonnées (x, y) centrées sur le cyclone
     en utilisant la méthode NESDIS.aeqd().
@@ -22,14 +23,15 @@ def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=2):
     filename = os.path.basename(sar_file).split(".nc")[0][:-6]
 
     # Trouver le centre correspondant dans le DataFrame
+    #vmax,analysis_vmax,analysis_center_quality_flag,analysis_rmax
     match = sargeo_df[sargeo_df["sar_inter"].str.contains(filename, case=False, na=False)]
     if match.empty:
         print(f"⚠️ Aucun centre trouvé pour {filename}")
         return
     cyclone_name = match.iloc[0]["cyclone"]
-    lat_centre = float(match.iloc[0]["eye_center_lat"])          #use the eye_center
+    lat_centre = float(match.iloc[0]["eye_center_lat"]) if center == "eye" else    float(match.iloc[0]["lat_centre"])       #use the eye_center
 
-    lon_centre = float(match.iloc[0]["eye_center_lon"])
+    lon_centre = float(match.iloc[0]["eye_center_lon"]) if center == "eye" else float(match.iloc[0]["lon_centre"])
     lon_centre = (lon_centre + 180) % 360 - 180  # longitude center normalisation
 
     print(f"📡 Traitement du fichier {filename} — centre cyclone : ({lat_centre}, {lon_centre})")
@@ -50,7 +52,8 @@ def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=2):
         dxy=dxy,           # résolution (in km)
         kind="nearest",    # nearest or linear
         varnames=["owiWindSpeed","owiWindSpeed_co","owiWindDirection_co","owiIncidenceAngle"],
-        include_org=False
+        include_org=False,
+        match = match
     )
 
     # Sauvegarder le nouveau fichier NetCDF
@@ -63,7 +66,7 @@ def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=2):
         bassin_cyclone = cyclone_name[0:2]
         cyclone_path_primed = os.path.join(tcprimed_path, str(year_cyclone), bassin_cyclone.upper(), str(num_cyclone) )
         path_env = None
-
+        cyclone_path_primed = cyclone_path_primed if os.path.isdir(cyclone_path_primed) else os.path.join(tcprimed_path_preliminary, str(year_cyclone), bassin_cyclone.upper(), str(num_cyclone) )
         if os.path.isdir(cyclone_path_primed):              # if it exists in tcprimed dataset
             os.makedirs(os.path.join(output_dir,cyclone_name),exist_ok=True)
             for path_i in  os.listdir(cyclone_path_primed):
@@ -86,14 +89,14 @@ def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=2):
     # Mettre à jour ton CSVa ton avis 
     current_index = match.index[0]
     sargeo_df.at[current_index, "sar_xy"] = out_file
-    sargeo_df.to_csv("excels/SARGEO_SAR_v3.csv", index=False)
+    sargeo_df.to_csv("excels/SARGEO_SAR_v5.csv", index=False)
 
     print(f"✅ Fichier reprojeté sauvegardé : {out_file}")
 
 
-def main(dxy=2,max_r=300):
-    output_dir = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_eye"
-    sargeo = pd.read_csv("excels/SARGEO_SAR_v4.csv")
+def main(dxy=2,max_r=300,center="storm"):
+    output_dir = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_v4"
+    sargeo = pd.read_csv("excels/SARGEO_SAR_v5.csv")
 
     # test only for al122024
     # sargeo = sargeo[sargeo["cyclone"] == "al122024"]
@@ -101,7 +104,7 @@ def main(dxy=2,max_r=300):
 
     for file_path in sargeo["sar_path"]:
         try:
-            convert_sar_to_xy(file_path, sargeo, output_dir, max_r=max_r, dxy=dxy)
+            convert_sar_to_xy(file_path, sargeo, output_dir, max_r=max_r, dxy=dxy, center=center)
         except Exception as e:
             print(f"❌ Erreur pour {file_path}: {e}")
 
@@ -109,7 +112,7 @@ def main(dxy=2,max_r=300):
 
 
 if __name__ == "__main__":
-    main(2,300)
+    main(2,300, center="eye")
 
 
 

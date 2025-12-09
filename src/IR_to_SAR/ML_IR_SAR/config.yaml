@@ -23,19 +23,19 @@ input_channels: []
 # Training parameters
 batch_size: 64
 learning_rate: 0.0001
-num_epochs: 200
-dropout : 0.1
+num_epochs: 250
+dropout : 0.2
 
 # Dataset split
-train_split: 0.6
-val_split: 0.39
-test_split: 0.01
+train_split: 0.7
+val_split: 0.15
+test_split: 0.15
 # Paths
-data_path: "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_dict_all_sargeo.pkl"
+data_path: "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/ir_sar_pairs_all_sargeo_irwins.pkl"
 save_dir: "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/train_history_ir_sar"
 
 # Early stopping
-early_stop_patience: 80
+early_stop_patience: 200
 early_stop_delta: 0.001
 
 # Plotting
@@ -45,7 +45,7 @@ num_val_exemples : 8
 
 # Device
 accelerator: "gpu"
-devices: [7]   # 
+devices: [1]   # 
 
 # Scheduler
 scheduler_every_n_epochs: 10

@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 # ============================================================
 
 TCPRIMED_DATA_PATH = "/scale/project/ifremer-isi-jumeaunumerique/TC_PRIMED_DATASET/v01r01/final"
-SARGEO_DATA_PATH   = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v01r02/cyclobs"
+SARGEO_DATA_PATH   = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v00r00/cyclobs"
 
 
 # ============================================================
@@ -82,14 +82,23 @@ def get_tcprimed_overview():
     return pd.DataFrame(records)
 
 
+def time_diff_seconds(date_sar: str, date_primed: str) -> float:
+    """Returns the absolute difference between timestamps in seconds."""
+    fmt_sar = "%Y%m%dT%H%M%S"
+    fmt_primed = "%Y-%m-%dT%H:%M:%S.%f"
+    sar_dt = datetime.strptime(date_sar, fmt_sar)
+    primed_dt = datetime.strptime(date_primed, fmt_primed)
+    return abs((sar_dt - primed_dt).total_seconds())
+
+
 # ============================================================
 # ======================== COLOCATION ========================
 # ============================================================
 
 def colocate_sar_tcprimed(
-    sargeo_csv_path: str = "excels/SARGEO_cyclones.csv",
+    sargeo_csv_path: str = "excels/SARGEO_SAR_V4.csv",
     tcprimed_csv_path: str = "excels/TCPrimed_overpass.csv",
-    time_window_minutes: int = 30
+    time_window_minutes: int = 90
 ):
     """
     Performs temporal colocation between SARGEO IRWIN products and TC_PRIMED overpasses.
@@ -115,14 +124,14 @@ def colocate_sar_tcprimed(
         data_primed["num_cyclone"].astype(str) +
         data_primed["annee"].astype(str)
     )
-
+    
     for cyclone_id in data_sargeo["cyclone"].unique():
 
         tc_subset = data_primed[data_primed["cyclone_id"] == cyclone_id.upper()]
         sargeo_ir_path = os.path.join(SARGEO_DATA_PATH, cyclone_id, "IRWIN")
 
         results[cyclone_id] = []
-
+        # print(os.listdir(sargeo_ir_path))
         for filename in os.listdir(sargeo_ir_path):
 
             full_sargeo_path = os.path.join(sargeo_ir_path, filename)
@@ -131,6 +140,7 @@ def colocate_sar_tcprimed(
             matches = []
             matched_tc_paths = []
             matched_tc_dates = []
+            matched_diffs_times = []
 
             for _, row in tc_subset.iterrows():
                 if is_within_time_window(sar_date_raw, row["date"], time_window_minutes):
@@ -139,7 +149,11 @@ def colocate_sar_tcprimed(
                     matched_tc_paths.append(os.path.basename(row["path"]))
                     matched_tc_dates.append(row["date"])
 
-                    print(f"Matched TC_PRIMED date → {row['date']}")
+                    # compute difference in seconds
+                    diff_sec = time_diff_seconds(sar_date_raw, row["date"])
+                    matched_diffs_times.append(diff_sec)
+
+                    # print(f"Matched TC_PRIMED date → {row['date']}")
 
             iso_sar_date = datetime.strptime(sar_date_raw, "%Y%m%dT%H%M%S").strftime("%Y-%m-%dT%H:%M:%S.000")
 
@@ -148,6 +162,7 @@ def colocate_sar_tcprimed(
                 "count": len(matches),
                 "date_sargeo": iso_sar_date,
                 "date_tcprimed": matched_tc_dates,
+                "diff_time": matched_diffs_times,
                 "path_sargeo": os.path.basename(full_sargeo_path),
                 "path_tcprimed": matched_tc_paths
             })
@@ -169,7 +184,7 @@ def save_colocation_csv(
     output_path: str = "excels/colocates_sargeo_primed_v1.csv",
     sargeo_csv_path: str = "excels/SARGEO_cyclones.csv",
     tcprimed_csv_path: str = "excels/TCPrimed_overpass.csv",
-    delta: int = 60
+    delta: int = 90
 ):
     """
     Runs the colocation function and saves the result to CSV.
@@ -188,4 +203,5 @@ def save_colocation_csv(
 # ============================================================
 
 if __name__ == "__main__":
-    save_colocation_csv(output_path="excels/colocates_sargeo_primed_v1.csv")
+    delta = 90
+    save_colocation_csv(output_path= f"excels/colocates_sargeo_primed_{delta}min_v1.csv", delta = delta)

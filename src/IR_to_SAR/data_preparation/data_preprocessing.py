@@ -8,7 +8,7 @@ This module provides:
     - Adding channel dimension (N → N,1,H,W)
     - Normalizing tensors
 
-Author: Mohammed Amine Tannaoui
+
 """
 import warnings
 warnings.filterwarnings("ignore")
@@ -32,9 +32,9 @@ import torchvision.transforms as T
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-from src.visualisation.utils_colormap import CMAP
-from src.IR_to_SAR.data_preparation.distribution_data_visualisation import detect_sar_quadrants
-from src.IR_to_SAR.data_preparation.distribution_data_visualisation import plot_ir, plot_sar,plot_ir_hist,plot_sar_hist
+from src_new.visualisation.utils_colormap import CMAP
+from src_new.IR_to_SAR.data_preparation.distribution_data_visualisation import detect_sar_quadrants
+from src_new.IR_to_SAR.data_preparation.distribution_data_visualisation import plot_ir, plot_sar,plot_ir_hist,plot_sar_hist
 
 
 
@@ -307,11 +307,9 @@ def train_val_test_split_random(
 ):
     """
     Randomly split the dataset into train, validation, and test sets.
-    No stratification, no quadrant/brightness/wind-based grouping.
-    Keeps original NaNs and supports optional augmentation on the train set.
+    Now also splits physical features X_features.
     """
 
-    # assert abs(train_size + val_size + test_size - 1) < 1e-6
     N = len(X_array)
 
     # --- Generate all indices ---
@@ -339,31 +337,69 @@ def train_val_test_split_random(
           "| Val:", len(val_indices), 
           "| Test:", len(test_indices))
 
-    # --- Extract arrays from original data (NaN preserved) ---
+    # --- Convert to numpy ---
     X_array = np.array(X_array, dtype=float)
     sar_array = np.array(sar_array, dtype=float)
+   
 
-    ir_train, sar_train = X_array[train_indices], sar_array[train_indices]
+    # --- TRAIN ---
+    ir_train  = X_array[train_indices]
+    sar_train = sar_array[train_indices]
 
-    # --- Data augmentation only for train ---
+    mask_train = mask_sar[train_indices]
+    cyclone_ids_train = cyclone_ids[train_indices]
+    sar_time_train    = sar_times[train_indices]
+
+    # --- Data augmentation only for train (images + SAR + mask) ---
     if augmentation:
-        ir_train, sar_train, mask_train, cyclone_ids_train, sar_time_train = data_augmentation(ir_train, sar_train, mask_sar[train_indices],
-                                                                                               cyclone_ids[train_indices], sar_times[train_indices])
+        ir_train, sar_train, mask_train, cyclone_ids_train, sar_time_train = data_augmentation(
+            ir_train,
+            sar_train,
+            mask_sar[train_indices],
+            cyclone_ids_train,
+            sar_time_train
+        )
+        
+    # --- VAL ---
+    ir_val   = X_array[val_indices]
+    sar_val  = sar_array[val_indices]
+    mask_val = mask_sar[val_indices]
+    cyclone_ids_val = cyclone_ids[val_indices]
+    sar_time_val    = sar_times[val_indices]
 
+    # --- TEST ---
+    ir_test   = X_array[test_indices]
+    sar_test  = sar_array[test_indices]
+    mask_test = mask_sar[test_indices]
+    cyclone_ids_test = cyclone_ids[test_indices]
+    sar_time_test    = sar_times[test_indices]
+
+    # --- RETURN DICTIONARY ---
     return {
+        # Images + SAR
         "train": (ir_train, sar_train),
-        "val":   (X_array[val_indices], sar_array[val_indices]),
-        "test":  (X_array[test_indices], sar_array[test_indices]),
-        "mask_sar_val": mask_sar[val_indices],  # Mask only for validation plot usage,
-        "mask_sar_train": mask_train,
-        "val_index" : val_indices,
-        "train_index": train_indices,
-        "cyclone_id_train":cyclone_ids_train,
-        "cyclone_id_val":cyclone_ids[val_indices],
-        "sar_time_train": sar_time_train,
-        "sar_time_val" : sar_times[val_indices]
-    }
+        "val":   (ir_val, sar_val),
+        "test":  (ir_test, sar_test),
 
+        # Masks
+        "mask_sar_train": mask_train,
+        "mask_sar_val":   mask_val,
+        "mask_sar_test":  mask_test,
+
+        # Indices
+        "val_index":   val_indices,
+        "train_index": train_indices,
+        "test_index":  test_indices,
+
+        # Metadata
+        "cyclone_id_train": cyclone_ids_train,
+        "cyclone_id_val":   cyclone_ids_val,
+        "cyclone_id_test":  cyclone_ids_test,
+
+        "sar_time_train": sar_time_train,
+        "sar_time_val":   sar_time_val,
+        "sar_time_test":  sar_time_test,
+    }
 
 def crop_ir_to_sar(ir):
           
@@ -374,14 +410,14 @@ def crop_ir_to_sar(ir):
 
     return ir[start_h:start_h+target, start_w:start_w+target]
 
-def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl", tcprimed = False):
+def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src_new/IR_to_SAR/data_sar_ir_pkl", tcprimed = True):
     import pandas as pd
     import numpy as np
     import xarray as xr
     import os
     import pickle as pkl
 
-    df = pd.read_csv("/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v4.csv")
+    df = pd.read_csv("/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v4_eyecenter.csv")
     SARGEO_PATH = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v00r00/cyclobs"
     SARAEQD_PATH = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_eye"
 
@@ -677,7 +713,7 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, cyc_ids, sar_times):
         sar_times_aug.append(sart)
 
         # rotations
-        for angle in [90, 180, 270]:
+        for angle in [180, 90]:
             ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
             ir_aug.append(ir_r)
             sar_aug.append(sar_r)
@@ -841,6 +877,7 @@ def visualize_dataset_statistics(dictio, target_dir, mask=None):
     fig.savefig(save_path, dpi=200)
 
     plt.close(fig)
+    plt.close("all")
 
     print(f"📊 Dataset visualization saved to: {save_path}")
 

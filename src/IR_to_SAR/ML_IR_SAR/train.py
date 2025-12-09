@@ -97,7 +97,7 @@ class IRSARDataset(Dataset):
         return len(self.X)
 
     def __getitem__(self, idx):
-        X = self.X[idx]          # deja (C,H,W)
+        X = self.X[idx]          # already (C,H,W)
         sar = self.sar[idx]      # (H,W)
 
         # Ensure target has channel dimension
@@ -329,7 +329,8 @@ def main(cfg: IR_SAR_Config,test=False):
             "on_validation_epoch_end",
             val_loss=val_loss,
             model=model,
-            fabric=fabric
+            fabric=fabric,
+            epoch=epoch
         )
 
         if epoch ==0 or ((epoch + 1) >= cfg.start_epoch and (epoch + 1) % cfg.plot_interval == 0):
@@ -396,15 +397,3 @@ if __name__ == "__main__":
     from src.IR_to_SAR.ML_IR_SAR.config import IR_SAR_Config
     cfg = IR_SAR_Config.from_yaml("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/config.yaml")
     main(cfg,test=False)
-
-
-
-
-
-
-
-
-
-
-
-
