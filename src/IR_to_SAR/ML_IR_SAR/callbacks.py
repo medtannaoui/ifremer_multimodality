@@ -4,7 +4,7 @@ import torch
 import matplotlib.pyplot as plt
 import numpy as np
 import importlib
-import src_new.IR_to_SAR.data_preparation.distribution_data_visualisation as distdata
+import src.IR_to_SAR.data_preparation.distribution_data_visualisation as distdata
 importlib.reload(distdata)
 
 
@@ -223,7 +223,7 @@ class LogValidationSamples:
             epoch=epoch,
             plot=False
         )
-           
+       
         for i in sample_ids:
             fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 

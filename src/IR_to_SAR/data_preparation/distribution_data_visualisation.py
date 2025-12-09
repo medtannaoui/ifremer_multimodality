@@ -17,7 +17,7 @@ import pandas as pd
 import xarray as xr
 import matplotlib.pyplot as plt
 from scipy.ndimage import zoom
-from src_new.visualisation.utils_colormap import CMAP
+from src.visualisation.utils_colormap import CMAP
 
 cmap_ir = CMAP.cira_ir()
 cmap_sar = CMAP.cmap_sar()

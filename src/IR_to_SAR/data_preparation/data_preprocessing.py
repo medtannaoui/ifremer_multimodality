@@ -32,9 +32,9 @@ import torchvision.transforms as T
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-from src_new.visualisation.utils_colormap import CMAP
-from src_new.IR_to_SAR.data_preparation.distribution_data_visualisation import detect_sar_quadrants
-from src_new.IR_to_SAR.data_preparation.distribution_data_visualisation import plot_ir, plot_sar,plot_ir_hist,plot_sar_hist
+from src.visualisation.utils_colormap import CMAP
+from src.IR_to_SAR.data_preparation.distribution_data_visualisation import detect_sar_quadrants
+from src.IR_to_SAR.data_preparation.distribution_data_visualisation import plot_ir, plot_sar,plot_ir_hist,plot_sar_hist
 
 
 
@@ -410,7 +410,7 @@ def crop_ir_to_sar(ir):
 
     return ir[start_h:start_h+target, start_w:start_w+target]
 
-def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src_new/IR_to_SAR/data_sar_ir_pkl", tcprimed = True):
+def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl", tcprimed = True):
     import pandas as pd
     import numpy as np
     import xarray as xr

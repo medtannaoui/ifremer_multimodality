@@ -328,20 +328,24 @@ def main(cfg: IR_SAR_Config,test=False):
         fabric.call(
             "on_validation_epoch_end",
             val_loss=val_loss,
+            epoch=epoch,
             model=model,
-            fabric=fabric,
-            epoch=epoch
+            fabric=fabric
         )
 
-        if epoch ==0 or ((epoch + 1) >= cfg.start_epoch and (epoch + 1) % cfg.plot_interval == 0):
-                fabric.call(
+        if epoch == 0:
+            fabric.print("📸 Plot at epoch 1")
+
+            fabric.call(
                 "on_validation_plots",
                 model=model,
                 epoch=epoch,
-                dataloader=[train_loader,val_loader],
+                dataloader=[train_loader, val_loader],
                 device=fabric.device
             )
-                print("----- plots saved")
+            print("----- plots saved")
+
+
 
         fabric.print(
             f"📊 Epoch {epoch+1}: Train Loss={train_loss:.6f}, "
@@ -359,7 +363,25 @@ def main(cfg: IR_SAR_Config,test=False):
                 stop_training = True
                 break
 
-        if stop_training:
+        if stop_training or epoch == cfg.num_epochs - 1:
+            best_ckpt_path = target_dir / "best_regression_model.pt"
+
+            if best_ckpt_path.exists():
+                fabric.print("✅ Loading best model for final visualization...")
+                ckpt = torch.load(best_ckpt_path, map_location=fabric.device)
+                model.load_state_dict(ckpt["model"])
+            else:
+                fabric.print("⚠️ Best checkpoint not found, using last model.")
+
+            fabric.print("📸 Final plot using BEST model")
+
+            fabric.call(
+                "on_validation_plots",
+                model=model,
+                epoch=epoch,   # dernier epoch
+                dataloader=[train_loader, val_loader],
+                device=fabric.device
+            )
             break
 
 
@@ -386,9 +408,7 @@ def main(cfg: IR_SAR_Config,test=False):
     plt.savefig(plot_path)
     plt.close()
 
-    # save the config 
-    config_path = "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/config.yaml"
-    shutil.copy(config_path,os.path.join(target_dir,"config_used.yaml"))
+    
     
     logger.info("🎯 Training Complete!")
 

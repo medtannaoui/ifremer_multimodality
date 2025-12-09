@@ -9,8 +9,8 @@ from importlib import reload
 import matplotlib.pyplot as plt
 
 
-import src_new.IR_to_SAR.data_preparation.data_preprocessing as dataprep
-from src_new.visualisation.utils_colormap import CMAP
+import src.IR_to_SAR.data_preparation.data_preprocessing as dataprep
+from src.visualisation.utils_colormap import CMAP
 cmap_ir , cmap_sar = CMAP.cira_ir(), CMAP.cmap_sar()
 reload(dataprep)
 

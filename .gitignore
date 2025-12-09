@@ -1,33 +1,56 @@
-/donnees_sar
-/donnees_sar_changes
-/dossier_mouche_
-infos.txt
-verification.ipynb
-/donnees_sar_changes_update
-visualisation_pics.ipynb
-colocalisation.ipynb
-GEO_to_XYcenter.py
-*.ipynb
-*pycache*
-*github*
-SARGEO_utils.py
-functions.py
-donnees_sar_aeqd
-data_coloc_pkl
-outputs
-*without*
-donnees_sar_aeqd*
-*.pkl*
+# ==========================
+#   PYTHON BASICS
+# ==========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 
+# ==========================
+#   NOTEBOOKS
+# ==========================
+*.ipynb
+.ipynb_checkpoints/
+
+# ==========================
+#   MODEL FILES
+# ==========================
 *.pt
 *.pth
 *.ckpt
+
+# ==========================
+#   DATA + PICKLES
+# ==========================
 *.pkl
-*.yaml
-first_test
-*history*
-src/IR_to_SAR/ML_IR_SAR/train_history_ir_sar
-*.save*
+*.npz
+*.npy
+
+# Dossiers internes à ignorer
+donnees_sar/
+donnees_sar_changes/
+donnees_sar_aeqd*/
+data_coloc_pkl/
+outputs/
+ML_IR_SAR/train_history_ir_sar/
+train_history_ir_sar/
+excels/
+wiçthout_metrics
+src_new
+
+# ==========================
+#   TEMPORARY & LOG FILES
+# ==========================
+tmp*/
 *tmp*
+*history*
+*.save*
 *.yaml*
-/train_history_ir_sar
+config.yaml
+first_test/
+
+# ==========================
+#   GIT / OS
+# ==========================
+.DS_Store
+.gitignore.save
