@@ -177,153 +177,53 @@ def z_score(tensor, eps = 1e-10):
 # ======================== split 3 sets ======================
 # ============================================================
 from collections import Counter
+
+
+
 def train_val_test_split(
-    ir_array,
-    sar_array,
-    mask_sar,
-    train_size=0.7,
-    val_size=0.15,
-    test_size=0.15,
-    n_bins=3,
-    augmentation = True
-):
-    """
-    Split IR→SAR dataset while preserving:
-        - Brightness temperature distribution
-        - Wind speed distribution
-        - Quadrant spatial distribution
-
-    Handles NaNs by temporary replacement with -1000 for stratification,
-    but returns original tensors WITH true NaNs.
-    """
-
-    assert abs(train_size + val_size + test_size - 1) < 1e-6
-
-    N = len(ir_array)
-
-    # --- Create temporary clean versions (replace NaN by -1000) ---
-    ir_clean = np.nan_to_num(ir_array, nan=-1000)
-    sar_clean = np.nan_to_num(sar_array, nan=-1000)
-
-    # --- 1️⃣ Compute median brightness & wind ---
-    ir_median = np.median(ir_clean, axis=(1,2))
-    sar_median = np.median(sar_clean, axis=(1,2))
-
-    # --- 2️⃣ Encode into bins ---
-    kb = KBinsDiscretizer(n_bins=n_bins, encode='ordinal', strategy='quantile')
-    temp_bin = kb.fit_transform(ir_median.reshape(-1,1)).astype(int).flatten()
-    wind_bin = kb.fit_transform(sar_median.reshape(-1,1)).astype(int).flatten()
-
-    # --- 3️⃣ Quadrant detection using REAL NaN data ---
-    quadrant_flags = []
-    for i in range(N):
-        q = detect_sar_quadrants(sar_array[i])  # Use original SAR with NaNs
-        quadrant_flags.append("".join(map(str, q)))
-    quadrant_flags = np.array(quadrant_flags)
-
-    # --- 4️⃣ Create combined stratification label ---
-    stratify_label = temp_bin.astype(str) + "_" + wind_bin.astype(str) + "_" + quadrant_flags
-
-    # --- 5️⃣ Handle rare classes (<3 samples) ---
-    counts = Counter(stratify_label)
-    rare_classes = {k for k, v in counts.items() if v < 3}
-    print(f"📉 {len(rare_classes)} rare stratification classes reassigned to 'OTHERS'")
-
-    stratify_label_cleaned = np.array([
-        lbl if lbl not in rare_classes else "OTHERS"
-        for lbl in stratify_label
-    ])
-
-    # --- 6️⃣ Split train + temp (val+test) ---
-    X = np.arange(N)
-    X_train, X_temp, _, strat_temp = train_test_split(
-        X,
-        stratify_label_cleaned,
-        stratify=stratify_label_cleaned,
-        test_size=(1 - train_size),
-        random_state=42
-    )
-
-    # --- 7️⃣ Split val/test ---
-    val_rel_size = val_size / (val_size + test_size)
-
-    # Re-check class frequencies in strat_temp
-    counts_temp = Counter(strat_temp)
-    rare_temp = {k for k, v in counts_temp.items() if v < 2}
-
-    if rare_temp:
-        print(f"🔁 Merging {len(rare_temp)} rare classes before val/test split...")
-        strat_temp_cleaned = np.array([
-            lbl if lbl not in rare_temp else "OTHERS"
-            for lbl in strat_temp
-        ])
-    else:
-        strat_temp_cleaned = strat_temp
-
-    X_val, X_test = train_test_split(
-        X_temp,
-        stratify=strat_temp_cleaned,
-        test_size=(1 - val_rel_size),
-        random_state=42
-    )
-    print("🎯 Final Split Sizes:", len(X_train), len(X_val), len(X_test))
-
-    # --- 8️⃣ Return ORIGINAL arrays (with true NaNs preserved) ---
-
-    X_train = np.array([int(i) for i in X_train])
-    X_val   = np.array([int(i) for i in X_val])
-    X_test  = np.array([int(i) for i in X_test])
-
-   
-    ir_array = np.array(ir_array, dtype=float)
-    sar_array = np.array(sar_array, dtype=float)
-    ir_train,sar_train = ir_array[X_train], sar_array[X_train]
-
-    #augmentation data for the train set (rottaion 90° and 180°)
-    if augmentation : 
-        ir_train, sar_train = data_augmentation(ir_train,sar_train)
-        
-
-
-
-    return {
-        "train": (ir_train, sar_train),
-        "val":   (ir_array[X_val],   sar_array[X_val]),
-        "test":  (ir_array[X_test],  sar_array[X_test]),
-        "mask_sar": mask_sar[X_val]
-    }
-
-
-def train_val_test_split_random(
     X_array,
     sar_array,
     mask_sar,
-    cyclone_ids,
-    sar_times,
+    infos,
     train_size=0.7,
     val_size=0.15,
     test_size=0.15,
-    augmentation=True
+    augmentation=True,
+    target_dir=None,
+    n_bins=4
 ):
     """
-    Randomly split the dataset into train, validation, and test sets.
-    Now also splits physical features X_features.
+    Stratified split using analysis_vmax from infos.
     """
 
     N = len(X_array)
-
-    # --- Generate all indices ---
     all_indices = np.arange(N)
 
-    # --- First split: Train vs Temp (Val+Test) ---
+    # -------------------------------------
+    # 1) Extract analysis_vmax and create bins
+    # -------------------------------------
+    analysis_vmax = np.array([d["analysis_vmax"] for d in infos])
+    
+    # Create bins (equal-width bins)
+    bins = np.linspace(np.nanmin(analysis_vmax), np.nanmax(analysis_vmax), n_bins)
+    vmax_binned = np.digitize(analysis_vmax, bins)
+
+    # -------------------------------------
+    # 2) Split TRAIN vs TEMP (Val+Test) with stratification
+    # -------------------------------------
     train_indices, temp_indices = train_test_split(
         all_indices,
         test_size=(1 - train_size),
         random_state=0,
         shuffle=True,
+        stratify=vmax_binned
     )
 
-    # --- Second split: Temp → Val & Test ---
+    # -------------------------------------
+    # 3) Stratify the remaining set (Val/Test)
+    # -------------------------------------
+    vmax_binned_temp = vmax_binned[temp_indices]
+
     val_rel_size = val_size / (val_size + test_size)
 
     val_indices, test_indices = train_test_split(
@@ -331,75 +231,128 @@ def train_val_test_split_random(
         test_size=(1 - val_rel_size),
         random_state=0,
         shuffle=True,
+        stratify=vmax_binned_temp
     )
 
-    print("🎯 Split sizes — Train:", len(train_indices), 
-          "| Val:", len(val_indices), 
+    print("🎯 Stratified Split — Train:", len(train_indices),
+          "| Val:", len(val_indices),
           "| Test:", len(test_indices))
 
-    # --- Convert to numpy ---
+    # -------------------------------------
+    # Convert arrays
+    # -------------------------------------
     X_array = np.array(X_array, dtype=float)
     sar_array = np.array(sar_array, dtype=float)
-   
 
-    # --- TRAIN ---
+    # TRAIN
     ir_train  = X_array[train_indices]
     sar_train = sar_array[train_indices]
-
     mask_train = mask_sar[train_indices]
-    cyclone_ids_train = cyclone_ids[train_indices]
-    sar_time_train    = sar_times[train_indices]
+    infos_train = [infos[i] for i in train_indices]
 
-    # --- Data augmentation only for train (images + SAR + mask) ---
+    # --- Data augmentation only for train ---
     if augmentation:
-        ir_train, sar_train, mask_train, cyclone_ids_train, sar_time_train = data_augmentation(
-            ir_train,
-            sar_train,
-            mask_sar[train_indices],
-            cyclone_ids_train,
-            sar_time_train
+        ir_train, sar_train, mask_train, infos_train = data_augmentation(
+            ir_train, sar_train, mask_train, infos_train
         )
-        
-    # --- VAL ---
+
+    # Plot
+    plot_metric_scatter(
+        true_values=[d["vmax"] for d in infos_train],
+        pred_values=[d["analysis_vmax"] for d in infos_train],
+        output_path=target_dir,
+        file_name="analysis_vmax_and_vmax_comparaison_train",
+        title="analysis vmax and vmax comparaison in the train set",
+        xlabel="vmax",
+        ylabel="analysis_vmax"
+    )
+
+    # VAL
     ir_val   = X_array[val_indices]
     sar_val  = sar_array[val_indices]
     mask_val = mask_sar[val_indices]
-    cyclone_ids_val = cyclone_ids[val_indices]
-    sar_time_val    = sar_times[val_indices]
+    infos_val = [infos[i] for i in val_indices]
 
-    # --- TEST ---
+    plot_metric_scatter(
+        true_values=[d["vmax"] for d in infos_val],
+        pred_values=[d["analysis_vmax"] for d in infos_val],
+        output_path=target_dir,
+        file_name="analysis_vmax_and_vmax_comparaison_val",
+        title="analysis vmax and vmax comparaison in the val set",
+        xlabel="vmax",
+        ylabel="analysis_vmax"
+    )
+
+    # TEST
     ir_test   = X_array[test_indices]
     sar_test  = sar_array[test_indices]
     mask_test = mask_sar[test_indices]
-    cyclone_ids_test = cyclone_ids[test_indices]
-    sar_time_test    = sar_times[test_indices]
+    infos_test = [infos[i] for i in test_indices]
 
-    # --- RETURN DICTIONARY ---
     return {
-        # Images + SAR
         "train": (ir_train, sar_train),
         "val":   (ir_val, sar_val),
         "test":  (ir_test, sar_test),
 
-        # Masks
         "mask_sar_train": mask_train,
         "mask_sar_val":   mask_val,
         "mask_sar_test":  mask_test,
 
-        # Indices
-        "val_index":   val_indices,
         "train_index": train_indices,
+        "val_index":   val_indices,
         "test_index":  test_indices,
 
-        # Metadata
-        "cyclone_id_train": cyclone_ids_train,
-        "cyclone_id_val":   cyclone_ids_val,
-        "cyclone_id_test":  cyclone_ids_test,
-
-        "sar_time_train": sar_time_train,
-        "sar_time_val":   sar_time_val,
-        "sar_time_test":  sar_time_test,
+        "infos_train": infos_train,
+        "infos_val": infos_val,
+        "infos_test": infos_test,
     }
+
+
+
+
+def plot_metric_scatter(
+    true_values,            # liste ou array des valeurs vraies
+    pred_values,            # liste ou array des valeurs prédites
+    output_path,            # chemin complet fichier .png
+    file_name,
+    title="Metric Comparison",
+    xlabel="True Values",
+    ylabel="Predicted Values",
+    stats_title="Statistics"
+):
+    """
+    Generic scatter plot comparing true vs predicted metrics.
+    """
+
+    true_values = np.array(true_values, dtype=float)
+    pred_values = np.array(pred_values, dtype=float)
+
+    # Basic stats
+    mean_true = np.nanmean(true_values)
+    mean_pred = np.nanmean(pred_values)
+    max_true  = np.nanmax(true_values)
+    max_pred  = np.nanmax(pred_values)
+
+    # Create figure
+    plt.figure(figsize=(7, 7))
+    plt.scatter(true_values, pred_values, alpha=0.5, color="#1f77b4", edgecolors="none")
+
+    # Identity line
+    min_v = min(true_values.min(), pred_values.min())
+    max_v = max(true_values.max(), pred_values.max())
+    plt.plot([min_v, max_v], [min_v, max_v], "r--", linewidth=2)
+
+    # Labels & title
+    plt.xlabel(xlabel, fontsize=12)
+    plt.ylabel(ylabel, fontsize=12)
+    plt.title(title, fontsize=14)
+
+    plt.grid(True, linestyle="--", alpha=0.5)
+
+    # Save
+    
+    plt.savefig(os.path.join(output_path,file_name+"png"), dpi=150)
+    plt.close()
 
 def crop_ir_to_sar(ir):
           
@@ -410,16 +363,16 @@ def crop_ir_to_sar(ir):
 
     return ir[start_h:start_h+target, start_w:start_w+target]
 
-def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl", tcprimed = True):
+def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl", tcprimed = False):
     import pandas as pd
     import numpy as np
     import xarray as xr
     import os
     import pickle as pkl
 
-    df = pd.read_csv("/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v4_eyecenter.csv")
+    df = pd.read_csv("/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v5.csv")
     SARGEO_PATH = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v00r00/cyclobs"
-    SARAEQD_PATH = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_eye"
+    SARAEQD_PATH = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_v3"
 
     CANAL = "IRWIN"
 
@@ -441,7 +394,11 @@ def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SA
         "cyclone_id": [],
         "sar_time": [],
         "irwin": [],               
-        "owiwindspeed": [],    }     
+        "owiwindspeed": [], 
+        "analysis_rmax":[],
+        "analysis_vmax":[],
+        "vmax":[],
+        "analysis_center_quality_flag":[]  }     
         
 
 
@@ -505,9 +462,12 @@ def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SA
                 data_pkl["sar_time"].append(sar_time)
                 data_pkl["irwin"].append(irwins)
                 data_pkl["owiwindspeed"].append(wind)
-
+                data_pkl["analysis_center_quality_flag"].append(row["analysis_center_quality_flag"])
+                data_pkl["vmax"].append(row["vmax"])
+                data_pkl["analysis_vmax"].append(row["analysis_vmax"])
+                data_pkl["analysis_rmax"].append(row["analysis_rmax"])
     # Save to file
-    output_path = os.path.join(output_folder, "ir_sar_pairs_eye_center_tcprimed.pkl")
+    output_path = os.path.join(output_folder, "ir_sar_sargeo_with_cyclobs_infos.pkl")
     with open(output_path, "wb") as f:
         pkl.dump(data_pkl, f)
 
@@ -587,7 +547,7 @@ def get_nan_coverage(sar_batch, radius=100, km_per_pixel=2):
     return results
 
 
-def remove_sar_nan(X_batch, sar_batch, radius_km=100, km_per_pixel=2, threshold=0.5):
+def remove_sar_nan(X_batch, sar_batch, radius_km=100, km_per_pixel=2, threshold=0.5,infos=None):
     """
     X_batch : numpy array (N, C, H, W) or (N, 1, H, W)
     sar_batch : numpy array (N, H, W)
@@ -616,6 +576,7 @@ def remove_sar_nan(X_batch, sar_batch, radius_km=100, km_per_pixel=2, threshold=
     X_filtered = []
     sar_filtered = []
     kept_indices = []
+    infos_kept = []
 
     for i in range(N):
         total = mask.sum()
@@ -626,8 +587,9 @@ def remove_sar_nan(X_batch, sar_batch, radius_km=100, km_per_pixel=2, threshold=
             X_filtered.append(X_batch[i])
             sar_filtered.append(sar_batch[i])
             kept_indices.append(i)
+            infos_kept.append(infos[i])
 
-    return np.array(X_filtered), np.array(sar_filtered)
+    return np.array(X_filtered), np.array(sar_filtered),np.array(infos_kept)
 
 
 
@@ -699,34 +661,40 @@ def realistic_cyclone_augmentation(ir, sar):
     return ir_aug, sar_aug
 
 
-def data_augmentation(ir_tensor, sar_tensor, mask_tensor, cyc_ids, sar_times):
+def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
     
-    ir_aug, sar_aug, mask_aug, cycs_aug, sar_times_aug = [], [], [], [], []
+    ir_aug, sar_aug, mask_aug, infos_aug = [], [], [], []
 
-    for ir, sar, mask, cyc, sart in zip(ir_tensor, sar_tensor, mask_tensor, cyc_ids, sar_times):
+    for ir, sar, mask, inf in zip(ir_tensor, sar_tensor, mask_tensor, infos) :
 
         # original
         ir_aug.append(ir)
         sar_aug.append(sar)
         mask_aug.append(mask)
-        cycs_aug.append(cyc)
-        sar_times_aug.append(sart)
+        infos_aug.append(inf)
 
         # rotations
-        for angle in [180, 90]:
-            ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
-            ir_aug.append(ir_r)
-            sar_aug.append(sar_r)
-            mask_aug.append(mask_r)
-            cycs_aug.append(cyc)
-            sar_times_aug.append(sart)
+        
+        if np.nanmax(np.array(inf["analysis_vmax"])) > 50:
+            for angle in [180, 90,270]:
+                ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
+                ir_aug.append(ir_r)
+                sar_aug.append(sar_r)
+                mask_aug.append(mask_r)
+                infos_aug.append(inf)
+        else : 
+            for angle in [180]:
+                ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
+                ir_aug.append(ir_r)
+                sar_aug.append(sar_r)
+                mask_aug.append(mask_r)
+                infos_aug.append(inf)
 
     return (
         np.array(ir_aug),
         np.array(sar_aug),
         np.array(mask_aug),
-        np.array(cycs_aug),
-        np.array(sar_times_aug)
+        np.array(infos_aug)
     )
 
 

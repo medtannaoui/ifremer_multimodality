@@ -17,6 +17,7 @@ import pandas as pd
 import xarray as xr
 import matplotlib.pyplot as plt
 from scipy.ndimage import zoom
+from scipy.stats import gaussian_kde
 from src.visualisation.utils_colormap import CMAP
 
 cmap_ir = CMAP.cira_ir()
@@ -345,76 +346,129 @@ def plot_quadrant_distribution(sar_tensors, ax=None, title = ""):
         )
 
 
-def plot_sar(tensor, ax=None):
+def plot_sar(tensor, ax=None,cmap=cmap_sar,title=None):
     if ax is None:
         ax = plt.gca()
     
     x_sar,y_sar = np.linspace(-300,300,tensor.shape[0]) , np.linspace(-300,300,tensor.shape[1])
-    ax.pcolormesh(x_sar, y_sar, tensor, cmap=cmap_sar)
+    ax.pcolormesh(x_sar, y_sar, tensor, cmap=cmap)
+    if title is not None:
+        ax.set_title(title)
     ax.set_aspect('equal')
 
 
-def plot_ir(tensor, ax=None):
+def plot_ir(tensor,x=None, y=None, ax=None):
     if ax is None : 
         ax=plt.gca()
     
-    x_ir, y_ir = np.linspace(-300,300,tensor.shape[0]) , np.linspace(-300,300,tensor.shape[1])
-    ax.pcolormesh(x_ir, y_ir , tensor, cmap=cmap_ir)
+    
+    if x is None:
+        x_ir, y_ir = np.linspace(-300,300,tensor.shape[0]) , np.linspace(-300,300,tensor.shape[1])
+        ax.pcolormesh(x_ir, y_ir , tensor, cmap=cmap_ir, shading="auto")
+    else :
+        ax.pcolormesh(x, y , tensor, cmap=cmap_ir, shading="auto")
+        ax.set_xlim(-300,300)
+        ax.set_ylim(-300,300)
     ax.set_aspect('equal')
 
+def plot_mw(tensor, cmap="cividis",x=None, y=None, ax=None):
+  
+    if ax is None:
+        ax = plt.gca()
 
-def vmax_compare(true_sars, predict_sars, output_dir, set, epoch, plot=False):
+    # même domaine que IR/SAR
+    if x is None:
+        x_mw, y_mw = np.linspace(-300,300,tensor.shape[0]) , np.linspace(-300,300,tensor.shape[1])
+        ax.pcolormesh(x_mw, y_mw , tensor, cmap="cividis", shading="auto")
+    else :
+        ax.pcolormesh(x, y , tensor, cmap="cividis", shading="auto")
+        ax.set_xlim(-300,300)
+        ax.set_ylim(-300,300)
+    ax.set_aspect('equal')
+    
+
+def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False):
+    
     if set == "train":
         return None
 
-    # ✅ Vectorisation complète (beaucoup plus rapide)
-    vmax1 = []
-    vmax2 = []
-    for sar1, sar2 in zip(true_sars, predict_sars):
-        vmax1.append(np.nanmax(sar1))
-        vmax2.append(np.nanmax(sar2))
-    vmax1, vmax2 = np.array(vmax1), np.array(vmax2)
+    vmax_true = []
+    vmax_pred = []
 
-    # ✅ Statistiques calculées UNE seule fois
-    vmin = min(np.nanmin(vmax1),  np.nanmin(vmax2))
-    vmax = max(np.nanmax(vmax1), np.nanmax(vmax2))
+    for ana_vmax, sar2 in zip(analysis_vmax, predict_sars):
+        if ana_vmax is None or np.isnan(ana_vmax):
+            continue
+        vmax_true.append(ana_vmax * 1.94384)
+        vmax_pred.append(np.nanmax(sar2))
 
-    mean_true  = np.nanmean(vmax1)
-    mean_pred  = np.nanmean(vmax2)
-    max_true   = np.nanmax(vmax1)
-    max_pred   = np.nanmax(vmax2)
+    vmax_true = np.array(vmax_true)
+    vmax_pred = np.array(vmax_pred)
 
-    plt.figure(figsize=(5, 5))
-    plt.scatter(vmax1, vmax2, alpha=0.5)
-    plt.plot([vmin, vmax], [vmin, vmax], "r--", lw=2)
+    errors = vmax_pred - vmax_true
+    mae = np.nanmean(np.abs(errors))
+    rmse = np.sqrt(np.nanmean(errors**2))
+    bias = np.nanmean(errors)
 
-    plt.xlabel("Vmax True (knots)", fontsize=13)
-    plt.ylabel("Vmax Predicted (knots)", fontsize=13)
-    plt.title(f"Vmax Comparison — Epoch {epoch+1} ({set})", fontsize=14)
-    plt.grid(True, linestyle="--", alpha=0.4)
+    # ---------- Regression ----------
+    coef = np.polyfit(vmax_true, vmax_pred, 1)
+    x_line = np.array([vmax_true.min(), vmax_true.max()])
+    y_line = coef[0] * x_line + coef[1]
 
-    textstr = (
-        f"Mean True  : {mean_true:.2f}\n"
-        f"Mean Pred  : {mean_pred:.2f}\n"
-        f"Max True   : {max_true:.2f}\n"
-        f"Max Pred   : {max_pred:.2f}"
-    )
-
-    plt.text(
-        0.05, 0.95, textstr,
-        transform=plt.gca().transAxes,
-        fontsize=11,
-        verticalalignment="top",
-        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8)
-    )
-    if not plot:
-
-        out_path = os.path.join(output_dir, f"Vmax_2D_comparison_{set}.png")
-        plt.savefig(out_path, dpi=150)
-        plt.close()  
-    else :
-        plt.show()
+    # ---------- Density Coloring ----------
     
+    xy = np.vstack([vmax_true, vmax_pred])
+    z = gaussian_kde(xy)(xy)
+
+    # ---------- Figure ----------
+    fig, axes = plt.subplots(2, 1, figsize=(6, 9), gridspec_kw={"height_ratios": [3, 1]})
+
+    ax = axes[0]
+    ax_hist = axes[1]
+
+    sc = ax.scatter(vmax_true, vmax_pred, c=z, cmap="viridis", s=20)
+    fig.colorbar(sc, ax=ax, label="Density")
+
+    # Perfect line
+    ax.plot(x_line, x_line, "r--", lw=2, label="Perfect prediction")
+
+    # Regression line
+    ax.plot(x_line, y_line, "b-", lw=2,
+            label=f"Regression: y={coef[0]:.2f}x+{coef[1]:.2f}")
+
+    ax.set_xlabel("Analysis Vmax (knots)")
+    ax.set_ylabel("Predicted Vmax (knots)")
+    ax.set_title(f"Vmax Comparison — Epoch {epoch+1} ({set})")
+    ax.grid(True, linestyle="--", alpha=0.3)
+    ax.legend()
+
+    # ---------- Error histogram ----------
+    ax_hist.hist(errors, bins=40, color="gray", alpha=0.8)
+    ax_hist.set_title("Prediction Error Distribution (Pred - Analysis_vmax)")
+    ax_hist.set_xlabel("Prediction Error (kt)")
+    ax_hist.set_ylabel("Count")
+    ax_hist.grid(True, linestyle="--", alpha=0.3)
+
+    # ---------- Stats box ----------
+    textstr = (
+        f"MAE  : {mae:.2f} kt\n"
+        f"RMSE : {rmse:.2f} kt\n"
+        f"Bias : {bias:.2f} kt\n"
+        f"Max analysis vmax : {vmax_true.max():.2f}\n"
+        f"Max predicted vmax: {vmax_pred.max():.2f}"
+    )
+
+    ax.text(0.02, 0.98, textstr,
+            transform=ax.transAxes,
+            fontsize=11,
+            verticalalignment="top",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
+
+    plt.tight_layout()
+
+    filename = f"Vmax_Comparison_Enhanced_{set}.png"
+    plt.savefig(os.path.join(output_dir, filename), dpi=150)
+    plt.close(fig)
+
 
 
 def compare_sar_distribution(sar_knots, pred_knots, output_dir, set, epoch):
@@ -433,71 +487,107 @@ def compare_sar_distribution(sar_knots, pred_knots, output_dir, set, epoch):
 
         print(f"📈 Saved global distribution")
 
-def compare_radial_vmax(sars_true, sars_predict, output_dir, set, epoch,  center=None, dr=1, plot=False):
-    if set =="train":
+def compare_radial_vmax(
+    sars_true, 
+    sars_predict, 
+    output_dir, 
+    set, 
+    epoch,  
+    center=None, 
+    dr=1, 
+    plot=False
+):
+    if set == "train":
         return None
     
-    assert sars_true.shape == sars_predict.shape, "sars1 and sars2 must have the same shape"
-
+    # Shapes
+    assert sars_true.shape == sars_predict.shape, "sars_true and sars_predict must have the same shape"
     N, H, W = sars_true.shape
 
-    # --- Center
     if center is None:
         yc, xc = H // 2, W // 2
     else:
         yc, xc = center
 
-    # --- Radial distance map
     Y, X = np.indices((H, W))
     R = np.sqrt((X - xc)**2 + (Y - yc)**2)
 
     Rmax = int(R.max())
     r_bins = np.arange(0, Rmax + dr, dr)
 
-    vmax_r_1 = []
-    vmax_r_2 = []
+    vmax_r_true = []
+    vmax_r_pred = []
     r_centers = []
 
-    # --- Radial vmax for each shell
     for r0 in r_bins[:-1]:
         mask = (R >= r0) & (R < r0 + dr)
 
         if np.sum(mask) == 0:
             continue
 
-        vmax1 = np.nanmean(np.nanmax(sars_true[:, mask], axis=1))
-        vmax2 = np.nanmean(np.nanmax(sars_predict[:, mask], axis=1))
+        # max over the shell for each sample, then mean over all samples
+        vmax_true_shell = np.nanmean(np.nanmax(sars_true[:, mask], axis=1))
+        vmax_pred_shell = np.nanmean(np.nanmax(sars_predict[:, mask], axis=1))
 
-        vmax_r_1.append(vmax1)
-        vmax_r_2.append(vmax2)
+        vmax_r_true.append(vmax_true_shell)
+        vmax_r_pred.append(vmax_pred_shell)
+
         r_centers.append(r0 + dr / 2)
 
-    vmax_r_1 = np.array(vmax_r_1)
-    vmax_r_2 = np.array(vmax_r_2)
+    vmax_r_true = np.array(vmax_r_true)
+    vmax_r_pred = np.array(vmax_r_pred)
+    r_centers   = np.array(r_centers)
 
-    # --- Error between the two curves
-    error = np.abs(vmax_r_1 - vmax_r_2)
+    vmax1d_true = np.nanmax(vmax_r_true)
+    vmax1d_pred = np.nanmax(vmax_r_pred)
 
-    # --- Plot
+    rmax1d_true = r_centers[np.nanargmax(vmax_r_true)]
+    rmax1d_pred = r_centers[np.nanargmax(vmax_r_pred)]
+
+  
+    error = np.abs(vmax_r_true - vmax_r_pred)
+
+  
     plt.figure(figsize=(10, 6))
 
-    plt.plot(r_centers, vmax_r_1, color="green", linewidth=2, label="SAR1 Radial Vmax")
-    plt.plot(r_centers, vmax_r_2, color="blue", linewidth=2, label="SAR2 Radial Vmax")
-    plt.plot(r_centers, error, color="red", linestyle="--", linewidth=2, label="Absolute Error")
+    plt.plot(r_centers*2, vmax_r_true*1.94384, color="green", linewidth=2, label="Reel SAR Radial Vmax")
+    plt.plot(r_centers*2, vmax_r_pred*1.94384, color="blue", linewidth=2, label="Predict SAR Radial Vmax")
+    plt.plot(r_centers*2, error*1.94384, color="red", linestyle="--", linewidth=2, label="Absolute Error")
 
-    plt.xlabel("Radius R (pixels)", fontsize=14)
-    plt.ylabel("Vmax Mean (knots)", fontsize=14)
-    plt.title(f"Radial Distribution of Vmax and Error", fontsize=16)
+    # --- Add vertical lines for Rmax
+    plt.axvline(rmax1d_true*2, color="green", linestyle="--", linewidth=1.5, label=f"Reel Rmax1D = {rmax1d_true*2:.1f} Km")
+    plt.axvline(rmax1d_pred*2, color="blue", linestyle="--", linewidth=1.5, label=f"Pred Rmax1D = {rmax1d_pred*2:.1f} Km")
+    print("--------------------------",vmax1d_true)
+    plt.axhline(vmax1d_true*1.94384, color="green", linestyle="--", linewidth=1.5, label=f"Reel Vmax1D = {vmax1d_true*1.94384:.1f} Kt")
+    plt.axhline(vmax1d_pred*1.94384, color="blue", linestyle="--", linewidth=1.5, label=f"Pred Vmax1D = {vmax1d_pred*1.94384:.1f} Kt")
+
+    plt.xlabel("Radius R (Km)", fontsize=14)
+    plt.ylabel("Vmax Mean (Kt)", fontsize=14)
+    plt.title(f"Radial Vmax Profile — {set} (Epoch {epoch+1})", fontsize=16)
     plt.grid(True, linestyle="--", alpha=0.4)
     plt.legend(fontsize=12)
 
     plt.tight_layout()
-    if plot :
-        plt.show()
-    else : 
+
+    # --- Save
+    if not plot:
         out_path = os.path.join(output_dir, f"radial_vmax_{set}.png")
         plt.savefig(out_path, dpi=150)
         plt.close()
+    else:
+        plt.show()
+
+ 
+    return {
+        "vmax1d_true": float(vmax1d_true),
+        "vmax1d_pred": float(vmax1d_pred),
+        "rmax1d_true": float(rmax1d_true),
+        "rmax1d_pred": float(rmax1d_pred),
+        "radii": r_centers,
+        "vmax_profile_true": vmax_r_true,
+        "vmax_profile_pred": vmax_r_pred,
+    }
+
 
 
 def compute_mae_metric(sar_true, sar_pred, output_dir, set, epoch, plot=False):
@@ -526,82 +616,125 @@ def compute_mae_metric(sar_true, sar_pred, output_dir, set, epoch, plot=False):
 
     
 
-
-def rmax_compare(true_sars, predict_sars, output_dir, set, epoch, plot=False):
+def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False):
     """
-    true_sars, predict_sars : numpy arrays of shape (N, H, W)
-    RMW computed in PIXELS assuming the cyclone center is at the image center.
+    Compare Analysis Rmax vs Predicted Rmax (from SAR prediction).
+
+    analysis_rmax : list or array of Rmax (meters)
+    predict_sars  : (N, H, W) predicted SAR fields in knots
     """
 
     if set == "train":
         return None
 
-    N, H, W = true_sars.shape
-    x_c, y_c = W // 2, H // 2
+    N, H, W = predict_sars.shape
+    cx, cy = W // 2, H // 2
 
     Y, X = np.indices((H, W))
-    dist_map = np.sqrt((X - x_c)**2 + (Y - y_c)**2)
+    dist_map = np.sqrt((X - cx)**2 + (Y - cy)**2)
 
-    rmw_true = []
-    rmw_pred = []
+    rmax_true = []
+    rmax_pred = []
 
-    for sar_t, sar_p in zip(true_sars, predict_sars):
+    for ana_rmax, sar_pred in zip(analysis_rmax, predict_sars):
 
-        # --- True RMW ---
-        vmax_t = np.nanmax(sar_t)
-        mask_t = sar_t == vmax_t
-        rmw_t  = np.nanmean(dist_map[mask_t])
+        if ana_rmax is None or np.isnan(ana_rmax):
+            continue
 
-        # --- Pred RMW ---
-        vmax_p = np.nanmax(sar_p)
-        mask_p = sar_p == vmax_p
-        rmw_p  = np.nanmean(dist_map[mask_p])
+        # True Rmax in km
+        rmax_true.append(ana_rmax / 1000.0)
 
-        rmw_true.append(rmw_t)
-        rmw_pred.append(rmw_p)
+        # Predicted Rmax = radius of predicted Vmax
+        vmax_p = np.nanmax(sar_pred)
+        mask = sar_pred == vmax_p
+        rmax_p = np.nanmean(dist_map[mask]) * 2.0  # pixel → km
+        rmax_pred.append(rmax_p)
 
-    rmw_true = np.array(rmw_true)
-    rmw_pred = np.array(rmw_pred)
+    # Convert to arrays
+    rmax_true = np.array(rmax_true)
+    rmax_pred = np.array(rmax_pred)
 
-    rmin = min(np.nanmin(rmw_true), np.nanmin(rmw_pred))
-    rmax = max(np.nanmax(rmw_true), np.nanmax(rmw_pred))
+    # Remove NaNs
+    valid = ~np.isnan(rmax_true) & ~np.isnan(rmax_pred)
+    rmax_true = rmax_true[valid]
+    rmax_pred = rmax_pred[valid]
 
-    mean_true = np.nanmean(rmw_true)
-    mean_pred = np.nanmean(rmw_pred)
+    # ----------- METRICS -----------
+    errors = rmax_pred - rmax_true
+    MAE = np.nanmean(np.abs(errors))
+    RMSE = np.sqrt(np.nanmean(errors**2))
+    Bias = np.nanmean(errors)
 
-    max_true = np.nanmax(rmw_true)
-    max_pred = np.nanmax(rmw_pred)
+    max_true = np.nanmax(rmax_true)
+    max_pred = np.nanmax(rmax_pred)
 
-    plt.figure(figsize=(5, 5))
-    plt.scatter(rmw_true, rmw_pred, alpha=0.5)
-    plt.plot([rmin, rmax], [rmin, rmax], "r--", lw=2)
+    # ----------- DENSITY -----------
+    xy = np.vstack([rmax_true, rmax_pred])
+    z = gaussian_kde(xy)(xy)
 
-    plt.xlabel("Rmax True (pixels)", fontsize=13)
-    plt.ylabel("Rmax Predicted (pixels)", fontsize=13)
-    plt.title(f"Rmax Comparison —({set})", fontsize=14)
-    plt.grid(True, linestyle="--", alpha=0.4)
+    # ----------- FIGURE -----------
+    fig = plt.figure(figsize=(7, 10))
 
+    # =======================
+    # 1) SCATTER + DENSITY
+    # =======================
+    ax1 = fig.add_subplot(2, 1, 1)
+
+    sc = ax1.scatter(rmax_true, rmax_pred, c=z, cmap="viridis", s=25)
+    plt.colorbar(sc, ax=ax1, label="Density")
+
+    # Perfect line
+    min_r = min(rmax_true.min(), rmax_pred.min())
+    max_r = max(rmax_true.max(), rmax_pred.max())
+    ax1.plot([min_r, max_r], [min_r, max_r], 'r--', linewidth=2, label="Perfect prediction")
+
+    ax1.set_title(f"Rmax Comparison — Epoch {epoch+1} ({set})", fontsize=15)
+    ax1.set_xlabel("Analysis Rmax (km)")
+    ax1.set_ylabel("Predicted Rmax (km)")
+    ax1.grid(True, linestyle="--", alpha=0.4)
+
+    # Metrics box
     textstr = (
-        f"Mean True  : {mean_true:.1f}\n"
-        f"Mean Pred  : {mean_pred:.1f}\n"
-        f"Max True  : {max_true:.1f}\n"
-        f"Max Pred  : {max_pred:.1f}\n"
+        f"MAE : {MAE:.2f} km\n"
+        f"RMSE : {RMSE:.2f} km\n"
+        f"Bias : {Bias:.2f} km\n"
+        f"Max Analysis_rmax : {max_true:.1f} km\n"
+        f"Max predicted : {max_pred:.1f} km"
     )
-
-    plt.text(
+    ax1.text(
         0.05, 0.95, textstr,
-        transform=plt.gca().transAxes,
+        transform=ax1.transAxes,
         fontsize=11,
         verticalalignment="top",
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.8)
     )
 
-    if not plot:
-        out_path = os.path.join(output_dir, f"Rmaxcomparison_{set}.png")
+    # =======================
+    # 2) HISTOGRAM OF ERRORS
+    # =======================
+    ax2 = fig.add_subplot(2, 1, 2)
+    ax2.hist(errors, bins=30, color="gray", alpha=0.85)
+    ax2.set_title("Prediction Error Distribution (Pred - Analysis_rmax)")
+    ax2.set_xlabel("Error (km)")
+    ax2.set_ylabel("Count")
+    ax2.grid(True, linestyle="--", alpha=0.4)
+
+    plt.tight_layout()
+
+    if plot:
+        plt.show()
+    else:
+        out_path = os.path.join(output_dir, f"Rmax_Comparison_{set}.png")
         plt.savefig(out_path, dpi=150)
         plt.close()
-    else:
-        plt.show()
+
+    return {
+        "rmax_true": rmax_true,
+        "rmax_pred": rmax_pred,
+        "MAE": MAE,
+        "RMSE": RMSE,
+        "Bias": Bias,
+    }
 
     
 

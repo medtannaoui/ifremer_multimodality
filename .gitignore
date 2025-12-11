@@ -35,9 +35,9 @@ outputs/
 ML_IR_SAR/train_history_ir_sar/
 train_history_ir_sar/
 excels/
-wiçthout_metrics
+*metrics*
 src_new
-
+*tests*
 # ==========================
 #   TEMPORARY & LOG FILES
 # ==========================
@@ -54,3 +54,6 @@ first_test/
 # ==========================
 .DS_Store
 .gitignore.save
+cyclone_not_in_tcprimed.csv
+without_owiWindSpeed/without_owiWindSpeed.csv
+.github/copilot-instructions.md

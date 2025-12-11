@@ -82,7 +82,7 @@ class NESDIS:
             Original SAR data from NESDIS
         clon : float
             Center longitude in degrees
-        clat : float
+        clat : float 
             Center latitude in degrees
         max_r : float
             Maximum radius for output (km)
@@ -155,29 +155,5 @@ class NESDIS:
         for varname in varnames:
             sar_aeqd[varname].attrs.update({"standard_name": varname+"_500m", "long_name": sar_org[varname].attrs["long_name"]+f" resampled on {reso}-m azimuthal equidistant projection", "units": sar_org[varname].attrs["units"]})
 
-        # new_attributes = {
-        #     "title": "Resampled SAR winds at 10-m height neutral stability",
-        #     "history": f'{pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S UTC")}',
-        #     "grid_mapping": "Azimuthal equidistant projection for storm center in kilometers",
-        #     "creator_name": os.getenv("USER"),
-        # }
-        # sar_aeqd.attrs.update(new_attributes)
-
-        # copy_attributes = ["Conventions", "sensor", "instrument", "model_source", "netcdf_version_id", "product_version", "time_coverage_start", "time_coverage_end", "platform", "answrs:radar_wavelength_m", "answrs:radar_band", "answrs:polarization", "answrs:geophysical_model_function", "answrs:orbit_direction", "answrs:day_night", "answrs:sar_beam_code", "answrs:product_type"]
-        # for attrname in copy_attributes:
-        #     sar_aeqd.attrs[attrname] = sar_org.attrs[attrname]
-
-        # # Missing rate
-        # rr = np.hypot(sar_aeqd.y, sar_aeqd.x).compute()
-        # inside100km = (rr <= 100)
-        # missing_rate_100km = sar_aeqd["sar_wind_500m"].compute().isnull().where(inside100km).sum().item()/inside100km.sum().item()
-        # sar_aeqd["missing_rate_100km"] = ([], missing_rate_100km, {"standard_name": "missing_rate_100km", "long_name": "Missing rate in 100 km radius", "units": "1"})
-
-        # # Incidence angle
-        # i, j = cls.get_ij_from_lonlat(sar_org, clon, clat)
-        # central_incid = cls.get_var_from_ij(sar_org, i, j, "incid")
-        # sar_aeqd["central_incid"] = ([], central_incid, {"standard_name": "central_incid", "long_name": "Incidence angle at the projection center from satellite", "units": "degrees"})
-        
-        # if include_org:
-        #     sar_aeqd = xr.merge([sar_aeqd, sar_org[org_varnames].rename({"x": "x_org", "y": "y_org"})])
+    
         return sar_aeqd, aeqd_proj

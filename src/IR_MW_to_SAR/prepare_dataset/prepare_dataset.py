@@ -18,23 +18,20 @@ reload(dataprep)
 
 class PrepareDataSet():
     
-    def __init__(self, pkl_file=None,
+    def __init__(self, pkl_file="/scale/user/mtannaou/alternance/src/sargeo_primed_colocs/coloc_primed_sargeo.pkl",
                   input_channels=None, 
                   barycenter="no", 
-                  size=256, 
+                  size=128, 
                   norm="z_score", 
                   drop_nan_100=True,
+                  diff_min = 15
                  ):
 
-        print("🔹 Loading PKL data...")
+        print("🔹 Loading data...")
         with open(pkl_file, "rb") as f:
             data = pkl.load(f)   # dictionary
-#         mask = [x <= 1.4 for x in data["analysis_center_quality_flag"]]
-
-#         data = {
-#             key: [value[i] for i in range(len(value)) if mask[i]]
-#             for key, value in data.items()
-# }
+        
+        
         #  IRWIN is always included as the first channel ===
         final_channels = ["irwin"]
         if input_channels is not None:
@@ -43,18 +40,13 @@ class PrepareDataSet():
         print(f"📎 Using input channels: {final_channels}")
 
         #  Extract metadata ===
-        keys = ["cyclone_id", "sar_time", "vmax", 
-        "analysis_vmax", "analysis_rmax", 
-        "analysis_center_quality_flag"]
-
-        self.infos = [
-            {k: data[k][i] for k in keys}
-            for i in range(len(data["cyclone_id"]))
-        ]
-                        
+        self.cyclone_ids = np.array(data["cyclone_id"])
+        self.sar_time = np.array(data["sar_time"])
+       
 
         #  Extract X channels ===
-       
+        #  image_channels : (N, H, W)
+        #  feature_arrays : (N, F_i) qu'on concaténera en (N, F_total)
         image_channels = []
         feature_arrays = []
         feature_names = []   # for debug
@@ -63,11 +55,11 @@ class PrepareDataSet():
         irwin_all = np.array(data["irwin"])    # (N, 9, H, W) par ex.
         N, _, H, W = irwin_all.shape
 
-        # for i in [0,1,2,3,4,5,6,7,8]:
+        # for i in [4]:
         #     irwin = irwin_all[:, i, :, :]      # (N, H, W)  # add multiple irs
         #     image_channels.append(irwin)
-        image_channels.append(irwin_all[:,4,:,:])
-        # image_channels.append(np.nanmean(irwin_all,axis=1)) #mean of th nine irs
+
+        image_channels.append(np.nanmean(irwin_all,axis=1)) #mean of th nine irs
 
         if input_channels is not None:
             for var in input_channels:
@@ -114,7 +106,7 @@ class PrepareDataSet():
 
         # Optional: remove SAR samples with too many NaNs ===
         if drop_nan_100:
-            self.X, self.sar, self.infos = dataprep.remove_sar_nan(self.X, self.sar, radius_km=100, threshold=0.5, infos=self.infos)
+            self.X, self.sar = dataprep.remove_sar_nan(self.X, self.sar, radius_km=100, threshold=0.5)
 
         #  Create SAR valid pixel mask ===
         self.mask_sar = np.isfinite(self.sar).astype(np.float32)

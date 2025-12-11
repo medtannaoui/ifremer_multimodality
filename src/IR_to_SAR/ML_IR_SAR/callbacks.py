@@ -4,6 +4,7 @@ import torch
 import matplotlib.pyplot as plt
 import numpy as np
 import importlib
+from matplotlib.patches import Circle
 import src.IR_to_SAR.data_preparation.distribution_data_visualisation as distdata
 importlib.reload(distdata)
 
@@ -66,7 +67,7 @@ class LogValidationSamples:
 
     def __init__(self, base_dir, mean_X, std_X, mean_sar, std_sar, norm,
              num_samples=4, start_epoch=20, every_n_epochs=1,
-             cmap_ir="gray", cmap_sar="viridis", num_epochs=0, cyclone_ids=None, sar_times=None, distance_km=None, mask_train=None, mask_val = None):
+             cmap_ir="gray", cmap_sar="viridis", num_epochs=0, infos=None, distance_km=None, mask_train=None, mask_val = None):
 
         self.base_dir = Path(base_dir)
         self.output_dir = self._create_unique_dir(self.base_dir)
@@ -86,8 +87,7 @@ class LogValidationSamples:
         self.mask_train = mask_train
         self.mask_val = mask_val
         self.num_epochs = num_epochs
-        self.cyclone_ids = cyclone_ids
-        self.sar_times = sar_times
+        self.infos = infos
         
 
 
@@ -95,10 +95,53 @@ class LogValidationSamples:
         i = 1
         while (base_dir / f"train_ir_sar_{i}").exists():
             i += 1
-        new_dir = base_dir / f"train_ir_sar_{i}"
-        new_dir.mkdir(parents=True, exist_ok=True)
+        new_dir = base_dir / f"train_ir_sar_{i-1}"
+        # new_dir.mkdir(parents=True, exist_ok=True)
         return new_dir
         
+    def compute_vmax1d_rmax1d(self, sar_2d, cx, cy):
+        """
+        Compute Vmax1D and Rmax1D from a 2D SAR field.
+        - Vmax1D: maximum wind speed along radial profile
+        - Rmax1D: radius at which Vmax1D occurs
+        """
+
+        H, W = sar_2d.shape
+
+        Y, X = np.indices((H, W))
+        R = np.sqrt((X - cx)**2 + (Y - cy)**2)
+
+        Rmax = int(R.max())
+        radii = np.arange(0, Rmax)
+
+        vmax_profile = []
+
+        for R0 in radii:
+            mask = (np.abs(R - R0) < 0.5)
+
+            if np.sum(mask) == 0:
+                vmax_profile.append(np.nan)
+            else:
+                vmax_profile.append(np.nanmax(sar_2d[mask]))
+
+        vmax_profile = np.array(vmax_profile)
+
+        # Remove NaNs
+        valid = ~np.isnan(vmax_profile)
+        vmax_profile = vmax_profile[valid]
+        radii = radii[valid]
+
+        vmax1d = np.nanmax(vmax_profile)
+        rmax1d = radii[np.nanargmax(vmax_profile)]
+
+        # Convert:
+        # - Vmax in knots
+        # - Rmax in km (each pixel = 2 km)
+        vmax1d_knots = vmax1d * 1.94384
+        rmax1d_km = rmax1d * 2
+
+        return vmax1d_knots, rmax1d_km
+
 
     def log_batch(self, model, batch, epoch, device, set="validation"):
         """
@@ -110,7 +153,14 @@ class LogValidationSamples:
 
         model.eval()
 
-        x, sar, mask, cyclone_id, sar_time = batch
+        x, sar, mask, infos = batch
+        cyclone_id = [d["cyclone_id"] for d in infos]             
+        sar_time = [d["sar_time"] for d in infos] 
+        vmax=  [d["vmax"] for d in infos] 
+        analysis_vmax = [d["analysis_vmax"] for d in infos] 
+        analysis_rmax = [d["analysis_rmax"] for d in infos] 
+        analysis_center_quality_flag = [d["analysis_center_quality_flag"] for d in infos]  
+                                                       
         x = x.to(device)
         sar = sar.to(device)
         mask = mask.to(device)
@@ -127,6 +177,7 @@ class LogValidationSamples:
 
         def denorm(t, mean, std):
             return t * (std + 1e-10) + mean
+            # return std + t*(1e-10 + mean  -std)
 
         # On ne visualise que le canal IRWIN (canal 0)
         ir = x[:, 0:1, :, :]
@@ -189,7 +240,7 @@ class LogValidationSamples:
 
         # → Vmax utilise les champs 2D
         distdata.vmax_compare(
-            sar_2d_knots,
+            analysis_vmax,
             pred_2d_knots,
             self.output_dir,
             set=set,
@@ -197,7 +248,7 @@ class LogValidationSamples:
         )
 
         distdata.rmax_compare(
-            sar_2d_knots,
+            analysis_rmax,
             pred_2d_knots,
             self.output_dir,
             set=set,
@@ -226,32 +277,58 @@ class LogValidationSamples:
        
         for i in sample_ids:
             fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+            H, W = sar_np[i].shape
+            cx, cy = W // 2, H // 2
+
+            # Compute radial metrics
+            vmax1d_true, rmax1d_true = self.compute_vmax1d_rmax1d(sar_np[i], cx, cy)
+            vmax1d_pred, rmax1d_pred = self.compute_vmax1d_rmax1d(pred_np[i], cx, cy)
+
+            
+            rmax = analysis_rmax[i] / 2000
+            vmax = analysis_vmax[i] *1.94384
+            if vmax is None or np.isnan(rmax):
+                vmax = 99999
+            if rmax is None or np.isnan(rmax):
+                rmax = 99999
 
             # IRWIN
             axes[0].imshow(ir_np[i], cmap=self.cmap_ir)
             axes[0].set_title("IRWIN (Channel 0)")
             axes[0].axis("off")
 
-            # Real SAR
-            sar_vis = np.where(mask_np[i]==1, sar_np[i],np.nan)
+            # === TRUE SAR ===
+            sar_vis = np.where(mask_np[i]==1, sar_np[i], np.nan)
             axes[1].imshow(sar_vis, cmap=self.cmap_sar)
-            axes[1].set_title("Target SAR (knots)")
+            axes[1].set_title("True SAR (knots)")
+            axes[1].axhline(y=cy, color="black", linewidth=1)
+            axes[1].axvline(x=cx, color="black", linewidth=1)
+
+            if rmax is not None:
+                axes[1].add_patch(Circle((cx, cy), radius=rmax, color="black", fill=False, linestyle="--"))
+
             axes[1].axis("off")
 
-            # Predicted SAR
-            pred_vis = np.where(mask_np[i] == 1, pred_np[i], np.nan)
+            # === PREDICTED SAR ===
+            # pred_vis = np.where(mask_np[i]==1, pred_np[i], np.nan)
             axes[2].imshow(pred_np[i], cmap=self.cmap_sar)
             axes[2].set_title("Predicted SAR (knots)")
+            axes[2].axhline(y=cy, color="black", linewidth=1)
+            axes[2].axvline(x=cx, color="black", linewidth=1)
+
+            if rmax is not None:
+                axes[2].add_patch(Circle((cx, cy), radius=rmax, color="black", fill=False, linestyle="--"))
+
             axes[2].axis("off")
 
-            # Title with cyclone & SAR timestamp
-            if cyclone_id is not None and sar_time is not None:
-                fig.suptitle(
-                    f"Cyclone: {cyclone_id[i]} — SAR Time: {sar_time[i]} — Epoch {epoch+1}",
-                    fontsize=10
-                )
-            else:
-                fig.suptitle(f"Epoch {epoch+1}", fontsize=14)
+            # === TITLE including Rmax1D and Vmax1D ===
+            fig.suptitle(
+                f"Cyclone: {cyclone_id[i]} — SAR Time: {sar_time[i]} — Epoch {epoch+1}\n"
+                f"Analysis Rmax = {rmax:.1f} Km — Predicted Rmax1D = {rmax1d_pred:.1f} Km\n"
+                f"Anaysis Vmax = {vmax:.1f} kt — Predicted Vmax1D = {vmax1d_pred:.1f} kt",
+                fontsize=10
+            )
+
 
             plt.tight_layout()
             save_path = os.path.join(self.output_dir, "samples",set,  f"sample_{i}_epoch_{epoch+1}.png")
@@ -277,42 +354,41 @@ class LogValidationSamples:
 
         mask_train = []
         mask_val = []
-        cyclone_id_train, cyclone_id_val = [], []
-        sar_time_train , sar_time_val = [], []
+        infos_val = []
+        infos_train = []
 
         # Parcourir tout le DataLoader et accumuler IR et SAR
-        for ir, sar, mask, cyc, sart in dataloader[1]:
+        for ir, sar, mask, inf in dataloader[1]:
             all_ir_val.append(ir)
             all_sar_val.append(sar)
             mask_val.append(mask)
-            cyclone_id_val.append(cyc)
-            sar_time_val.append(sart)
+            infos_val.append(inf)
     
         
-        for ir, sar, mask, cyc, sart in dataloader[0]:
+        for ir, sar, mask, inf in dataloader[0]:
             all_ir_train.append(ir)
             all_sar_train.append(sar)
             mask_train.append(mask)
-            cyclone_id_train.append(cyc)
-            sar_time_train.append(sart)
+            infos_train.append(inf)
+
       
 
         # Concaténer sur la dimension batch (dim=0)
         ir_full_val = torch.cat(all_ir_val, dim=0)   # → (Total, 1, H, W)
         sar_full_val = torch.cat(all_sar_val, dim=0) # → (Total, 1, H, W)
         mask_val = torch.cat(mask_val, dim=0)
-        cyclone_id_val = sum(cyclone_id_val, [])   # concat lists
-        sar_time_val   = sum(sar_time_val, [])
+        infos_val = [d for batch in infos_val for d in batch]   # concat lists
+        
 
         ir_full_train = torch.cat(all_ir_train, dim=0)   # → (Total, 1, H, W)
         sar_full_train = torch.cat(all_sar_train, dim=0) # → (Total, 1, H, W)
         mask_train = torch.cat(mask_train, dim=0)
-        cyclone_id_train = sum(cyclone_id_train, [])   # concat lists
-        sar_time_train   = sum(sar_time_train, [])
+        infos_train = [d for batch in infos_train for d in batch]   # concat lists
+        
 
         # Créer un tuple exactement comme un batch
-        batch_full_val = (ir_full_val, sar_full_val, mask_val, cyclone_id_val, sar_time_val)
-        batch_full_train = (ir_full_train, sar_full_train, mask_train, cyclone_id_train, sar_time_train)
+        batch_full_val = (ir_full_val, sar_full_val, mask_val, infos_val)
+        batch_full_train = (ir_full_train, sar_full_train, mask_train, infos_train)
 
         self.log_batch(model, batch_full_val, epoch, device)
         self.log_batch(model, batch_full_train, epoch, device, set="train")

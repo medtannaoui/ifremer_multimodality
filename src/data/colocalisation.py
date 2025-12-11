@@ -135,6 +135,7 @@ def colocate_sar_tcprimed(
         for filename in os.listdir(sargeo_ir_path):
 
             full_sargeo_path = os.path.join(sargeo_ir_path, filename)
+            
             sar_date_raw = filename.split("-")[4]     # Extract raw date "YYYYMMDDTHHMMSS"
 
             matches = []
@@ -152,6 +153,7 @@ def colocate_sar_tcprimed(
                     # compute difference in seconds
                     diff_sec = time_diff_seconds(sar_date_raw, row["date"])
                     matched_diffs_times.append(diff_sec)
+                  
 
                     # print(f"Matched TC_PRIMED date → {row['date']}")
 

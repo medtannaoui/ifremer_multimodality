@@ -107,24 +107,22 @@ class IRSARDataset(Dataset):
 
 
 class PairedDataset(Dataset):
-    def __init__(self, X, sar_array, mask, cyclone_id, sar_time):
+    def __init__(self, X, sar_array, mask, infos):
         self.X = X
         self.sar = sar_array
         self.mask = mask
-        self.cyclone_id =  cyclone_id
-        self.sar_time = sar_time
+        self.infos = infos
     
     def __len__(self):
         return len(self.X)
 
     def __getitem__(self, idx):
         return (
-            torch.tensor(self.X[idx], dtype=torch.float32),
-            torch.tensor(self.sar[idx], dtype=torch.float32),
-            torch.tensor(self.mask[idx], dtype=torch.float32),
-            self.cyclone_id[idx],
-            self.sar_time[idx]
-        )
+        torch.tensor(self.X[idx], dtype=torch.float32),
+        torch.tensor(self.sar[idx], dtype=torch.float32),
+        torch.tensor(self.mask[idx], dtype=torch.float32),
+        self.infos[idx]  
+    )
 
 
 
@@ -138,7 +136,7 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics):
     total_loss = 0
     metrics.reset()
 
-    for x, sar, mask, _, _ in tqdm(dataloader, desc="Training"):
+    for x, sar, mask, _ in tqdm(dataloader, desc="Training"):
         x, sar, mask= x.to(fabric.device), sar.to(fabric.device), mask.to(fabric.device)
         optimizer.zero_grad()
 
@@ -149,14 +147,26 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics):
         # mask = torch.isfinite(sar)
 
         sar_valid = sar.nan_to_num()
+
+        
+
         pred_valid = pred
+
+        # sar_for_weight = sar_valid * mask
+        # max_speed = sar_for_weight.max() + 1e-10
+        # norm_speed = sar_for_weight / max_speed
+        # weights = 1.0 + 1 * norm_speed**1
+        # diff = torch.abs(pred_valid - sar_valid)
+        # loss_mse = (diff * weights * mask).mean()
+
 
         # Losses
         if sar_valid.ndim == 3:
             sar_valid = sar_valid.unsqueeze(1)
-        loss_mse = F.l1_loss(pred_valid*mask, sar_valid*mask)
+        
         loss_ssim = 1 - ssim(pred_valid, sar_valid)
-
+        # loss_mse = torch.mean(weights * torch.abs(pred_valid - sar_valid) * mask)
+        loss_mse = F.l1_loss(pred_valid*mask, sar_valid*mask)
         loss = 1.0 * loss_mse + 0.0 * loss_ssim
 
         # Backpropagation
@@ -176,17 +186,22 @@ def validate(fabric, model, dataloader, metrics):
     metrics.reset()
 
     with torch.no_grad():
-        for x, sar, mask, _, _ in tqdm(dataloader, desc="Validating"):
+        for x, sar, mask, _ in tqdm(dataloader, desc="Validating"):
             x, sar, mask = x.to(fabric.device), sar.to(fabric.device), mask.to(fabric.device)
 
             pred = model(x, timestep=0).sample
 
             # mask = torch.isfinite(sar)
             sar_valid = sar.nan_to_num()
+
+            sar_norm = sar_valid / (sar_valid.max() + 1e-10)
+            
+
             pred_valid = pred
             if sar_valid.ndim == 3:
                 sar_valid = sar_valid.unsqueeze(1)
 
+            
             loss_mse = F.l1_loss(pred_valid*mask, sar_valid*mask)
             loss_ssim = 1 - ssim(pred_valid, sar_valid)
 
@@ -204,22 +219,33 @@ def validate(fabric, model, dataloader, metrics):
 def custom_collate(batch):
     """
     batch = [
-        (x, sar, mask, cyclone_id, sar_time),
+        (x, sar, mask, infos_dict),
         ...
     ]
     """
-    xs        = torch.stack([item[0] for item in batch])
-    sars      = torch.stack([item[1] for item in batch])
-    masks     = torch.stack([item[2] for item in batch])
+    xs    = torch.stack([item[0] for item in batch])
+    sars  = torch.stack([item[1] for item in batch])
+    masks = torch.stack([item[2] for item in batch])
 
-    cyclone_ids = [item[3] for item in batch]   # stay as list of strings
-    sar_times   = [item[4] for item in batch]   # stay as list of strings
+    # infos reste une liste de dictionnaires
+    infos = [item[3] for item in batch]
 
-    return xs, sars, masks, cyclone_ids, sar_times
+    return xs, sars, masks, infos
+
 
 def main(cfg: IR_SAR_Config,test=False):
     logger.info(f"Starting training with config:\n{cfg.__dict__}")
     stop_training = False
+
+    base_dir = Path(cfg.save_dir)
+
+    i = 1
+    while (base_dir / f"train_ir_sar_{i}").exists():
+        i += 1
+
+    target_dir = base_dir / f"train_ir_sar_{i}"
+
+    os.makedirs(target_dir, exist_ok=True)
 
     # --- Dataset full ---
     
@@ -231,33 +257,29 @@ def main(cfg: IR_SAR_Config,test=False):
     if cfg.barycenter == "yes" : 
         dx = full_data.dataset.dx_sar
         dy = full_data.dataset.dy_sar
+
+    
     
     # --- Split ---
-    dictio = dataprep.train_val_test_split_random(
+    dictio = dataprep.train_val_test_split(
         np.array(X_all), np.array(sar_all),
         train_size=cfg.train_split,
         val_size=cfg.val_split,
         test_size=cfg.test_split,
         augmentation=cfg.augmentation,
         mask_sar = full_data.dataset.mask_sar,
-        cyclone_ids=full_data.dataset.cyclone_ids,
-        sar_times= full_data.dataset.sar_time
+        infos = full_data.dataset.infos,
+        target_dir=target_dir
     )
     
-    train_ds = PairedDataset(*dictio["train"],dictio["mask_sar_train"], dictio["cyclone_id_train"], dictio["sar_time_train"])  #X (multi-channel input), SAR target
-    val_ds   = PairedDataset(*dictio["val"],dictio["mask_sar_val"], dictio["cyclone_id_val"], dictio["sar_time_val"])
+    train_ds = PairedDataset(*dictio["train"],dictio["mask_sar_train"], dictio["infos_train"])  #X (multi-channel input), SAR target
+    val_ds   = PairedDataset(*dictio["val"],dictio["mask_sar_val"], dictio["infos_val"])
 
-    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=custom_collate)
+    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, collate_fn=custom_collate)
     val_loader   = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=custom_collate)
 
     # --- Fabric init with callbacks ---   #QUentin
-    base_dir = Path(cfg.save_dir)
-
-    i = 1
-    while (base_dir / f"train_ir_sar_{i}").exists():
-        i += 1
-
-    target_dir = base_dir / f"train_ir_sar_{i}"
+    
     
     fabric = L.Fabric(
         accelerator=cfg.accelerator,
@@ -279,8 +301,7 @@ def main(cfg: IR_SAR_Config,test=False):
                 start_epoch=cfg.start_epoch,    
                 mask_train = dictio["mask_sar_train"],
                 mask_val = full_data.dataset.mask_sar[dictio["val_index"]],
-                cyclone_ids= full_data.dataset.cyclone_ids,
-                sar_times= full_data.dataset.sar_time
+                infos = full_data.dataset.infos
             )
         ],
     )
