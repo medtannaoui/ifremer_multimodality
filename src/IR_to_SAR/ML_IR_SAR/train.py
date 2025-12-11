@@ -151,7 +151,12 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics):
         
 
         pred_valid = pred
+ 
 
+
+        ####################
+        #Weighted loss with wind speed
+        #####################""
         # sar_for_weight = sar_valid * mask
         # max_speed = sar_for_weight.max() + 1e-10
         # norm_speed = sar_for_weight / max_speed
@@ -159,15 +164,36 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics):
         # diff = torch.abs(pred_valid - sar_valid)
         # loss_mse = (diff * weights * mask).mean()
 
+        ################################
+        ## Use the gradinet in the loss 
+        ###############################
+        sar_valid = sar_valid.unsqueeze(1)      # (B,1,H,W)
+        # pred_valid = pred_valid.unsqueeze(1)    # (B,1,H,W)
+        # mask_valid = mask.unsqueeze(1) 
+        if mask.ndim == 3:
+            mask = mask.unsqueeze(1)
+        # print("shape sar valid",sar_valid.shape)
+        # print("pred valid shape",pred_valid.shape)
+        # print("mask_shape",mask.shape)
+        gx_sar, gy_sar = torch.gradient(sar_valid, dim=(2,3))
+        gx_pred, gy_pred = torch.gradient(pred_valid, dim=(2,3))
+        # print("gx sar shape",gx_sar.shape)
+        # print("gy sar shape",gy_sar.shape)
+
+        loss_grad = (
+            F.l1_loss(gx_pred * mask, gx_sar * mask) +
+            F.l1_loss(gy_pred * mask, gy_sar * mask)
+        )
+
 
         # Losses
         if sar_valid.ndim == 3:
             sar_valid = sar_valid.unsqueeze(1)
         
         loss_ssim = 1 - ssim(pred_valid, sar_valid)
-        # loss_mse = torch.mean(weights * torch.abs(pred_valid - sar_valid) * mask)
         loss_mse = F.l1_loss(pred_valid*mask, sar_valid*mask)
-        loss = 1.0 * loss_mse + 0.0 * loss_ssim
+        loss = loss_mse + 1 * loss_grad
+        # loss = 1.0 * loss_mse + 0.0 * loss_ssim
 
         # Backpropagation
         fabric.backward(loss)

@@ -675,8 +675,8 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
 
         # rotations
         
-        if np.nanmax(np.array(inf["analysis_vmax"])) > 50:
-            for angle in [180, 90,270]:
+        if np.nanmax(np.array(inf["analysis_vmax"])) > 40:
+            for angle in [180, 90, 270]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
                 ir_aug.append(ir_r)
                 sar_aug.append(sar_r)

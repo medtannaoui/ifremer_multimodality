@@ -138,7 +138,7 @@ class LogValidationSamples:
         # - Vmax in knots
         # - Rmax in km (each pixel = 2 km)
         vmax1d_knots = vmax1d * 1.94384
-        rmax1d_km = rmax1d * 2
+        rmax1d_km = rmax1d
 
         return vmax1d_knots, rmax1d_km
 
@@ -281,7 +281,7 @@ class LogValidationSamples:
             cx, cy = W // 2, H // 2
 
             # Compute radial metrics
-            vmax1d_true, rmax1d_true = self.compute_vmax1d_rmax1d(sar_np[i], cx, cy)
+            
             vmax1d_pred, rmax1d_pred = self.compute_vmax1d_rmax1d(pred_np[i], cx, cy)
 
             
