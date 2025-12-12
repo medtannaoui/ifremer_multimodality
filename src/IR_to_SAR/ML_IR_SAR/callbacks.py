@@ -285,7 +285,7 @@ class LogValidationSamples:
             vmax1d_pred, rmax1d_pred = self.compute_vmax1d_rmax1d(pred_np[i], cx, cy)
 
             
-            rmax = analysis_rmax[i] / 2000
+            rmax = analysis_rmax[i] / 2000    #pixel
             vmax = analysis_vmax[i] *1.94384
             if vmax is None or np.isnan(rmax):
                 vmax = 99999
@@ -324,7 +324,7 @@ class LogValidationSamples:
             # === TITLE including Rmax1D and Vmax1D ===
             fig.suptitle(
                 f"Cyclone: {cyclone_id[i]} — SAR Time: {sar_time[i]} — Epoch {epoch+1}\n"
-                f"Analysis Rmax = {rmax:.1f} Km — Predicted Rmax1D = {rmax1d_pred:.1f} Km\n"
+                f"Analysis Rmax = {rmax*2:.1f} Km — Predicted Rmax1D = {rmax1d_pred:.1f} Km\n"
                 f"Anaysis Vmax = {vmax:.1f} kt — Predicted Vmax1D = {vmax1d_pred:.1f} kt",
                 fontsize=10
             )

@@ -46,7 +46,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import shutil
 
-
+from src.IR_to_SAR.ML_IR_SAR.losses import combined_sar_loss
 
 import src.IR_to_SAR.data_preparation.data_preprocessing as dataprep
 from src.visualisation.utils_colormap import CMAP
@@ -142,60 +142,20 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics):
 
         # Forward pass
         pred = model(x, timestep=0).sample  # (B,1,H,W)
-
-        # Mask des pixels valides
-        # mask = torch.isfinite(sar)
-
         sar_valid = sar.nan_to_num()
-
-        
-
         pred_valid = pred
- 
 
-
-        ####################
-        #Weighted loss with wind speed
-        #####################""
-        # sar_for_weight = sar_valid * mask
-        # max_speed = sar_for_weight.max() + 1e-10
-        # norm_speed = sar_for_weight / max_speed
-        # weights = 1.0 + 1 * norm_speed**1
-        # diff = torch.abs(pred_valid - sar_valid)
-        # loss_mse = (diff * weights * mask).mean()
-
-        ################################
-        ## Use the gradinet in the loss 
-        ###############################
-        sar_valid = sar_valid.unsqueeze(1)      # (B,1,H,W)
-        # pred_valid = pred_valid.unsqueeze(1)    # (B,1,H,W)
-        # mask_valid = mask.unsqueeze(1) 
-        if mask.ndim == 3:
-            mask = mask.unsqueeze(1)
-        # print("shape sar valid",sar_valid.shape)
-        # print("pred valid shape",pred_valid.shape)
-        # print("mask_shape",mask.shape)
-        gx_sar, gy_sar = torch.gradient(sar_valid, dim=(2,3))
-        gx_pred, gy_pred = torch.gradient(pred_valid, dim=(2,3))
-        # print("gx sar shape",gx_sar.shape)
-        # print("gy sar shape",gy_sar.shape)
-
-        loss_grad = (
-            F.l1_loss(gx_pred * mask, gx_sar * mask) +
-            F.l1_loss(gy_pred * mask, gy_sar * mask)
-        )
-
-
-        # Losses
+        loss = combined_sar_loss(sar_valid,pred_valid,mask,
+                                 w_pix=0.4,
+                                 w_grad=0.3,
+                                 w_radial=0.3)
         if sar_valid.ndim == 3:
             sar_valid = sar_valid.unsqueeze(1)
-        
-        loss_ssim = 1 - ssim(pred_valid, sar_valid)
-        loss_mse = F.l1_loss(pred_valid*mask, sar_valid*mask)
-        loss = loss_mse + 1 * loss_grad
-        # loss = 1.0 * loss_mse + 0.0 * loss_ssim
 
-        # Backpropagation
+        if mask.ndim == 3:
+            mask = mask.unsqueeze(1)
+
+            # Backpropagation
         fabric.backward(loss)
         fabric.clip_gradients(model, optimizer, max_norm=1.0)
         optimizer.step()
@@ -219,20 +179,17 @@ def validate(fabric, model, dataloader, metrics):
 
             # mask = torch.isfinite(sar)
             sar_valid = sar.nan_to_num()
-
-            sar_norm = sar_valid / (sar_valid.max() + 1e-10)
-            
-
             pred_valid = pred
+
+            loss = combined_sar_loss(sar_valid,pred_valid,mask,
+                                     w_pix=0.4,
+                                     w_grad=0.3,
+                                     w_radial=0.3)
             if sar_valid.ndim == 3:
                 sar_valid = sar_valid.unsqueeze(1)
 
-            
-            loss_mse = F.l1_loss(pred_valid*mask, sar_valid*mask)
-            loss_ssim = 1 - ssim(pred_valid, sar_valid)
-
-            loss = 1.0 * loss_mse + 0.0 * loss_ssim
-
+            if mask.ndim == 3:
+                mask = mask.unsqueeze(1)
             total_loss += loss.item()
             metrics.update(pred_valid*mask, sar_valid*mask)
 

@@ -180,6 +180,11 @@ from collections import Counter
 
 
 
+import numpy as np
+from sklearn.model_selection import train_test_split
+from collections import Counter
+
+
 def train_val_test_split(
     X_array,
     sar_array,
@@ -190,73 +195,120 @@ def train_val_test_split(
     test_size=0.15,
     augmentation=True,
     target_dir=None,
-    n_bins=4
+    n_bins=4,
 ):
-    """
-    Stratified split using analysis_vmax from infos.
-    """
+   
+
+    assert abs(train_size + val_size + test_size - 1.0) < 1e-6
 
     N = len(X_array)
     all_indices = np.arange(N)
 
-    # -------------------------------------
-    # 1) Extract analysis_vmax and create bins
-    # -------------------------------------
+    # --------------------------------------------------
+    # 1) Extract stratification variables
+    # --------------------------------------------------
     analysis_vmax = np.array([d["analysis_vmax"] for d in infos])
-    
-    # Create bins (equal-width bins)
-    bins = np.linspace(np.nanmin(analysis_vmax), np.nanmax(analysis_vmax), n_bins)
-    vmax_binned = np.digitize(analysis_vmax, bins)
+    analysis_rmax = np.array([d["analysis_rmax"] for d in infos])
+    vmax = np.array([d["vmax"] for d in infos])
 
-    # -------------------------------------
-    # 2) Split TRAIN vs TEMP (Val+Test) with stratification
-    # -------------------------------------
-    train_indices, temp_indices = train_test_split(
+    delta_vmax = vmax - analysis_vmax
+
+    # --------------------------------------------------
+    # 2) Quantile binning (robust to imbalance)
+    # --------------------------------------------------
+    def quantile_bins(x, n_bins):
+        q = np.nanquantile(x, np.linspace(0, 1, n_bins + 1)[1:-1])
+        return np.digitize(x, q)
+
+    vmax_bin  = quantile_bins(analysis_vmax, n_bins)
+    rmax_bin  = quantile_bins(analysis_rmax, n_bins)
+    # delta_bin = quantile_bins(delta_vmax, n_bins)
+
+    # --------------------------------------------------
+    # 3) Combine bins → single stratification key
+    # --------------------------------------------------
+    stratify_key = (
+        vmax_bin.astype(str) + "_" +
+        rmax_bin.astype(str) + "_" 
+        # delta_bin.astype(str)
+    )
+
+    # --------------------------------------------------
+    # 4) Remove rare classes (sklearn requirement)
+    # --------------------------------------------------
+    counts = Counter(stratify_key)
+    valid_mask = np.array([counts[k] >= 2 for k in stratify_key])
+
+    all_indices = all_indices[valid_mask]
+    stratify_key = stratify_key[valid_mask]
+
+    print(f"📊 Stratification classes kept: {len(set(stratify_key))}")
+
+    # --------------------------------------------------
+    # 5) Train vs Temp split
+    # --------------------------------------------------
+    train_idx, temp_idx = train_test_split(
         all_indices,
         test_size=(1 - train_size),
         random_state=0,
         shuffle=True,
-        stratify=vmax_binned
+        stratify=stratify_key
     )
 
-    # -------------------------------------
-    # 3) Stratify the remaining set (Val/Test)
-    # -------------------------------------
-    vmax_binned_temp = vmax_binned[temp_indices]
-
+    # --------------------------------------------------
+    # 6) Val vs Test split
+    # --------------------------------------------------
+    stratify_temp = stratify_key[np.isin(all_indices, temp_idx)]
     val_rel_size = val_size / (val_size + test_size)
 
-    val_indices, test_indices = train_test_split(
-        temp_indices,
+    val_idx, test_idx = train_test_split(
+        temp_idx,
         test_size=(1 - val_rel_size),
         random_state=0,
         shuffle=True,
-        stratify=vmax_binned_temp
+        stratify=stratify_temp
     )
 
-    print("🎯 Stratified Split — Train:", len(train_indices),
-          "| Val:", len(val_indices),
-          "| Test:", len(test_indices))
+    print(
+        "🎯 Stratified Split — "
+        f"Train: {len(train_idx)} | "
+        f"Val: {len(val_idx)} | "
+        f"Test: {len(test_idx)}"
+    )
 
-    # -------------------------------------
-    # Convert arrays
-    # -------------------------------------
-    X_array = np.array(X_array, dtype=float)
-    sar_array = np.array(sar_array, dtype=float)
+    # --------------------------------------------------
+    # 7) Convert arrays
+    # --------------------------------------------------
+    X_array = np.asarray(X_array, dtype=float)
+    sar_array = np.asarray(sar_array, dtype=float)
+    mask_sar = np.asarray(mask_sar)
 
-    # TRAIN
-    ir_train  = X_array[train_indices]
-    sar_train = sar_array[train_indices]
-    mask_train = mask_sar[train_indices]
-    infos_train = [infos[i] for i in train_indices]
+    # --------------------------------------------------
+    # 8) Build datasets
+    # --------------------------------------------------
+    ir_train   = X_array[train_idx]
+    sar_train  = sar_array[train_idx]
+    mask_train = mask_sar[train_idx]
+    infos_train = [infos[i] for i in train_idx]
 
-    # --- Data augmentation only for train ---
+    ir_val   = X_array[val_idx]
+    sar_val  = sar_array[val_idx]
+    mask_val = mask_sar[val_idx]
+    infos_val = [infos[i] for i in val_idx]
+
+    ir_test   = X_array[test_idx]
+    sar_test  = sar_array[test_idx]
+    mask_test = mask_sar[test_idx]
+    infos_test = [infos[i] for i in test_idx]
+
+    # --------------------------------------------------
+    # 9) Data augmentation (TRAIN ONLY)
+    # --------------------------------------------------
     if augmentation:
         ir_train, sar_train, mask_train, infos_train = data_augmentation(
             ir_train, sar_train, mask_train, infos_train
         )
 
-    # Plot
     plot_metric_scatter(
         true_values=[d["vmax"] for d in infos_train],
         pred_values=[d["analysis_vmax"] for d in infos_train],
@@ -266,13 +318,6 @@ def train_val_test_split(
         xlabel="vmax",
         ylabel="analysis_vmax"
     )
-
-    # VAL
-    ir_val   = X_array[val_indices]
-    sar_val  = sar_array[val_indices]
-    mask_val = mask_sar[val_indices]
-    infos_val = [infos[i] for i in val_indices]
-
     plot_metric_scatter(
         true_values=[d["vmax"] for d in infos_val],
         pred_values=[d["analysis_vmax"] for d in infos_val],
@@ -282,13 +327,16 @@ def train_val_test_split(
         xlabel="vmax",
         ylabel="analysis_vmax"
     )
+    plot_rmax_distribution(
+        infos_train=infos_train,
+        infos_val=infos_val,
+        output_path=target_dir,
+        file_name="analysis_rmax_distribution_train_vs_val.png"
+    )
 
-    # TEST
-    ir_test   = X_array[test_indices]
-    sar_test  = sar_array[test_indices]
-    mask_test = mask_sar[test_indices]
-    infos_test = [infos[i] for i in test_indices]
-
+    # --------------------------------------------------
+    # 10) Return dict (compatible with your pipeline)
+    # --------------------------------------------------
     return {
         "train": (ir_train, sar_train),
         "val":   (ir_val, sar_val),
@@ -298,17 +346,48 @@ def train_val_test_split(
         "mask_sar_val":   mask_val,
         "mask_sar_test":  mask_test,
 
-        "train_index": train_indices,
-        "val_index":   val_indices,
-        "test_index":  test_indices,
+        "train_index": train_idx,
+        "val_index":   val_idx,
+        "test_index":  test_idx,
 
         "infos_train": infos_train,
-        "infos_val": infos_val,
-        "infos_test": infos_test,
+        "infos_val":   infos_val,
+        "infos_test":  infos_test,
     }
 
 
 
+def plot_rmax_distribution(infos_train, infos_val, output_path, file_name):
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    rmax_train = np.array([d["analysis_rmax"] for d in infos_train if d["analysis_rmax"] is not None])
+    rmax_val   = np.array([d["analysis_rmax"] for d in infos_val if d["analysis_rmax"] is not None])
+
+    # Convert to km if needed
+    rmax_train = rmax_train / 1000.0
+    rmax_val   = rmax_val / 1000.0
+
+    plt.figure(figsize=(7, 5))
+
+    plt.hist(
+        rmax_train, bins=30, alpha=0.6,
+        label="Train", color="tab:blue", density=True
+    )
+    plt.hist(
+        rmax_val, bins=30, alpha=0.6,
+        label="Validation", color="tab:orange", density=True
+    )
+
+    plt.xlabel("Analysis Rmax (km)")
+    plt.ylabel("Density")
+    plt.title("Distribution of Analysis Rmax (Train vs Validation)")
+    plt.legend()
+    plt.grid(True, linestyle="--", alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(f"{output_path}/{file_name}", dpi=150)
+    plt.close()
 
 def plot_metric_scatter(
     true_values,            # liste ou array des valeurs vraies

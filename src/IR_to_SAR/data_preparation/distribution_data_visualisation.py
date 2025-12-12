@@ -439,7 +439,7 @@ def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False
     ax.set_ylabel("Predicted Vmax (knots)")
     ax.set_title(f"Vmax Comparison — Epoch {epoch+1} ({set})")
     ax.grid(True, linestyle="--", alpha=0.3)
-    ax.legend()
+    ax.legend(loc="lower right")
 
     # ---------- Error histogram ----------
     ax_hist.hist(errors, bins=40, color="gray", alpha=0.8)
@@ -615,7 +615,6 @@ def compute_mae_metric(sar_true, sar_pred, output_dir, set, epoch, plot=False):
         plt.show()
 
     
-
 def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False):
     """
     Compare Analysis Rmax vs Predicted Rmax (from SAR prediction).
@@ -650,11 +649,9 @@ def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False
         rmax_p = np.nanmean(dist_map[mask]) * 2.0  # pixel → km
         rmax_pred.append(rmax_p)
 
-    # Convert to arrays
     rmax_true = np.array(rmax_true)
     rmax_pred = np.array(rmax_pred)
 
-    # Remove NaNs
     valid = ~np.isnan(rmax_true) & ~np.isnan(rmax_pred)
     rmax_true = rmax_true[valid]
     rmax_pred = rmax_pred[valid]
@@ -667,6 +664,11 @@ def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False
 
     max_true = np.nanmax(rmax_true)
     max_pred = np.nanmax(rmax_pred)
+
+    # ----------- REGRESSION (NEW) -----------
+    coef = np.polyfit(rmax_true, rmax_pred, 1)
+    x_line = np.array([rmax_true.min(), rmax_true.max()])
+    y_line = coef[0] * x_line + coef[1]
 
     # ----------- DENSITY -----------
     xy = np.vstack([rmax_true, rmax_pred])
@@ -683,23 +685,29 @@ def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False
     sc = ax1.scatter(rmax_true, rmax_pred, c=z, cmap="viridis", s=25)
     plt.colorbar(sc, ax=ax1, label="Density")
 
-    # Perfect line
-    min_r = min(rmax_true.min(), rmax_pred.min())
-    max_r = max(rmax_true.max(), rmax_pred.max())
-    ax1.plot([min_r, max_r], [min_r, max_r], 'r--', linewidth=2, label="Perfect prediction")
+    # Perfect line y=x
+    ax1.plot(x_line, x_line, 'r--', linewidth=2, label="Perfect prediction (y=x)")
+
+    # Regression line (NEW)
+    ax1.plot(
+        x_line, y_line, 'b-', linewidth=2,
+        label=f"Regression: y={coef[0]:.2f}x+{coef[1]:.2f}"
+    )
+    ax1.legend(loc="lower right")
 
     ax1.set_title(f"Rmax Comparison — Epoch {epoch+1} ({set})", fontsize=15)
     ax1.set_xlabel("Analysis Rmax (km)")
     ax1.set_ylabel("Predicted Rmax (km)")
     ax1.grid(True, linestyle="--", alpha=0.4)
+    
 
     # Metrics box
     textstr = (
         f"MAE : {MAE:.2f} km\n"
         f"RMSE : {RMSE:.2f} km\n"
         f"Bias : {Bias:.2f} km\n"
-        f"Max Analysis_rmax : {max_true:.1f} km\n"
-        f"Max predicted : {max_pred:.1f} km"
+        f"Max Analysis Rmax : {max_true:.1f} km\n"
+        f"Max Predicted Rmax : {max_pred:.1f} km"
     )
     ax1.text(
         0.05, 0.95, textstr,
@@ -714,7 +722,7 @@ def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False
     # =======================
     ax2 = fig.add_subplot(2, 1, 2)
     ax2.hist(errors, bins=30, color="gray", alpha=0.85)
-    ax2.set_title("Prediction Error Distribution (Pred - Analysis_rmax)")
+    ax2.set_title("Prediction Error Distribution (Pred - Analysis Rmax)")
     ax2.set_xlabel("Error (km)")
     ax2.set_ylabel("Count")
     ax2.grid(True, linestyle="--", alpha=0.4)
@@ -734,6 +742,7 @@ def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False
         "MAE": MAE,
         "RMSE": RMSE,
         "Bias": Bias,
+        "regression_coef": coef, 
     }
 
     
