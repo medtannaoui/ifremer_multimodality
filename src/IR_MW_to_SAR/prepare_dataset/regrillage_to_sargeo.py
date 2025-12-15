@@ -117,7 +117,7 @@ def process_all_colocs(colocs, max_r=300, dxy=2,save=False):
     print(len(out),"colocs regrilled")
     if save : 
         with open("/scale/user/mtannaou/alternance/src/IR_MW_to_SAR/data/ir_mw_sar.pkl","wb") as f:
-            pkl.dump(f)
+            pkl.dump(out,f)
     return out
 
 
