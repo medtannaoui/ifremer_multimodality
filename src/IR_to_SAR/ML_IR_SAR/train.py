@@ -166,7 +166,7 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_gr
         total_loss += loss.item()
         metrics.update(pred_valid*mask, sar_valid*mask)
 
-    return total_loss / len(dataloader), metrics.compute(), l_pix, l_grad, l_radial
+    return total_loss / len(dataloader), metrics.compute(), l_pix.cpu(), l_grad.cpu(), l_radial.cpu()
 
 
 def validate(fabric, model, dataloader, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.0):
@@ -197,7 +197,7 @@ def validate(fabric, model, dataloader, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.
             total_loss += loss.item()
             metrics.update(pred_valid*mask, sar_valid*mask)
 
-    return total_loss / len(dataloader), metrics.compute(), l_pix, l_grad,l_radial
+    return total_loss / len(dataloader), metrics.compute(), l_pix.cpu(), l_grad.cpu(),l_radial.cpu()
 
 
 # =============================
@@ -221,6 +221,7 @@ def custom_collate(batch):
 
 
 def main(cfg: IR_SAR_Config,test=False):
+    import matplotlib.pyplot as plt
     logger.info(f"Starting training with config:\n{cfg.__dict__}")
     stop_training = False
 
@@ -310,7 +311,7 @@ def main(cfg: IR_SAR_Config,test=False):
         in_channels=in_channels,       #
         out_channels=cfg.out_channels
     ).to(fabric.device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate, weight_decay=1e-4)   #add regularisation
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate, weight_decay=1e-3)   #add regularisation
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.num_epochs)
 
@@ -414,6 +415,9 @@ def main(cfg: IR_SAR_Config,test=False):
     history_df = pd.DataFrame({
     "train_loss": train_loss_history,
     "val_loss": val_loss_history,
+    "pix2pix_history": pix2pix_loss_history,
+    "gradient_loss_history" : gradient_loss_history,
+    "radial_loss_history" : radial_loss_history
 
     })
     
@@ -442,8 +446,6 @@ def main(cfg: IR_SAR_Config,test=False):
 
     rad_train = [x[0] for x in radial_loss_history]
     rad_val   = [x[1] for x in radial_loss_history]
-
-    import matplotlib.pyplot as plt
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharex=True)
 
