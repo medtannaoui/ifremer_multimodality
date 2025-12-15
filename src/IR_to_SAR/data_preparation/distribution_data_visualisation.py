@@ -346,32 +346,37 @@ def plot_quadrant_distribution(sar_tensors, ax=None, title = ""):
         )
 
 
-def plot_sar(tensor, ax=None,cmap=cmap_sar,title=None):
+def plot_sar(tensor, ax=None,cmap=cmap_sar,title=None,x_lim=300):
     if ax is None:
         ax = plt.gca()
     
     x_sar,y_sar = np.linspace(-300,300,tensor.shape[0]) , np.linspace(-300,300,tensor.shape[1])
     ax.pcolormesh(x_sar, y_sar, tensor, cmap=cmap)
+    ax.set_xlim(-x_lim,x_lim)
+    ax.set_ylim(-x_lim,x_lim)
     if title is not None:
         ax.set_title(title)
     ax.set_aspect('equal')
 
 
-def plot_ir(tensor,x=None, y=None, ax=None):
+def plot_ir(tensor,x=None, y=None, ax=None,x_lim=300):
     if ax is None : 
         ax=plt.gca()
     
     
     if x is None:
-        x_ir, y_ir = np.linspace(-300,300,tensor.shape[0]) , np.linspace(-300,300,tensor.shape[1])
+       
+        x_ir, y_ir = np.linspace(-1000,1000,tensor.shape[0]) , np.linspace(-1000,1000,tensor.shape[1])
         ax.pcolormesh(x_ir, y_ir , tensor, cmap=cmap_ir, shading="auto")
+        
     else :
         ax.pcolormesh(x, y , tensor, cmap=cmap_ir, shading="auto")
-        ax.set_xlim(-300,300)
-        ax.set_ylim(-300,300)
+    ax.set_xlim(-x_lim,x_lim)
+    ax.set_ylim(-x_lim,x_lim)
+       
     ax.set_aspect('equal')
 
-def plot_mw(tensor, cmap="cividis",x=None, y=None, ax=None):
+def plot_mw(tensor, cmap="cividis",x=None, y=None, ax=None, x_lim=300):
   
     if ax is None:
         ax = plt.gca()
@@ -382,8 +387,8 @@ def plot_mw(tensor, cmap="cividis",x=None, y=None, ax=None):
         ax.pcolormesh(x_mw, y_mw , tensor, cmap="cividis", shading="auto")
     else :
         ax.pcolormesh(x, y , tensor, cmap="cividis", shading="auto")
-        ax.set_xlim(-300,300)
-        ax.set_ylim(-300,300)
+    ax.set_xlim(-x_lim,x_lim)
+    ax.set_ylim(-x_lim,x_lim)
     ax.set_aspect('equal')
     
 

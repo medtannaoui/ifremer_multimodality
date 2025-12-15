@@ -195,7 +195,7 @@ def train_val_test_split(
     test_size=0.15,
     augmentation=True,
     target_dir=None,
-    n_bins=4,
+    n_bins=3,
 ):
    
 

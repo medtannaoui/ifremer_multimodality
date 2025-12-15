@@ -30,6 +30,9 @@ class IR_SAR_Config:
     in_channels : int
     out_channels : int
     input_channels: list[str]
+    w_pix : float
+    w_grad:float
+    w_radial: float
     @staticmethod
     def from_yaml(path: str):
         with open(path, "r") as file:

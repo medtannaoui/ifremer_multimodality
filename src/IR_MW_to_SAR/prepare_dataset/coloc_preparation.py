@@ -32,7 +32,7 @@ CSV_SARGEO_SAR = "/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v4.csv"
 PATH_TCPRIMED = "/scale/project/ifremer-isi-jumeaunumerique/TC_PRIMED_DATASET/v01r01/final"
 PATH_SARGEO   = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v00r00/cyclobs"
 
-OUTPUT_DIR    = "/scale/user/mtannaou/alternance/src/sargeo_primed_colocs"
+OUTPUT_DIR    = "/scale/user/mtannaou/alternance/src/IR_MW_to_SAR/data"
 
 
 # ============================================================
@@ -113,8 +113,8 @@ def create_coloc_primed_sargeo(output_dir=OUTPUT_DIR):
                     
 
                     mw_keys = list(ds_mw.data_vars.keys())[5:]
-                    x_mw = ds_mw["x"]
-                    y_mw = ds_mw["y"]
+                    lat_mw = ds_mw["latitude"]
+                    lon_mw = ds_mw["longitude"]
                     
                    
                     mw_data = {k: ds_mw[k].values for k in mw_keys}
@@ -130,8 +130,8 @@ def create_coloc_primed_sargeo(output_dir=OUTPUT_DIR):
                    
                 
                     
-                    x_ir  = ds_ir["x"].values
-                    y_ir  = ds_ir["y"].values
+                    lon_ir  = ds_ir["longitude"].values
+                    lat_ir  = ds_ir["latitude"].values
 
                 
                 sargeo_base = row["path_sargeo"].split("_ll_gd")[0][:-7]
@@ -186,10 +186,14 @@ def create_coloc_primed_sargeo(output_dir=OUTPUT_DIR):
                         "ir_sargeo": (("channel","ir_sargeo_height", "ir_sargeo_width"), ir_sargeo),
                         "x_sar": (("x_sar",), x_sar),
                         "y_sar": (("y_sar",), y_sar),
-                        "x_mw": (("scan","pixel"),x_mw.values),
-                        "y_mw":(("scan","pixel"),y_mw.values),
-                        "x_ir_primed":(("scan_ir","pixel_ir"),x_ir),
-                        "y_ir_primed":(("scan_ir","pixel_ir"),y_ir),
+                        "lat_mw": (("scan","pixel"),lat_mw.values),
+                        "lon_mw":(("scan","pixel"),lon_mw.values),
+                        "x_mw":(("scan","pixel"),ds_mw["x"].values),
+                        "y_mw":(("scan","pixel"),ds_mw["y"].values),
+                        "x_ir":(("scan_ir","pixel_ir"),ds_ir["x"].values),
+                        "y_ir":(("scan_ir","pixel_ir"),ds_ir["y"].values),
+                        "lon_ir_primed":(("scan_ir","pixel_ir"),lon_ir),
+                        "lat_ir_primed":(("scan_ir","pixel_ir"),lat_ir),
                         "lon_centre": ((), lon_centre.values[0]),
                         "lat_centre": ((), lat_centre.values[0]),
                         "eye_center_lat": ((), eye_center_lat.values[0]),
@@ -220,8 +224,8 @@ def create_coloc_primed_sargeo(output_dir=OUTPUT_DIR):
                 print("❌ Erreur sur un triplet :", e)
                 continue
         
-        if idx == 30 : 
-            break
+        # if idx == 50 : 
+        #     break
         
         
 

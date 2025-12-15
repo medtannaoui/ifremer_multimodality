@@ -131,10 +131,11 @@ class PairedDataset(Dataset):
 # =============================
 # 🧠 2) Train / Validate functions
 # =============================
-def train_one_epoch(fabric, model, dataloader, optimizer, metrics):
+def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.0):
     model.train()
     total_loss = 0
     metrics.reset()
+    
 
     for x, sar, mask, _ in tqdm(dataloader, desc="Training"):
         x, sar, mask= x.to(fabric.device), sar.to(fabric.device), mask.to(fabric.device)
@@ -145,10 +146,12 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics):
         sar_valid = sar.nan_to_num()
         pred_valid = pred
 
-        loss = combined_sar_loss(sar_valid,pred_valid,mask,
-                                 w_pix=0.4,
-                                 w_grad=0.3,
-                                 w_radial=0.3)
+        loss,l_pix,l_grad,l_radial = combined_sar_loss(sar_valid,pred_valid,mask,
+                                 w_pix=w_pix,
+                                 w_grad=w_grad,
+                                 w_radial=w_radial)
+        
+        
         if sar_valid.ndim == 3:
             sar_valid = sar_valid.unsqueeze(1)
 
@@ -163,10 +166,10 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics):
         total_loss += loss.item()
         metrics.update(pred_valid*mask, sar_valid*mask)
 
-    return total_loss / len(dataloader), metrics.compute()
+    return total_loss / len(dataloader), metrics.compute(), l_pix, l_grad, l_radial
 
 
-def validate(fabric, model, dataloader, metrics):
+def validate(fabric, model, dataloader, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.0):
     model.eval()
     total_loss = 0
     metrics.reset()
@@ -181,10 +184,11 @@ def validate(fabric, model, dataloader, metrics):
             sar_valid = sar.nan_to_num()
             pred_valid = pred
 
-            loss = combined_sar_loss(sar_valid,pred_valid,mask,
-                                     w_pix=0.4,
-                                     w_grad=0.3,
-                                     w_radial=0.3)
+            loss,l_pix,l_grad,l_radial = combined_sar_loss(sar_valid,pred_valid,mask,
+                                     w_pix=w_pix,
+                                     w_grad=w_grad,
+                                     w_radial=w_radial)
+            
             if sar_valid.ndim == 3:
                 sar_valid = sar_valid.unsqueeze(1)
 
@@ -193,7 +197,7 @@ def validate(fabric, model, dataloader, metrics):
             total_loss += loss.item()
             metrics.update(pred_valid*mask, sar_valid*mask)
 
-    return total_loss / len(dataloader), metrics.compute()
+    return total_loss / len(dataloader), metrics.compute(), l_pix, l_grad,l_radial
 
 
 # =============================
@@ -284,7 +288,8 @@ def main(cfg: IR_SAR_Config,test=False):
                 start_epoch=cfg.start_epoch,    
                 mask_train = dictio["mask_sar_train"],
                 mask_val = full_data.dataset.mask_sar[dictio["val_index"]],
-                infos = full_data.dataset.infos
+                infos = full_data.dataset.infos,
+                target_dir = target_dir
             )
         ],
     )
@@ -316,16 +321,29 @@ def main(cfg: IR_SAR_Config,test=False):
     # --- Training Loop ---
     train_loss_history = []
     val_loss_history = []
+    pix2pix_loss_history = []
+    gradient_loss_history = []
+    radial_loss_history = []
     for epoch in range(cfg.num_epochs):
         logger.info(f"===== Epoch {epoch+1}/{cfg.num_epochs} =====")
         
-        train_loss, train_metrics = train_one_epoch(fabric, model, train_loader, optimizer, metrics)
-        val_loss, val_metrics = validate(fabric, model, val_loader, metrics)
+        train_loss, train_metrics,l_pix, l_grad, l_radial = train_one_epoch(fabric, model, train_loader, optimizer, metrics,
+                                                    w_pix=cfg.w_pix,
+                                                    w_grad=cfg.w_grad,
+                                                    w_radial=cfg.w_radial)
+        val_loss, val_metrics, l_pix_val,l_grad_val, l_radial_val = validate(fabric, model, val_loader, metrics,
+                                         w_pix=cfg.w_pix,
+                                         w_grad=cfg.w_grad,
+                                         w_radial=cfg.w_radial)
 
         # torch.cuda.empty_cache()
         # gc.collect()
         train_loss_history.append(train_loss)
         val_loss_history.append(val_loss)
+        pix2pix_loss_history.append((l_pix,l_pix_val))
+        gradient_loss_history.append((l_grad,l_grad_val))
+        radial_loss_history.append((l_radial,l_radial_val))
+
 
         scheduler.step()
 
@@ -353,8 +371,12 @@ def main(cfg: IR_SAR_Config,test=False):
 
         fabric.print(
             f"📊 Epoch {epoch+1}: Train Loss={train_loss:.6f}, "
-            f"Val Loss={val_loss:.6f}, "
+            
             f"LR={scheduler.get_last_lr()[0]:.6f}, "
+            f"pix2pix loss={l_pix.item():.6f},  "
+            f"gradient loss={l_grad.item():.6f},  "
+            f"radial loss={l_radial.item():.6f}  "
+            f"Val Loss={val_loss:.6f},  "
             # f"Train metrics={train_metrics}, Val metrics={val_metrics}"
         )
         torch.cuda.empty_cache()
@@ -391,7 +413,8 @@ def main(cfg: IR_SAR_Config,test=False):
 
     history_df = pd.DataFrame({
     "train_loss": train_loss_history,
-    "val_loss": val_loss_history
+    "val_loss": val_loss_history,
+
     })
     
 
@@ -407,10 +430,54 @@ def main(cfg: IR_SAR_Config,test=False):
     plt.ylabel("Loss")
     plt.title("Training and Validation Loss")
     plt.legend()
-
     plot_path = os.path.join(target_dir, "loss_history.png")
     plt.savefig(plot_path)
     plt.close()
+    #3 losses 
+    pix_train = [x[0] for x in pix2pix_loss_history]
+    pix_val   = [x[1] for x in pix2pix_loss_history]
+
+    grad_train = [x[0] for x in gradient_loss_history]
+    grad_val   = [x[1] for x in gradient_loss_history]
+
+    rad_train = [x[0] for x in radial_loss_history]
+    rad_val   = [x[1] for x in radial_loss_history]
+
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharex=True)
+
+    # --- Pix2Pix ---
+    axes[0].plot(pix_train, label="Train")
+    axes[0].plot(pix_val, label="Val")
+    axes[0].set_title("Pix2Pix Loss")
+    axes[0].set_xlabel("Epoch")
+    axes[0].set_ylabel("Loss")
+    axes[0].legend()
+    axes[0].grid(True)
+
+    # --- Gradient ---
+    axes[1].plot(grad_train, label="Train")
+    axes[1].plot(grad_val, label="Val")
+    axes[1].set_title("Gradient Loss")
+    axes[1].set_xlabel("Epoch")
+    axes[1].legend()
+    axes[1].grid(True)
+
+    # --- Radial ---
+    axes[2].plot(rad_train, label="Train")
+    axes[2].plot(rad_val, label="Val")
+    axes[2].set_title("Radial Loss (Vmax)")
+    axes[2].set_xlabel("Epoch")
+    axes[2].legend()
+    axes[2].grid(True)
+
+    plt.suptitle("Loss Components Evolution", fontsize=14)
+    plt.tight_layout()
+    plot_path = os.path.join(target_dir, "3_losses_history.png")
+    plt.savefig(plot_path)
+    plt.close()
+
 
     
     

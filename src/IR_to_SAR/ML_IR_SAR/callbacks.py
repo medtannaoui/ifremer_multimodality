@@ -67,10 +67,11 @@ class LogValidationSamples:
 
     def __init__(self, base_dir, mean_X, std_X, mean_sar, std_sar, norm,
              num_samples=4, start_epoch=20, every_n_epochs=1,
-             cmap_ir="gray", cmap_sar="viridis", num_epochs=0, infos=None, distance_km=None, mask_train=None, mask_val = None):
+             cmap_ir="gray", cmap_sar="viridis", num_epochs=0, infos=None, distance_km=None, mask_train=None, mask_val = None,target_dir = None):
 
         self.base_dir = Path(base_dir)
-        self.output_dir = self._create_unique_dir(self.base_dir)
+        # self.output_dir = self._create_unique_dir(self.base_dir)
+        self.output_dir = target_dir
 
         self.num_samples = num_samples
         self.start_epoch = start_epoch

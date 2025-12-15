@@ -120,7 +120,7 @@ def combined_sar_loss(
     loss = 0.0
     loss_dict = {}
 
-
+    sum = w_pix+w_grad+w_radial
     if w_pix > 0:
         l_pix = pix2pix_l1_loss(sar_valid, pred_valid, mask)
         loss += w_pix * l_pix
@@ -140,9 +140,9 @@ def combined_sar_loss(
         )
         loss += w_radial * l_radial
         loss_dict["loss_radial"] = l_radial.detach()
-
+    loss /= sum
     loss_dict["loss_total"] = loss.detach()
 
-    return loss
+    return loss, l_pix.detach(),l_grad.detach(),l_radial.detach()
 
        
