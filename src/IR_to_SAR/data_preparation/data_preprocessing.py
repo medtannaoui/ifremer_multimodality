@@ -169,6 +169,58 @@ def z_score(tensor, eps = 1e-10):
     normalized_tensor = (tensor - mean_value)/(std_value + eps)
 
     return normalized_tensor, mean_value, std_value
+            
+
+def annular_normalization(
+            images,
+            bin_size=1,
+            mask=None
+        ):
+            N, H, W = images.shape
+            cx,cy = H//2, W//2
+            y, x = np.indices((H, W))    # y : same line has the same value x : same column have the same value
+            radius = np.sqrt((y - cy)**2 + (x - cx)**2)
+            radial_bins = (radius // bin_size).astype(np.int32)
+            n_bins = radial_bins.max() + 1
+            if mask is None:
+                mask = np.isfinite(images)
+            mean = np.zeros(n_bins)
+            std = np.ones(n_bins)
+            for b in range(n_bins):
+                pixels = images[:, radial_bins == b][mask[:, radial_bins == b]]
+                if pixels.size > 0:
+                    mean[b] = pixels.mean()
+                    std[b] = pixels.std()
+            images_norm = images.copy()
+            for b in range(n_bins):
+                m, s = mean[b], std[b]
+                images_norm[:, radial_bins == b] = (
+                    images_norm[:, radial_bins == b] - m
+                ) / s
+            stats = {
+                "mean": mean,
+                "std": std
+            }
+            return images_norm, stats
+
+def annular_denormalization(
+            images_norm,
+            stats,
+            bin_size=1
+        ):
+            N, H, W = images_norm.shape
+            cx, cy = H // 2, W // 2
+            y, x = np.indices((H, W))
+            radius = np.sqrt((y - cy)**2 + (x - cx)**2)
+            radial_bins = (radius // bin_size).astype(np.int32)
+            mean = stats["mean"]
+            std = stats["std"]
+            images = images_norm.copy()
+            for b in range(len(mean)):
+                images[:, radial_bins == b] = (
+                    images[:, radial_bins == b] * std[b]
+                ) + mean[b]
+            return images
 
 
 
@@ -372,15 +424,15 @@ def plot_rmax_distribution(infos_train, infos_val, output_path, file_name):
 
     plt.hist(
         rmax_train, bins=30, alpha=0.6,
-        label="Train", color="tab:blue", density=True
+        label="Train", color="tab:blue", density=False
     )
     plt.hist(
         rmax_val, bins=30, alpha=0.6,
-        label="Validation", color="tab:orange", density=True
+        label="Validation", color="tab:orange", density=False
     )
 
     plt.xlabel("Analysis Rmax (km)")
-    plt.ylabel("Density")
+    plt.ylabel("Count")
     plt.title("Distribution of Analysis Rmax (Train vs Validation)")
     plt.legend()
     plt.grid(True, linestyle="--", alpha=0.3)
@@ -702,43 +754,6 @@ def augmentation_sar_safe(ir, sar, mask, angle=None, flip=None):
     )
 
 
-def realistic_cyclone_augmentation(ir, sar):
-    """
-    ir : numpy array (H,W) or (1,H,W)
-    sar : numpy array (H,W)
-    """
-    # 1️⃣ Convertir numpy → Tensor (C,H,W)
-    if isinstance(ir, np.ndarray):
-        ir = torch.tensor(ir, dtype=torch.float32)
-    if isinstance(sar, np.ndarray):
-        sar = torch.tensor(sar, dtype=torch.float32)
-
-    if ir.ndim == 2:  # (H,W) → (1,H,W)
-        ir = ir.unsqueeze(0)
-    if sar.ndim == 2:
-        sar = sar.unsqueeze(0)
-
-    transforms = T.Compose([
-        T.RandomResizedCrop(256, scale=(0.8, 1.0)),
-        T.RandomHorizontalFlip(),
-        T.RandomVerticalFlip(),
-    ])
-
-    # 2️⃣ Appliquer les mêmes transformations aux deux images
-    seed = np.random.randint(0, 100000)
-
-    torch.manual_seed(seed)
-    ir_aug = transforms(ir)
-
-    torch.manual_seed(seed)
-    sar_aug = transforms(sar)
-
-    # 3️⃣ Retour numpy (H,W)
-    ir_aug = ir_aug.squeeze(0).numpy()
-    sar_aug = sar_aug.squeeze(0).numpy()
-
-    return ir_aug, sar_aug
-
 
 def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
     
@@ -754,16 +769,17 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
 
         # rotations
         
-        if np.nanmax(np.array(inf["analysis_vmax"])) > 40:
-            for angle in [180, 90, 270]:
+        if np.nanmax(np.array(inf["analysis_vmax"])) > 50:
+            for angle in [180,90,270]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
                 ir_aug.append(ir_r)
                 sar_aug.append(sar_r)
                 mask_aug.append(mask_r)
                 infos_aug.append(inf)
-        else : 
-            for angle in [180]:
-                ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
+        # print(np.nanmax(np.array(inf["analysis_rmax"])))
+        if np.nanmax(np.array(inf["analysis_rmax"])) > 50000: 
+            for angle in [180,270,90]:
+                ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip="v")
                 ir_aug.append(ir_r)
                 sar_aug.append(sar_r)
                 mask_aug.append(mask_r)

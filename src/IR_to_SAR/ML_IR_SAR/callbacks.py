@@ -180,17 +180,47 @@ class LogValidationSamples:
             return t * (std + 1e-10) + mean
             # return std + t*(1e-10 + mean  -std)
 
-        # On ne visualise que le canal IRWIN (canal 0)
-        ir = x[:, 0:1, :, :]
+        def annular_denormalization(
+            images_norm,
+            stats,
+            bin_size=1
+        ):
+            N, H, W = images_norm.shape
+            cx, cy = H // 2, W // 2
+            y, x = np.indices((H, W))
+            radius = np.sqrt((y - cy)**2 + (x - cx)**2)
+            radial_bins = (radius // bin_size).astype(np.int32)
+            mean = stats["mean"]
+            std = stats["std"]
+            images = images_norm.copy()
+            for b in range(len(mean)):
+                images[:, radial_bins == b] = (
+                    images[:, radial_bins == b] * std[b]
+                ) + mean[b]
+            return images
 
-        ir_denorm   = denorm(ir,  self.mean_X[0],   self.std_X[0])
-        sar_denorm  = denorm(sar, self.mean_sar,    self.std_sar)
-        pred_denorm = denorm(pred, self.mean_sar,   self.std_sar)
+
+
+        # On ne visualise que le canal IRWIN (canal 0)
+        ir = x[:, 0 :, :]
+        ir = ir.squeeze().cpu().numpy()
+        sar = sar.squeeze().cpu().numpy()
+        pred = pred.squeeze().cpu().numpy()
+        
+        if self.norm == "z_score":
+            ir_denorm   = denorm(ir,  self.mean_X[0],   self.std_X[0])
+            sar_denorm  = denorm(sar, self.mean_sar,    self.std_sar)
+            pred_denorm = denorm(pred, self.mean_sar,   self.std_sar)
+        elif self.norm == "annular" :
+            
+            ir_denorm = annular_denormalization(ir,stats={"mean": self.mean_X[0],"std":  self.std_X[0]})
+            sar_denorm = annular_denormalization(sar, stats={"mean": self.mean_sar,"std":  self.std_sar} )
+            pred_denorm = annular_denormalization(pred, stats={"mean": self.mean_sar,"std":  self.std_sar})
 
         # Conversion numpy
-        ir_np   = ir_denorm.squeeze(1).cpu().numpy()
-        sar_np  = sar_denorm.squeeze(1).cpu().numpy()
-        pred_np = pred_denorm.squeeze(1).cpu().numpy()
+        ir_np   = ir_denorm
+        sar_np  = sar_denorm
+        pred_np = pred_denorm
         if isinstance(mask, torch.Tensor):
             mask_np = mask.cpu().numpy()
 
@@ -206,8 +236,8 @@ class LogValidationSamples:
         # ------------------------------------------------------------
         os.makedirs(os.path.join(self.output_dir, "samples", set), exist_ok=True)
         # Convert to numpy
-        sar_all  = sar_denorm.cpu().numpy().flatten()
-        pred_all = pred_denorm.cpu().numpy().flatten()
+        sar_all  = sar_denorm.flatten()
+        pred_all = pred_denorm.flatten()
         mask_all = mask_np.flatten()
 
         valid = mask_all == 1
@@ -231,8 +261,8 @@ class LogValidationSamples:
         # =================================================
         # 2) Vmax & radial → PAS de flatten (2D + masque)
         # =================================================
-        sar_2d  = sar_denorm.squeeze(1).cpu().numpy()    # (B, H, W)
-        pred_2d = pred_denorm.squeeze(1).cpu().numpy()  # (B, H, W)
+        sar_2d  = sar_denorm   # (B, H, W)
+        pred_2d = pred_denorm # (B, H, W)
         mask_2d = mask_np                                # (B, H, W)
 
         # Conversion en knots

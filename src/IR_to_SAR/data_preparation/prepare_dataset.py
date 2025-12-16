@@ -67,6 +67,9 @@ class PrepareDataSet():
         #     irwin = irwin_all[:, i, :, :]      # (N, H, W)  # add multiple irs
         #     image_channels.append(irwin)
         image_channels.append(irwin_all[:,4,:,:])
+        # image_channels.append(np.gradient(irwin_all[:,4,:,:])[0])
+        # image_channels.append(np.gradient(irwin_all[:,4,:,:])[1])
+
         # image_channels.append(np.nanmean(irwin_all,axis=1)) #mean of th nine irs
 
         if input_channels is not None:
@@ -147,6 +150,12 @@ class PrepareDataSet():
         #  Normalization for SAR (always continuous) ===
         if norm == "z_score":
             self.sar, self.mean_sar, self.std_sar = dataprep.z_score(self.sar)
+
+        elif norm == "annular":
+            self.sar,stats = dataprep.annular_normalization(self.sar,bin_size=1,mask=None)
+            self.mean_sar = stats["mean"]
+            self.std_sar = stats["std"]
+                    
         else:
             self.sar, self.min_sar, self.max_sar = dataprep.min_max(self.sar)
 
@@ -169,11 +178,17 @@ class PrepareDataSet():
                     self.X[:, c, :, :] = norm_data
                     self.mean_X[c] = mean_val
                     self.std_X[c] = std_val
-                else:  # Min-max normalization
+                elif norm =="minmax":  # Min-max normalization
                     norm_data, min_val, max_val = dataprep.min_max(channel_data)
                     self.X[:, c, :, :] = norm_data
                     self.min_X[c] = min_val
                     self.max_X[c] = max_val
+                elif norm == "annular":
+                    norm_data,stats = dataprep.annular_normalization(channel_data,bin_size=1)
+                    self.X[:,c,:,:] = norm_data
+                    self.mean_X[c] = stats["mean"]
+                    self.std_X[c] = stats["std"]
+                
 
                
 

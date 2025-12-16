@@ -359,7 +359,7 @@ def plot_sar(tensor, ax=None,cmap=cmap_sar,title=None,x_lim=300):
     ax.set_aspect('equal')
 
 
-def plot_ir(tensor,x=None, y=None, ax=None,x_lim=300):
+def plot_ir(tensor,x=None, y=None, ax=None,x_lim=300,cmap=cmap_ir):
     if ax is None : 
         ax=plt.gca()
     
