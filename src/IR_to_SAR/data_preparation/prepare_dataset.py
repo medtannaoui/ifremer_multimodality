@@ -24,7 +24,14 @@ class PrepareDataSet():
                   size=256, 
                   norm="z_score", 
                   drop_nan_100=True,
+                  train_split=None,val_split=None,test_split=None,augmentation=False,target_dir = None
                  ):
+        self.train_split = train_split
+        self.val_split=val_split
+        self.test_split=test_split
+        self.augmentation=augmentation
+        self.target_dir=target_dir
+        
 
         print("🔹 Loading PKL data...")
         with open(pkl_file, "rb") as f:
@@ -147,14 +154,35 @@ class PrepareDataSet():
         self.X = np.nan_to_num(self.X, nan=0.0, posinf=0.0, neginf=0.0)
         self.sar = np.nan_to_num(self.sar, nan=0.0, posinf=0.0, neginf=0.0)
 
+        # --- Split ---
+        self.dictio = dataprep.train_val_test_split(
+            np.array(self.X), np.array(self.sar),
+            train_size=self.train_split,
+            val_size=self.val_split,
+            test_size=self.test_split,
+            augmentation=self.augmentation,
+            mask_sar = self.mask_sar,
+            infos = self.infos,
+            target_dir=self.target_dir
+        )
+
+
+        #"substract mean radial profil "
+        self.sar_train,self.radial_profil = dataprep.subtract_radial_mean(self.dictio["train"][1],bin_size=1)
+        self.sar_val, _ = dataprep.subtract_radial_mean(self.dictio["val"][1],radial_profil=self.radial_profil)
+        self.sar_test, _ = dataprep.subtract_radial_mean(self.dictio["test"][1],radial_profil=self.radial_profil)
         #  Normalization for SAR (always continuous) ===
         if norm == "z_score":
-            self.sar, self.mean_sar, self.std_sar = dataprep.z_score(self.sar)
+            self.sar_train, self.mean_sar, self.std_sar = dataprep.z_score(self.sar_train)
+            self.sar_val,_,_  = dataprep.z_score(self.sar_val,mean_value=self.mean_sar,std_value=self.std_sar)
+            self.sar_test,_,_  = dataprep.z_score(self.sar_test,mean_value=self.mean_sar,std_value=self.std_sar)
 
         elif norm == "annular":
-            self.sar,stats = dataprep.annular_normalization(self.sar,bin_size=1,mask=None)
+            self.sar_train,stats = dataprep.annular_normalization(self.sar_train,bin_size=1,mask=None)
             self.mean_sar = stats["mean"]
             self.std_sar = stats["std"]
+            self.sar_val,_ = dataprep.annular_normalization(self.sar_val,bin_size=1,mask=None,stats=stats)
+            self.sar_test,_ = dataprep.annular_normalization(self.sar_test,mask=None,stats=stats)
                     
         else:
             self.sar, self.min_sar, self.max_sar = dataprep.min_max(self.sar)
@@ -166,34 +194,67 @@ class PrepareDataSet():
         self.std_X = {}
         self.min_X = {}
         self.max_X = {}
+        X_train = self.dictio["train"][0]   # shape (N, C, H, W)
+        X_val   = self.dictio["val"][0]
+        X_test  = self.dictio["test"][0]
+
+        # Initialisation
+        self.X_train = X_train.copy()
+        self.X_val   = X_val.copy()
+        self.X_test  = X_test.copy()
 
         C = self.X.shape[1]  # number of channels
         for c in range(C):
-            channel_data = self.X[:, c, :, :]
+            channel_data = self.dictio["train"][0][:,c,:,:]
             unique_vals = np.unique(channel_data)
 
-            if len(unique_vals) > 20:   # Continuous channel → normalize
-                if norm == "z_score":
+            if np.nanstd(channel_data) > 1e-6:   # Continuous channel → normalize
+                if True:
                     norm_data, mean_val, std_val = dataprep.z_score(channel_data)
-                    self.X[:, c, :, :] = norm_data
+                    self.X_train[:, c, :, :] = norm_data
                     self.mean_X[c] = mean_val
                     self.std_X[c] = std_val
-                elif norm =="minmax":  # Min-max normalization
-                    norm_data, min_val, max_val = dataprep.min_max(channel_data)
-                    self.X[:, c, :, :] = norm_data
-                    self.min_X[c] = min_val
-                    self.max_X[c] = max_val
-                elif norm == "annular":
-                    norm_data,stats = dataprep.annular_normalization(channel_data,bin_size=1)
-                    self.X[:,c,:,:] = norm_data
-                    self.mean_X[c] = stats["mean"]
-                    self.std_X[c] = stats["std"]
+                # elif norm =="minmax":  # Min-max normalization
+                #     norm_data, min_val, max_val = dataprep.min_max(channel_data)
+                #     self.X_train[:, c, :, :] = norm_data
+                #     self.min_X[c] = min_val
+                #     self.max_X[c] = max_val
+                # elif norm == "annular":
+                #     norm_data,stats = dataprep.annular_normalization(channel_data,bin_size=1)
+                #     self.X_train[:,c,:,:] = norm_data
+                #     self.mean_X[c] = stats["mean"]
+                #     self.std_X[c] = stats["std"]
+        for set in ["val","test"]:
+            for c in range(C):
+                channel_data = self.dictio[set][0][:,c,:,:]
+                unique_vals = np.unique(channel_data)
+
+                if np.nanstd(channel_data) > 1e-8:   # Continuous channel → normalize
+                    if True:
+                        norm_data, mean_val, std_val = dataprep.z_score(channel_data,mean_value=self.mean_X[c],std_value=self.std_X[c])
+                        if set =="val":
+                            self.X_val[:, c, :, :] = norm_data
+                        else : 
+                            self.X_test[:,c,:,:]=norm_data
+                        
+                    # elif norm =="minmax":  # Min-max normalization
+                    #     norm_data, min_val, max_val = dataprep.min_max(channel_data)
+                    #     self.X_train[:, c, :, :] = norm_data
+                    #     self.min_X[c] = min_val
+                    #     self.max_X[c] = max_val
+                    # elif norm == "annular":
+                    #     norm_data,stats = dataprep.annular_normalization(channel_data,bin_size=1,mean_value=self.mean_X[c],std_value=self.std_X[c])
+                    #     if set =="val":
+                    #         self.X_val[:, c, :, :] = norm_data
+                    #     else : 
+                    #         self.X_test[:,c,:,:]=norm_data
+                        
                 
 
                
 
-            else:
-                print(f"⏭️ Skipped channel {c} — only {len(unique_vals)} unique values (categorical)")
+                else:
+                    print(f"⏭️ Skipped channel {c} — only {len(unique_vals)} unique values (categorical)")
 
         
         print("🔍 Final X shape:", self.X.shape)  # (N, C, size, size)

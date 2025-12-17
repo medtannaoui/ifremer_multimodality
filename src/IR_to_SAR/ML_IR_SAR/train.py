@@ -82,16 +82,16 @@ class IRSARDataset(Dataset):
     SAR shape: (N, H_ir, W_ir)
     """
     def __init__(self,test=False,size=256, norm = "z_score", barycenter = "no" ,augmentation = False, drop_nan_100 = True,input_channels=None,
-                 data_path=None):
+                 data_path=None,train_split=None,val_split=None,test_split=None,target_dir = None):
         self.norm = norm
         
         dataset = prep_dataset.PrepareDataSet(size=size, norm= norm, barycenter= barycenter, drop_nan_100=drop_nan_100,input_channels=input_channels,
-                                              pkl_file=data_path)
-        self.X = dataset.X
-        self.sar = dataset.sar   
+                                              pkl_file=data_path,train_split=train_split,val_split=val_split,test_split=test_split,
+                                              augmentation=augmentation,target_dir = target_dir)
+         
         self.dataset = dataset     
         print("Data preparation finished")
-        print(self.X.shape, np.expand_dims(self.sar, axis=1).shape)
+        # print(self.X.shape, np.expand_dims(self.sar, axis=1).shape)
 
     def __len__(self):    #number of observations
         return len(self.X)
@@ -239,8 +239,9 @@ def main(cfg: IR_SAR_Config,test=False):
     
     full_data = IRSARDataset(test=test, size=cfg.img_size, norm=cfg.norm, barycenter=cfg.barycenter, drop_nan_100=cfg.drop_nan_sar,
                              input_channels=cfg.input_channels,
-                             data_path = cfg.data_path)
-    X_all, sar_all = full_data.dataset.X, full_data.dataset.sar
+                             data_path = cfg.data_path,
+                             train_split=cfg.train_split,val_split=cfg.val_split,test_split=cfg.test_split,target_dir = target_dir,augmentation=cfg.augmentation)
+    # X_all, sar_all = full_data.dataset.X, full_data.dataset.sar
 
     if cfg.barycenter == "yes" : 
         dx = full_data.dataset.dx_sar
@@ -248,20 +249,10 @@ def main(cfg: IR_SAR_Config,test=False):
 
     
     
-    # --- Split ---
-    dictio = dataprep.train_val_test_split(
-        np.array(X_all), np.array(sar_all),
-        train_size=cfg.train_split,
-        val_size=cfg.val_split,
-        test_size=cfg.test_split,
-        augmentation=cfg.augmentation,
-        mask_sar = full_data.dataset.mask_sar,
-        infos = full_data.dataset.infos,
-        target_dir=target_dir
-    )
     
-    train_ds = PairedDataset(*dictio["train"],dictio["mask_sar_train"], dictio["infos_train"])  #X (multi-channel input), SAR target
-    val_ds   = PairedDataset(*dictio["val"],dictio["mask_sar_val"], dictio["infos_val"])
+    
+    train_ds = PairedDataset(*(full_data.dataset.X_train,full_data.dataset.sar_train),full_data.dataset.dictio["mask_sar_train"], full_data.dataset.dictio["infos_train"])  #X (multi-channel input), SAR target
+    val_ds   = PairedDataset(*(full_data.dataset.X_val,full_data.dataset.sar_val),full_data.dataset.dictio["mask_sar_val"], full_data.dataset.dictio["infos_val"])
 
     train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, collate_fn=custom_collate)
     val_loader   = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=custom_collate)
@@ -287,16 +278,16 @@ def main(cfg: IR_SAR_Config,test=False):
                 cmap_ir=cmap_ir,
                 cmap_sar=cmap_sar,
                 start_epoch=cfg.start_epoch,    
-                mask_train = dictio["mask_sar_train"],
-                mask_val = full_data.dataset.mask_sar[dictio["val_index"]],
+                mask_train = full_data.dataset.dictio["mask_sar_train"],
+                mask_val = full_data.dataset.mask_sar[full_data.dataset.dictio["val_index"]],
                 infos = full_data.dataset.infos,
                 target_dir = target_dir,
-                radial_mean = dictio["radial_mean"]
+                radial_mean = full_data.dataset.radial_profil
             )
         ],
     )
     fabric.launch()
-    dataprep.visualize_dataset_statistics(dictio,target_dir,full_data.dataset.mask_sar)
+    dataprep.visualize_dataset_statistics(full_data.dataset.dictio,target_dir,full_data.dataset.mask_sar)
 
     # --- Metrics ---
     metrics = torchmetrics.MetricCollection({

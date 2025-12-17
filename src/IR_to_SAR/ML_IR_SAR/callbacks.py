@@ -90,7 +90,7 @@ class LogValidationSamples:
         self.mask_val = mask_val
         self.num_epochs = num_epochs
         self.infos = infos
-        self.radial_mean = radial_mean
+        self.radial_profil = radial_mean
         
 
 
@@ -242,9 +242,12 @@ class LogValidationSamples:
             pred_denorm = denorm(pred, self.mean_sar,   self.std_sar)
         elif self.norm == "annular" :
             
-            ir_denorm = annular_denormalization(ir,stats={"mean": self.mean_X[0],"std":  self.std_X[0]})
+            ir_denorm = denorm(ir,mean=self.mean_X[0],std=self.std_X[0])
             sar_denorm = annular_denormalization(sar, stats={"mean": self.mean_sar,"std":  self.std_sar} )
             pred_denorm = annular_denormalization(pred, stats={"mean": self.mean_sar,"std":  self.std_sar})
+        
+        sar_denorm = add_radial_mean(sar_denorm,self.radial_profil)
+        pred_denorm = add_radial_mean(pred_denorm,self.radial_profil)
 
         # Conversion numpy
         ir_np   = ir_denorm

@@ -162,9 +162,10 @@ def min_max(tensor, eps = 1e-10):
 
     return normalized_tensor, min_val, max_val
 
-def z_score(tensor, eps = 1e-10):
-    mean_value = np.mean(tensor)
-    std_value = np.std(tensor)
+def z_score(tensor, eps = 1e-10,mean_value=None,std_value=None):
+    if mean_value is None:
+        mean_value = np.mean(tensor)
+        std_value = np.std(tensor)
 
     normalized_tensor = (tensor - mean_value)/(std_value + eps)
 
@@ -174,7 +175,8 @@ def z_score(tensor, eps = 1e-10):
 def annular_normalization(
             images,
             bin_size=1,
-            mask=None
+            mask=None,
+            stats=None
         ):
             N, H, W = images.shape
             cx,cy = H//2, W//2
@@ -184,13 +186,18 @@ def annular_normalization(
             n_bins = radial_bins.max() + 1
             if mask is None:
                 mask = np.isfinite(images)
-            mean = np.zeros(n_bins)
-            std = np.ones(n_bins)
-            for b in range(n_bins):
-                pixels = images[:, radial_bins == b][mask[:, radial_bins == b]]
-                if pixels.size > 0:
-                    mean[b] = np.median(pixels)   #pixels.mean()
-                    std[b] = np.percentile(pixels,75)-np.percentile(pixels,25)        #pixels.std()
+            
+            if stats is None:
+                mean = np.zeros(n_bins)
+                std = np.ones(n_bins)
+                for b in range(n_bins):
+                    pixels = images[:, radial_bins == b][mask[:, radial_bins == b]]
+                    if pixels.size > 0:
+                        mean[b] = pixels.mean()   #np.median(pixels)
+                        std[b] =  pixels.std()    #np.percentile(pixels,75)-np.percentile(pixels,25) 
+            else:
+                mean = stats["mean"]
+                std = stats["std"]
             images_norm = images.copy()
             for b in range(n_bins):
                 m, s = mean[b], std[b]
@@ -226,8 +233,9 @@ def annular_denormalization(
 def subtract_radial_mean(
     images, 
     bin_size=1, 
-    use_median=True, 
-    mask=None
+    use_median=False, 
+    mask=None,
+    radial_profil = None
 ):
    
     N, H, W = images.shape
@@ -241,15 +249,17 @@ def subtract_radial_mean(
 
     if mask is None:
         mask = np.isfinite(images)
-
-    radial_profile = np.zeros(n_bins)
-    for b in range(n_bins):
-        pixels = images[:, radial_bins == b][mask[:, radial_bins == b]]
-        if pixels.size > 0:
-            if use_median:
-                radial_profile[b] = np.median(pixels)
-            else:
-                radial_profile[b] = np.mean(pixels)
+    radial_profile = radial_profil
+    if radial_profil is None:
+        radial_profile = np.zeros(n_bins)
+        for b in range(n_bins):
+            pixels = images[:, radial_bins == b][mask[:, radial_bins == b]]
+            if pixels.size > 0:
+                if use_median:
+                    radial_profile[b] = np.median(pixels)
+                else:
+                    radial_profile[b] = np.mean(pixels)
+    
     images_anom = images.copy()
     for b in range(n_bins):
         images_anom[:, radial_bins == b] -= radial_profile[b]
@@ -373,7 +383,7 @@ def train_val_test_split(
     # --------------------------------------------------
     ir_train   = X_array[train_idx]
     sar_train  = sar_array[train_idx]
-    sar_train, radial_mean = subtract_radial_mean(sar_train)
+    
     mask_train = mask_sar[train_idx]
     infos_train = [infos[i] for i in train_idx]
 
@@ -439,7 +449,7 @@ def train_val_test_split(
         "infos_train": infos_train,
         "infos_val":   infos_val,
         "infos_test":  infos_test,
-        "radial_mean": radial_mean
+        
     }
 
 
@@ -805,7 +815,7 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
         # rotations
         
         if np.nanmax(np.array(inf["analysis_vmax"])) > 50:
-            for angle in [180,90,270]:
+            for angle in [180,90]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
                 ir_aug.append(ir_r)
                 sar_aug.append(sar_r)
@@ -814,7 +824,7 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
         # print(np.nanmax(np.array(inf["analysis_rmax"])))
         if np.nanmax(np.array(inf["analysis_rmax"])) > 40000: 
             for flip in ["h","v"]:
-                ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip="v")
+                ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
                 ir_aug.append(ir_r)
                 sar_aug.append(sar_r)
                 mask_aug.append(mask_r)
@@ -826,62 +836,6 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
         np.array(mask_aug),
         np.array(infos_aug)
     )
-
-
-
-def compute_global_distributions(model, dataloader, device,mean_val_sar, std_val_sar, save_dir, eps= 1e-10):
-    model.eval()
-
-    all_true = []
-    all_pred = []
-
-    with torch.no_grad():
-        for ir, sar in dataloader:
-            ir = ir.to(device)
-            sar = sar.to(device)
-
-            pred = model(ir, timestep=0).sample
-
-            # Flatten valid pixels
-            mask = np.isfinite(sar.cpu().numpy())
-            sar = sar * (std_val_sar + eps) + mean_val_sar
-            pred = pred * (std_val_sar + eps) + mean_val_sar
-            sar_valid = sar[mask].cpu().numpy()
-            pred_valid = pred[mask].cpu().numpy()
-
-            all_true.append(sar_valid)
-            all_pred.append(pred_valid)
-
-    # Concatenate all batches
-    all_true = np.concatenate(all_true)
-    all_pred = np.concatenate(all_pred)
-    
-
-    # Compute error
-    all_errors = (all_pred - all_true) ** 2
-
-    print(f"Collected {len(all_true)} valid SAR pixels for distribution analysis.")
-
-    # ---- Plot global distributions ----
-    #without counting the zero value
-    plt.figure(figsize=(8,5))
-    plt.hist(all_true, bins=50, alpha=0.6, density=False, label="Real SAR", color='blue')
-    plt.hist(all_pred[all_pred > 5], bins=50, alpha=0.6, density=False, label="Predicted SAR", color='green')
-    # plt.hist(all_errors[all_errors > 5], bins=50, alpha=0.6, density=False, label="Squared Error", color='red')
-    plt.xlim(5, 150)
-
-    plt.title("Global Distribution — Validation Dataset")
-    plt.xlabel("Wind speed (knots) or error")
-    plt.ylabel("Count")
-    plt.legend()
-    plt.grid(True)
-
-    os.makedirs(save_dir, exist_ok=True)
-    save_path = os.path.join(save_dir, "wind_speed_distributions.png")
-    plt.savefig(save_path, dpi=150)
-    plt.close()
-    print(f"📊 Saved global distribution plot: {save_path}")
-
 
 
 def visualize_dataset_statistics(dictio, target_dir, mask=None):
