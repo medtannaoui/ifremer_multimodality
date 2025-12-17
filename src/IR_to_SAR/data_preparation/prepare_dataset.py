@@ -67,8 +67,8 @@ class PrepareDataSet():
         #     irwin = irwin_all[:, i, :, :]      # (N, H, W)  # add multiple irs
         #     image_channels.append(irwin)
         image_channels.append(irwin_all[:,4,:,:])
-        # image_channels.append(np.gradient(irwin_all[:,4,:,:])[0])
-        # image_channels.append(np.gradient(irwin_all[:,4,:,:])[1])
+        image_channels.append(np.gradient(irwin_all[:,4,:,:])[0])
+        image_channels.append(np.gradient(irwin_all[:,4,:,:])[1])
 
         # image_channels.append(np.nanmean(irwin_all,axis=1)) #mean of th nine irs
 

@@ -290,7 +290,8 @@ def main(cfg: IR_SAR_Config,test=False):
                 mask_train = dictio["mask_sar_train"],
                 mask_val = full_data.dataset.mask_sar[dictio["val_index"]],
                 infos = full_data.dataset.infos,
-                target_dir = target_dir
+                target_dir = target_dir,
+                radial_mean = dictio["radial_mean"]
             )
         ],
     )

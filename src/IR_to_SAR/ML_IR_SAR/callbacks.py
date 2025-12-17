@@ -67,7 +67,8 @@ class LogValidationSamples:
 
     def __init__(self, base_dir, mean_X, std_X, mean_sar, std_sar, norm,
              num_samples=4, start_epoch=20, every_n_epochs=1,
-             cmap_ir="gray", cmap_sar="viridis", num_epochs=0, infos=None, distance_km=None, mask_train=None, mask_val = None,target_dir = None):
+             cmap_ir="gray", cmap_sar="viridis", num_epochs=0, infos=None, distance_km=None, mask_train=None, mask_val = None,target_dir = None,
+             radial_mean=None):
 
         self.base_dir = Path(base_dir)
         # self.output_dir = self._create_unique_dir(self.base_dir)
@@ -89,6 +90,7 @@ class LogValidationSamples:
         self.mask_val = mask_val
         self.num_epochs = num_epochs
         self.infos = infos
+        self.radial_mean = radial_mean
         
 
 
@@ -185,6 +187,7 @@ class LogValidationSamples:
             stats,
             bin_size=1
         ):
+            print(images_norm.shape)
             N, H, W = images_norm.shape
             cx, cy = H // 2, W // 2
             y, x = np.indices((H, W))
@@ -198,11 +201,37 @@ class LogValidationSamples:
                     images[:, radial_bins == b] * std[b]
                 ) + mean[b]
             return images
+        
+        def add_radial_mean(
+            images_anom,
+            radial_profile,
+            bin_size=1
+        ):
+
+            single = images_anom.ndim == 2
+            if single:
+                images_anom = images_anom[None, ...]
+
+            N, H, W = images_anom.shape
+            cy, cx = H // 2, W // 2
+
+            y, x = np.indices((H, W))
+            radius = np.sqrt((y - cy)**2 + (x - cx)**2)
+            radial_bins = (radius // bin_size).astype(np.int32)
+
+            images = images_anom.copy()
+            n_bins = len(radial_profile)
+
+            for b in range(n_bins):
+                images[:, radial_bins == b] += radial_profile[b]
+
+            return images[0] if single else images
+
 
 
 
         # On ne visualise que le canal IRWIN (canal 0)
-        ir = x[:, 0 :, :]
+        ir = x[:, 0, :, :]
         ir = ir.squeeze().cpu().numpy()
         sar = sar.squeeze().cpu().numpy()
         pred = pred.squeeze().cpu().numpy()

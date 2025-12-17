@@ -189,8 +189,8 @@ def annular_normalization(
             for b in range(n_bins):
                 pixels = images[:, radial_bins == b][mask[:, radial_bins == b]]
                 if pixels.size > 0:
-                    mean[b] = pixels.mean()
-                    std[b] = pixels.std()
+                    mean[b] = np.median(pixels)   #pixels.mean()
+                    std[b] = np.percentile(pixels,75)-np.percentile(pixels,25)        #pixels.std()
             images_norm = images.copy()
             for b in range(n_bins):
                 m, s = mean[b], std[b]
@@ -222,6 +222,39 @@ def annular_denormalization(
                 ) + mean[b]
             return images
 
+
+def subtract_radial_mean(
+    images, 
+    bin_size=1, 
+    use_median=True, 
+    mask=None
+):
+   
+    N, H, W = images.shape
+    cy, cx = H // 2, W // 2
+
+    y, x = np.indices((H, W))
+    radius = np.sqrt((y - cy)**2 + (x - cx)**2)
+    radial_bins = (radius // bin_size).astype(np.int32)
+
+    n_bins = radial_bins.max() + 1
+
+    if mask is None:
+        mask = np.isfinite(images)
+
+    radial_profile = np.zeros(n_bins)
+    for b in range(n_bins):
+        pixels = images[:, radial_bins == b][mask[:, radial_bins == b]]
+        if pixels.size > 0:
+            if use_median:
+                radial_profile[b] = np.median(pixels)
+            else:
+                radial_profile[b] = np.mean(pixels)
+    images_anom = images.copy()
+    for b in range(n_bins):
+        images_anom[:, radial_bins == b] -= radial_profile[b]
+
+    return images_anom, radial_profile
 
 
 
@@ -340,6 +373,7 @@ def train_val_test_split(
     # --------------------------------------------------
     ir_train   = X_array[train_idx]
     sar_train  = sar_array[train_idx]
+    sar_train, radial_mean = subtract_radial_mean(sar_train)
     mask_train = mask_sar[train_idx]
     infos_train = [infos[i] for i in train_idx]
 
@@ -405,6 +439,7 @@ def train_val_test_split(
         "infos_train": infos_train,
         "infos_val":   infos_val,
         "infos_test":  infos_test,
+        "radial_mean": radial_mean
     }
 
 
@@ -777,8 +812,8 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
                 mask_aug.append(mask_r)
                 infos_aug.append(inf)
         # print(np.nanmax(np.array(inf["analysis_rmax"])))
-        if np.nanmax(np.array(inf["analysis_rmax"])) > 50000: 
-            for angle in [180,270,90]:
+        if np.nanmax(np.array(inf["analysis_rmax"])) > 40000: 
+            for flip in ["h","v"]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip="v")
                 ir_aug.append(ir_r)
                 sar_aug.append(sar_r)
