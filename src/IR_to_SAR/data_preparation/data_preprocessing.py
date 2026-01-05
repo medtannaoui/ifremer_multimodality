@@ -815,7 +815,7 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
 
     for ir, sar, mask, inf in zip(ir_tensor, sar_tensor, mask_tensor, infos) :
         # print("rmax_unities llllllll",np.nanmax(np.array(inf["analysis_vmax"])))
-        if np.nanmax(np.array(inf["analysis_rmax"])) > 100000:     # delete ctorms with radisu of max wind speed less than 100km
+        if np.nanmax(np.array(inf["analysis_rmax"])) > 100000:     # delete storms with radisu of max wind speed less than 100km
             continue
         # original
         ir_aug.append(ir)
@@ -824,23 +824,34 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
         infos_aug.append(inf)
 
         # rotations
-        
-        if np.nanmax(np.array(inf["analysis_vmax"])) > 50:   # for ctorms with max wind speed more than 50m/s
-            for angle in [180,90,270]:
+        if np.nanmax(np.array(inf["analysis_vmax"])) > 50:   # for storms with max wind speed more than 50m/s
+            for angle in [180,90]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
                 ir_aug.append(ir_r)
                 sar_aug.append(sar_r)
                 mask_aug.append(mask_r)
                 infos_aug.append(inf)
         # print(np.nanmax(np.array(inf["analysis_rmax"])))
-        if np.nanmax(np.array(inf["analysis_rmax"])) > 30000:   # for ctorms with radius of max wind speed more than 50km
+        if np.nanmax(np.array(inf["analysis_rmax"])) > 30000 and np.nanmax(np.array(inf["analysis_rmax"])) < 60000:   # for storms with radius of max wind speed more than 50km
             for flip in ["h","v"]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
                 ir_aug.append(ir_r)
                 sar_aug.append(sar_r)
                 mask_aug.append(mask_r)
                 infos_aug.append(inf)
-
+        if np.nanmax(np.array(inf["analysis_rmax"])) > 60000:   # for storms with radius of max wind speed more than 60km
+            for flip in ["h","v"]:
+                ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
+                ir_aug.append(ir_r)
+                sar_aug.append(sar_r)
+                mask_aug.append(mask_r)
+                infos_aug.append(inf)
+            for angle in [270]:
+                ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
+                ir_aug.append(ir_r)
+                sar_aug.append(sar_r)
+                mask_aug.append(mask_r)
+                infos_aug.append(inf)
     return (
         np.array(ir_aug),
         np.array(sar_aug),

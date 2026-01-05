@@ -257,7 +257,7 @@ class LogValidationSamples:
             mask_np = mask.cpu().numpy()
 
         batch_size = ir_np.shape[0]
-        num = min(self.num_samples, batch_size)
+        num = batch_size if batch_size< self.num_samples else self.num_samples
 
         # Tirage aléatoire d'exemples
         np.random.seed(0)
@@ -302,21 +302,26 @@ class LogValidationSamples:
         pred_2d_knots = pred_2d * 1.94384
 
         # → Vmax utilise les champs 2D
-        distdata.vmax_compare(
-            analysis_vmax,
-            pred_2d_knots,
-            self.output_dir,
-            set=set,
-            epoch=epoch
-        )
-
-        distdata.rmax_compare(
-            analysis_rmax,
-            pred_2d_knots,
-            self.output_dir,
-            set=set,
-            epoch=epoch
-        )
+        for min,max in zip([19,63,83,96,113],[63,83,96,113,200]):
+            distdata.vmax_compare(
+                analysis_vmax,
+                pred_2d_knots,
+                self.output_dir,
+                set=set,
+                epoch=epoch,
+                min=min,
+                max=max
+            )
+        for min,max in zip([0,30,60],[30,60,100]):
+            distdata.rmax_compare(
+                analysis_rmax,
+                pred_2d_knots,
+                self.output_dir,
+                set=set,
+                epoch=epoch,
+                min=min,
+                max=max
+            )
 
         # → Radial Vmax utilise aussi les champs 2D
         distdata.compare_radial_vmax(

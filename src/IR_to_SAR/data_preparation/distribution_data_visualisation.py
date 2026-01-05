@@ -392,16 +392,17 @@ def plot_mw(tensor, cmap="cividis",x=None, y=None, ax=None, x_lim=300):
     ax.set_aspect('equal')
     
 
-def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False):
+def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False,min=None, max=None):
     
     if set == "train":
         return None
+    title_end = "Categorie_1" if min==19 and max==63 else "Categorie_2" if min==63 and max==83 else "Categorie_3" if min==83 and max==96 else "Categorie_4" if min==96 and max==113 else "Categorie_5" if min==113 else ""
 
     vmax_true = []
     vmax_pred = []
 
     for ana_vmax, sar2 in zip(analysis_vmax, predict_sars):
-        if ana_vmax is None or np.isnan(ana_vmax):
+        if ana_vmax is None or np.isnan(ana_vmax) or  ana_vmax*1.94384 < min or ana_vmax*1.94384 > max:
             continue
         vmax_true.append(ana_vmax * 1.94384)
         vmax_pred.append(np.nanmax(sar2))
@@ -440,9 +441,9 @@ def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False
     ax.plot(x_line, y_line, "b-", lw=2,
             label=f"Regression: y={coef[0]:.2f}x+{coef[1]:.2f}")
 
-    ax.set_xlabel("Analysis Vmax (knots)")
+    ax.set_xlabel(f"Analysis Vmax (knots)")
     ax.set_ylabel("Predicted Vmax (knots)")
-    ax.set_title(f"Vmax Comparison — Epoch {epoch+1} ({set})")
+    ax.set_title(f"Vmax Comparison — Epoch {epoch+1} ({set}) {title_end}")
     ax.grid(True, linestyle="--", alpha=0.3)
     ax.legend(loc="lower right")
 
@@ -470,7 +471,7 @@ def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False
 
     plt.tight_layout()
 
-    filename = f"Vmax_Comparison_Enhanced_{set}.png"
+    filename = f"Vmax_Comparison_{set}_{title_end}.png"
     plt.savefig(os.path.join(output_dir, filename), dpi=150)
     plt.close(fig)
 
@@ -620,7 +621,7 @@ def compute_mae_metric(sar_true, sar_pred, output_dir, set, epoch, plot=False):
         plt.show()
 
     
-def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False):
+def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False, min=None, max=None):
     """
     Compare Analysis Rmax vs Predicted Rmax (from SAR prediction).
 
@@ -639,12 +640,15 @@ def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False
 
     rmax_true = []
     rmax_pred = []
+    title_end = "Categorie_1" if min==0 and max==30 else "Categorie_2" if min==30 and max==60 else "Categorie_3" if min==60 else ""
 
     for ana_rmax, sar_pred in zip(analysis_rmax, predict_sars):
+        print(ana_rmax)
 
-        if ana_rmax is None or np.isnan(ana_rmax):
+        if ana_rmax is None or np.isnan(ana_rmax) or ana_rmax < min*1000 or ana_rmax > max*1000:
             continue
-
+        
+        
         # True Rmax in km
         rmax_true.append(ana_rmax / 1000.0)
 
@@ -666,7 +670,7 @@ def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False
     MAE = np.nanmean(np.abs(errors))
     RMSE = np.sqrt(np.nanmean(errors**2))
     Bias = np.nanmean(errors)
-
+    print("taille des rmaxes :          ",len(rmax_true), len(rmax_pred))
     max_true = np.nanmax(rmax_true)
     max_pred = np.nanmax(rmax_pred)
 
@@ -700,7 +704,7 @@ def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False
     )
     ax1.legend(loc="lower right")
 
-    ax1.set_title(f"Rmax Comparison — Epoch {epoch+1} ({set})", fontsize=15)
+    ax1.set_title(f"Rmax Comparison — Epoch {epoch+1} ({set}) {title_end}", fontsize=15)
     ax1.set_xlabel("Analysis Rmax (km)")
     ax1.set_ylabel("Predicted Rmax (km)")
     ax1.grid(True, linestyle="--", alpha=0.4)
@@ -737,7 +741,7 @@ def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False
     if plot:
         plt.show()
     else:
-        out_path = os.path.join(output_dir, f"Rmax_Comparison_{set}.png")
+        out_path = os.path.join(output_dir, f"Rmax_Comparison_{set}_{title_end}.png")
         plt.savefig(out_path, dpi=150)
         plt.close()
 
