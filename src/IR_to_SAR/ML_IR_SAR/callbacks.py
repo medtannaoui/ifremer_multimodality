@@ -246,8 +246,8 @@ class LogValidationSamples:
             sar_denorm = annular_denormalization(sar, stats={"mean": self.mean_sar,"std":  self.std_sar} )
             pred_denorm = annular_denormalization(pred, stats={"mean": self.mean_sar,"std":  self.std_sar})
         
-        sar_denorm = add_radial_mean(sar_denorm,self.radial_profil)
-        pred_denorm = add_radial_mean(pred_denorm,self.radial_profil)
+        # sar_denorm = add_radial_mean(sar_denorm,self.radial_profil)
+        # pred_denorm = add_radial_mean(pred_denorm,self.radial_profil)
 
         # Conversion numpy
         ir_np   = ir_denorm

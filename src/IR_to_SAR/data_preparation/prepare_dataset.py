@@ -168,10 +168,15 @@ class PrepareDataSet():
 
 
         #"substract mean radial profil "
-        self.sar_train,self.radial_profil = dataprep.subtract_radial_mean(self.dictio["train"][1],bin_size=1)
-        self.sar_val, _ = dataprep.subtract_radial_mean(self.dictio["val"][1],radial_profil=self.radial_profil)
-        self.sar_test, _ = dataprep.subtract_radial_mean(self.dictio["test"][1],radial_profil=self.radial_profil)
+        self.radial_profil = None
+        # self.sar_train,self.radial_profil = dataprep.subtract_radial_mean(self.dictio["train"][1],bin_size=1)
+        # self.sar_val, _ = dataprep.subtract_radial_mean(self.dictio["val"][1],radial_profil=self.radial_profil)
+        # self.sar_test, _ = dataprep.subtract_radial_mean(self.dictio["test"][1],radial_profil=self.radial_profil)
+        self.sar_train = self.dictio["train"][1]
+        self.sar_val = self.dictio["val"][1]
+        self.sar_test = self.dictio["test"][1]
         #  Normalization for SAR (always continuous) ===
+
         if norm == "z_score":
             self.sar_train, self.mean_sar, self.std_sar = dataprep.z_score(self.sar_train)
             self.sar_val,_,_  = dataprep.z_score(self.sar_val,mean_value=self.mean_sar,std_value=self.std_sar)

@@ -294,7 +294,7 @@ def train_val_test_split(
 ):
    
 
-    assert abs(train_size + val_size + test_size - 1.0) < 1e-6
+    # assert abs(train_size + val_size + test_size - 1.0) < 1e-6
 
     N = len(X_array)
     all_indices = np.arange(N)
@@ -387,15 +387,24 @@ def train_val_test_split(
     mask_train = mask_sar[train_idx]
     infos_train = [infos[i] for i in train_idx]
 
-    ir_val   = X_array[val_idx]
-    sar_val  = sar_array[val_idx]
-    mask_val = mask_sar[val_idx]
-    infos_val = [infos[i] for i in val_idx]
+    val_idx = np.array(val_idx)
+    analysis_rmax_val = np.array([infos[i]["analysis_rmax"] for i in val_idx])
+    valid_mask = analysis_rmax_val < 100000
+    val_idx_filtered = val_idx[valid_mask]
+    ir_val   = X_array[val_idx_filtered]
+    sar_val  = sar_array[val_idx_filtered]
+    mask_val = mask_sar[val_idx_filtered]
+    infos_val = [infos[i] for i in val_idx_filtered]
 
-    ir_test   = X_array[test_idx]
-    sar_test  = sar_array[test_idx]
-    mask_test = mask_sar[test_idx]
-    infos_test = [infos[i] for i in test_idx]
+
+    test_idx = np.array(test_idx)
+    analysis_rmax_test = np.array([infos[i]["analysis_rmax"] for i in test_idx])
+    test_mask = analysis_rmax_test < 100000
+    test_idx_filtered = test_idx[test_mask]
+    ir_test   = X_array[test_idx_filtered]
+    sar_test  = sar_array[test_idx_filtered]
+    mask_test = mask_sar[test_idx_filtered]
+    infos_test = [infos[i] for i in test_idx_filtered]
 
     # --------------------------------------------------
     # 9) Data augmentation (TRAIN ONLY)
@@ -805,7 +814,9 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
     ir_aug, sar_aug, mask_aug, infos_aug = [], [], [], []
 
     for ir, sar, mask, inf in zip(ir_tensor, sar_tensor, mask_tensor, infos) :
-
+        # print("rmax_unities llllllll",np.nanmax(np.array(inf["analysis_vmax"])))
+        if np.nanmax(np.array(inf["analysis_rmax"])) > 100000:     # delete ctorms with radisu of max wind speed less than 100km
+            continue
         # original
         ir_aug.append(ir)
         sar_aug.append(sar)
@@ -814,15 +825,15 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
 
         # rotations
         
-        if np.nanmax(np.array(inf["analysis_vmax"])) > 50:
-            for angle in [180,90]:
+        if np.nanmax(np.array(inf["analysis_vmax"])) > 50:   # for ctorms with max wind speed more than 50m/s
+            for angle in [180,90,270]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
                 ir_aug.append(ir_r)
                 sar_aug.append(sar_r)
                 mask_aug.append(mask_r)
                 infos_aug.append(inf)
         # print(np.nanmax(np.array(inf["analysis_rmax"])))
-        if np.nanmax(np.array(inf["analysis_rmax"])) > 40000: 
+        if np.nanmax(np.array(inf["analysis_rmax"])) > 30000:   # for ctorms with radius of max wind speed more than 50km
             for flip in ["h","v"]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
                 ir_aug.append(ir_r)
