@@ -193,8 +193,8 @@ def annular_normalization(
                 for b in range(n_bins):
                     pixels = images[:, radial_bins == b][mask[:, radial_bins == b]]
                     if pixels.size > 0:
-                        mean[b] = pixels.mean()   #np.median(pixels)
-                        std[b] =  pixels.std()    #np.percentile(pixels,75)-np.percentile(pixels,25) 
+                        mean[b] = np.median(pixels) #pixels.mean()   #
+                        std[b] =  np.percentile(pixels,75)-np.percentile(pixels,25) #pixels.std()    #
             else:
                 mean = stats["mean"]
                 std = stats["std"]

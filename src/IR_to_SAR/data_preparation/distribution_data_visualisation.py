@@ -544,15 +544,19 @@ def compare_radial_vmax(
 
         r_centers.append(r0 + dr / 2)
 
+    
+
     vmax_r_true = np.array(vmax_r_true)
     vmax_r_pred = np.array(vmax_r_pred)
     r_centers   = np.array(r_centers)
+    
+    r_norm = r_centers /r_centers.max()
 
     vmax1d_true = np.nanmax(vmax_r_true)
     vmax1d_pred = np.nanmax(vmax_r_pred)
 
-    rmax1d_true = r_centers[np.nanargmax(vmax_r_true)]
-    rmax1d_pred = r_centers[np.nanargmax(vmax_r_pred)]
+    rmax1d_true = r_norm[np.nanargmax(vmax_r_true)]
+    rmax1d_pred = r_norm[np.nanargmax(vmax_r_pred)]
 
   
     error = np.abs(vmax_r_true - vmax_r_pred)
@@ -560,18 +564,18 @@ def compare_radial_vmax(
   
     plt.figure(figsize=(10, 6))
 
-    plt.plot(r_centers*2, vmax_r_true*1.94384, color="green", linewidth=2, label="Reel SAR Radial Vmax")
-    plt.plot(r_centers*2, vmax_r_pred*1.94384, color="blue", linewidth=2, label="Predict SAR Radial Vmax")
-    plt.plot(r_centers*2, error*1.94384, color="red", linestyle="--", linewidth=2, label="Absolute Error")
+    plt.plot(r_norm, vmax_r_true*1.94384, color="green", linewidth=2, label="Reel SAR Radial Vmax")
+    plt.plot(r_norm, vmax_r_pred*1.94384, color="blue", linewidth=2, label="Predict SAR Radial Vmax")
+    plt.plot(r_norm, error*1.94384, color="red", linestyle="--", linewidth=2, label="Absolute Error")
 
     # --- Add vertical lines for Rmax
-    plt.axvline(rmax1d_true*2, color="green", linestyle="--", linewidth=1.5, label=f"Reel Rmax1D = {rmax1d_true*2:.1f} Km")
-    plt.axvline(rmax1d_pred*2, color="blue", linestyle="--", linewidth=1.5, label=f"Pred Rmax1D = {rmax1d_pred*2:.1f} Km")
+    plt.axvline(rmax1d_true, color="green", linestyle="--", linewidth=1.5, label=f"Reel Rmax1D = {rmax1d_true*2:.1f} Km")
+    plt.axvline(rmax1d_pred, color="blue", linestyle="--", linewidth=1.5, label=f"Pred Rmax1D = {rmax1d_pred*2:.1f} Km")
     print("--------------------------",vmax1d_true)
     plt.axhline(vmax1d_true*1.94384, color="green", linestyle="--", linewidth=1.5, label=f"Reel Vmax1D = {vmax1d_true*1.94384:.1f} Kt")
     plt.axhline(vmax1d_pred*1.94384, color="blue", linestyle="--", linewidth=1.5, label=f"Pred Vmax1D = {vmax1d_pred*1.94384:.1f} Kt")
 
-    plt.xlabel("Radius R (Km)", fontsize=14)
+    plt.xlabel("Radius R ()", fontsize=14)
     plt.ylabel("Vmax Mean (Kt)", fontsize=14)
     plt.title(f"Radial Vmax Profile — {set} (Epoch {epoch+1})", fontsize=16)
     plt.grid(True, linestyle="--", alpha=0.4)

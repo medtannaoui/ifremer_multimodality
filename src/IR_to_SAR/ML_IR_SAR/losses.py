@@ -114,16 +114,26 @@ def combined_sar_loss(
     w_pix=1.0,
     w_grad=0.0,
     w_radial=0.0,
-    r_bins=None
+    r_bins=None,
+    bin_edges=None,
+    bin_weights=None,
+    use_weighted_pix=False,
 ):
-
     loss = 0.0
     loss_dict = {}
     l_radial, l_grad, l_pix = 0.0, 0.0, 0.0
 
-    sum = w_pix+w_grad+w_radial
+    s = w_pix + w_grad + w_radial
+    s = s if s > 0 else 1.0
+
     if w_pix > 0:
-        l_pix = pix2pix_l1_loss(sar_valid, pred_valid, mask)
+        if use_weighted_pix:
+            assert bin_edges is not None and bin_weights is not None
+            wmap = make_weight_map(sar_valid, mask, bin_edges, bin_weights)
+            l_pix = weighted_l1(pred_valid, sar_valid, mask, wmap)
+        else:
+            l_pix = pix2pix_l1_loss(sar_valid, pred_valid, mask)
+
         loss += w_pix * l_pix
         loss_dict["loss_pix"] = l_pix.detach()
 
@@ -133,17 +143,119 @@ def combined_sar_loss(
         loss_dict["loss_grad"] = l_grad.detach()
 
     if w_radial > 0:
-        l_radial = radial_vmax_l1_loss(
-            sar_valid,
-            pred_valid,
-            mask,
-            r_bins=r_bins
-        )
+        l_radial = radial_vmax_l1_loss(sar_valid, pred_valid, mask, r_bins=r_bins)
         loss += w_radial * l_radial
         loss_dict["loss_radial"] = l_radial.detach()
-    loss /= sum
+
+    loss = loss / s
     loss_dict["loss_total"] = loss.detach()
 
-    return loss, l_pix.detach(),l_grad.detach(),l_radial.detach()
+    return loss, l_pix.detach(), l_grad.detach(), l_radial.detach()
 
-       
+@torch.no_grad()
+def compute_bin_weights_from_loader(
+    train_loader,
+    bin_edges,
+    device,
+    alpha=0.5,     # 0.5 doux, 1.0 inverse fréquence strict
+    eps=1e-6,
+    max_batches=None
+):
+    num_bins = bin_edges.numel() - 1
+    counts = torch.zeros(num_bins, device=device, dtype=torch.float64)
+
+    for b, (x, sar, mask, _) in enumerate(train_loader):
+        if max_batches is not None and b >= max_batches:
+            break
+
+        sar = sar.to(device)
+        mask = mask.to(device)
+        sar = torch.nan_to_num(sar, nan=0.0, posinf=0.0, neginf=0.0)
+
+        valid = mask > 0.5
+        if valid.sum() == 0:
+            continue
+
+        v = sar[valid].float()
+        idx = torch.bucketize(v, bin_edges, right=False) - 1
+        idx = idx.clamp(0, num_bins - 1)
+
+        counts += torch.bincount(idx, minlength=num_bins).to(torch.float64)
+
+    probs = counts / counts.sum().clamp_min(1.0)
+
+    weights = 1.0 / torch.pow(probs + eps, alpha)
+    weights = weights / weights.mean().clamp_min(1e-12)  # stabilise
+
+    return weights.to(torch.float32), probs.to(torch.float32), counts
+
+@torch.no_grad()
+def compute_bin_edges_quantiles(
+    train_loader,
+    device,
+    num_bins=5,
+    max_batches=None,
+    eps=1e-6,
+):
+    """
+    Calcule bin_edges (num_bins+1,) automatiquement avec min/max sur les pixels valides (mask)
+    sans stocker tous les pixels.
+    """
+    vmin = None
+    vmax = None
+
+    for b, (x, sar, mask, _) in enumerate(train_loader):
+        if max_batches is not None and b >= max_batches:
+            break
+
+        sar = sar.to(device)
+        mask = mask.to(device)
+
+        sar = torch.nan_to_num(sar, nan=0.0, posinf=0.0, neginf=0.0)
+        valid = mask > 0.5
+        if valid.sum() == 0:
+            continue
+
+        v = sar[valid].float()
+        bmin = v.min()
+        bmax = v.max()
+
+        vmin = bmin if vmin is None else torch.minimum(vmin, bmin)
+        vmax = bmax if vmax is None else torch.maximum(vmax, bmax)
+
+    if vmin is None or vmax is None:
+        raise RuntimeError("No valid pixels found to compute min/max bin edges.")
+
+    # Evite vmin == vmax
+    if torch.isclose(vmin, vmax):
+        vmax = vmin + eps
+
+    edges = torch.linspace(vmin, vmax, steps=num_bins + 1, device=device)
+    return edges
+
+
+def make_weight_map(target, mask, bin_edges, bin_weights):
+    if target.ndim == 3: target = target.unsqueeze(1)
+    if mask.ndim == 3: mask = mask.unsqueeze(1)
+
+    device = target.device
+    bin_edges = bin_edges.to(device)
+    bin_weights = bin_weights.to(device)
+
+    idx = torch.bucketize(target, bin_edges, right=False) - 1
+    idx = idx.clamp(0, bin_weights.numel() - 1)
+
+    wmap = bin_weights[idx] * mask
+    return wmap
+
+
+def weighted_l1(pred, target, mask, wmap, eps=1e-8):
+    if pred.ndim == 3: pred = pred.unsqueeze(1)
+    if target.ndim == 3: target = target.unsqueeze(1)
+    if mask.ndim == 3: mask = mask.unsqueeze(1)
+
+    diff = torch.abs(pred - target)
+    num = (diff * wmap).sum()
+    den = wmap.sum().clamp_min(eps)
+    return num / den
+

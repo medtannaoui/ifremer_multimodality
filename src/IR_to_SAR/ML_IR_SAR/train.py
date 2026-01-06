@@ -46,7 +46,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import shutil
 
-from src.IR_to_SAR.ML_IR_SAR.losses import combined_sar_loss
+from src.IR_to_SAR.ML_IR_SAR.losses import combined_sar_loss,compute_bin_weights_from_loader,compute_bin_edges_quantiles
 
 import src.IR_to_SAR.data_preparation.data_preprocessing as dataprep
 from src.visualisation.utils_colormap import CMAP
@@ -135,7 +135,16 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_gr
     model.train()
     total_loss = 0
     metrics.reset()
-    
+
+    BIN_EDGES = compute_bin_edges_quantiles(dataloader, device=fabric.device, num_bins=5)
+    BIN_WEIGHTS, BIN_PROBS, BIN_COUNTS = compute_bin_weights_from_loader(
+        train_loader=dataloader, bin_edges=BIN_EDGES, device=fabric.device, alpha=0.5
+    )
+
+    print("BIN_EDGES:", BIN_EDGES)
+    print("BIN_PROBS:", BIN_PROBS)
+    print("BIN_WEIGHTS:", BIN_WEIGHTS)
+
 
     for x, sar, mask, _ in tqdm(dataloader, desc="Training"):
         x, sar, mask= x.to(fabric.device), sar.to(fabric.device), mask.to(fabric.device)
@@ -146,10 +155,16 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_gr
         sar_valid = sar.nan_to_num()
         pred_valid = pred
 
-        loss,l_pix,l_grad,l_radial = combined_sar_loss(sar_valid,pred_valid,mask,
-                                 w_pix=w_pix,
-                                 w_grad=w_grad,
-                                 w_radial=w_radial)
+        # compute weights
+        
+
+        loss, l_pix, l_grad, l_radial = combined_sar_loss(
+                                                            sar_valid, pred_valid, mask,
+                                                            w_pix=w_pix, w_grad=w_grad, w_radial=w_radial,
+                                                            bin_edges=BIN_EDGES, bin_weights=BIN_WEIGHTS,
+                                                            use_weighted_pix=True
+                                                        )
+
         
         
         if sar_valid.ndim == 3:

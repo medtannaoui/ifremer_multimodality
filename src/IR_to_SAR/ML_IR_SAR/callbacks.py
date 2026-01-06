@@ -262,8 +262,8 @@ class LogValidationSamples:
         
         # sar_denorm = add_radial_mean(sar_denorm,self.radial_profil)
         # pred_denorm = add_radial_mean(pred_denorm,self.radial_profil)
-        sar_denorm = moment_to_sar(sar_denorm)
-        pred_denorm = moment_to_sar(pred_denorm)
+        # sar_denorm = moment_to_sar(sar_denorm)
+        # pred_denorm = moment_to_sar(pred_denorm)
 
         # Conversion numpy
         ir_np   = ir_denorm
