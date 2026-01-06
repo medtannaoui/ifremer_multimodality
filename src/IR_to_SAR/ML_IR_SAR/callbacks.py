@@ -228,7 +228,21 @@ class LogValidationSamples:
             return images[0] if single else images
 
 
+        def moment_to_sar(moment):
+            assert moment.ndim == 3, "moment must be (N, H, W)"
 
+            N, H, W = moment.shape
+
+            y, x = np.indices((H, W))
+            cy, cx = H // 2, W // 2
+
+            r = np.sqrt((x - cx)**2 + (y - cy)**2)
+
+            r_safe = np.maximum(r, 1.0)
+
+            sar = moment / r_safe[None, :, :]
+
+            return sar
 
         # On ne visualise que le canal IRWIN (canal 0)
         ir = x[:, 0, :, :]
@@ -248,6 +262,8 @@ class LogValidationSamples:
         
         # sar_denorm = add_radial_mean(sar_denorm,self.radial_profil)
         # pred_denorm = add_radial_mean(pred_denorm,self.radial_profil)
+        sar_denorm = moment_to_sar(sar_denorm)
+        pred_denorm = moment_to_sar(pred_denorm)
 
         # Conversion numpy
         ir_np   = ir_denorm
@@ -312,6 +328,15 @@ class LogValidationSamples:
                 min=min,
                 max=max
             )
+        distdata.vmax_compare(
+                analysis_vmax,
+                pred_2d_knots,
+                self.output_dir,
+                set=set,
+                epoch=epoch
+            )
+        
+
         for min,max in zip([0,30,60],[30,60,100]):
             distdata.rmax_compare(
                 analysis_rmax,
@@ -321,6 +346,13 @@ class LogValidationSamples:
                 epoch=epoch,
                 min=min,
                 max=max
+            )
+        distdata.rmax_compare(
+                analysis_rmax,
+                pred_2d_knots,
+                self.output_dir,
+                set=set,
+                epoch=epoch
             )
 
         # → Radial Vmax utilise aussi les champs 2D

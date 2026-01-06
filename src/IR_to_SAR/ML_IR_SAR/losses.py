@@ -119,6 +119,7 @@ def combined_sar_loss(
 
     loss = 0.0
     loss_dict = {}
+    l_radial, l_grad, l_pix = 0.0, 0.0, 0.0
 
     sum = w_pix+w_grad+w_radial
     if w_pix > 0:

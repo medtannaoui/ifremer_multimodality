@@ -807,6 +807,26 @@ def augmentation_sar_safe(ir, sar, mask, angle=None, flip=None):
         mask_t.squeeze(0).numpy(),
     )
 
+def create_moment_sar(sar):
+    '''
+    sar with shape (n,w,h)
+    '''
+    assert sar.ndim == 3, "sar must be (N, H, W)"
+
+    N, H, W = sar.shape
+
+    # Coordonnées spatiales
+    y, x = np.indices((H, W))
+    cy, cx = H // 2, W // 2
+
+    # Rayon (H, W)
+    r = np.sqrt((x - cx)**2 + (y - cy)**2)
+
+    # Broadcast sur le batch
+    moment = sar * r[None, :, :]
+
+    return moment
+
 
 
 def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):

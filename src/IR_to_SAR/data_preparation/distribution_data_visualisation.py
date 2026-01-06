@@ -402,8 +402,12 @@ def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False
     vmax_pred = []
 
     for ana_vmax, sar2 in zip(analysis_vmax, predict_sars):
-        if ana_vmax is None or np.isnan(ana_vmax) or  ana_vmax*1.94384 < min or ana_vmax*1.94384 > max:
-            continue
+        if min is None or max is None:
+            if ana_vmax is None or np.isnan(ana_vmax):
+                continue
+        else :    
+            if ana_vmax is None or np.isnan(ana_vmax) or  ana_vmax*1.94384 < min or ana_vmax*1.94384 > max:
+                continue
         vmax_true.append(ana_vmax * 1.94384)
         vmax_pred.append(np.nanmax(sar2))
 
@@ -620,7 +624,7 @@ def compute_mae_metric(sar_true, sar_pred, output_dir, set, epoch, plot=False):
     else : 
         plt.show()
 
-    
+
 def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False, min=None, max=None):
     """
     Compare Analysis Rmax vs Predicted Rmax (from SAR prediction).
@@ -643,10 +647,13 @@ def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False
     title_end = "Categorie_1" if min==0 and max==30 else "Categorie_2" if min==30 and max==60 else "Categorie_3" if min==60 else ""
 
     for ana_rmax, sar_pred in zip(analysis_rmax, predict_sars):
-        print(ana_rmax)
-
-        if ana_rmax is None or np.isnan(ana_rmax) or ana_rmax < min*1000 or ana_rmax > max*1000:
-            continue
+        # print(ana_rmax)
+        if min is None or max is None:
+            if ana_rmax is None or np.isnan(ana_rmax):
+                continue
+        else :
+            if ana_rmax is None or np.isnan(ana_rmax) or ana_rmax < min*1000 or ana_rmax > max*1000:
+                continue
         
         
         # True Rmax in km
@@ -670,7 +677,7 @@ def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False
     MAE = np.nanmean(np.abs(errors))
     RMSE = np.sqrt(np.nanmean(errors**2))
     Bias = np.nanmean(errors)
-    print("taille des rmaxes :          ",len(rmax_true), len(rmax_pred))
+    # print("taille des rmaxes :          ",len(rmax_true), len(rmax_pred))
     max_true = np.nanmax(rmax_true)
     max_pred = np.nanmax(rmax_pred)
 

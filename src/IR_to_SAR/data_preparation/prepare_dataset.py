@@ -153,6 +153,7 @@ class PrepareDataSet():
         # Replace NaN & Inf ===
         self.X = np.nan_to_num(self.X, nan=0.0, posinf=0.0, neginf=0.0)
         self.sar = np.nan_to_num(self.sar, nan=0.0, posinf=0.0, neginf=0.0)
+        self.sar = dataprep.create_moment_sar(self.sar)
 
         # --- Split ---
         self.dictio = dataprep.train_val_test_split(
