@@ -320,7 +320,7 @@ def main(cfg: IR_SAR_Config,test=False):
     ).to(fabric.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate, weight_decay=1e-3)   #add regularisation
 
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.num_epochs//2)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.num_epochs, eta_min=1e-6)
 
     # Prepare for Fabric
     model, optimizer = fabric.setup(model, optimizer)

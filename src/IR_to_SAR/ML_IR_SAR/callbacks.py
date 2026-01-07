@@ -457,6 +457,8 @@ class LogValidationSamples:
         infos_val = []
         infos_train = []
 
+        
+
         # Parcourir tout le DataLoader et accumuler IR et SAR
         for ir, sar, mask, inf in dataloader[1]:
             all_ir_val.append(ir)

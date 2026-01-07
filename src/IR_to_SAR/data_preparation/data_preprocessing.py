@@ -193,8 +193,8 @@ def annular_normalization(
                 for b in range(n_bins):
                     pixels = images[:, radial_bins == b][mask[:, radial_bins == b]]
                     if pixels.size > 0:
-                        mean[b] = np.median(pixels) #pixels.mean()   #
-                        std[b] =  np.percentile(pixels,75)-np.percentile(pixels,25) #pixels.std()    #
+                        mean[b] = pixels.mean()   #np.median(pixels) #
+                        std[b] =  pixels.std()    #np.percentile(pixels,75)-np.percentile(pixels,25) #
             else:
                 mean = stats["mean"]
                 std = stats["std"]
@@ -389,7 +389,7 @@ def train_val_test_split(
 
     val_idx = np.array(val_idx)
     analysis_rmax_val = np.array([infos[i]["analysis_rmax"] for i in val_idx])
-    valid_mask = analysis_rmax_val < 100000
+    valid_mask = analysis_rmax_val < 181000
     val_idx_filtered = val_idx[valid_mask]
     ir_val   = X_array[val_idx_filtered]
     sar_val  = sar_array[val_idx_filtered]
@@ -399,7 +399,7 @@ def train_val_test_split(
 
     test_idx = np.array(test_idx)
     analysis_rmax_test = np.array([infos[i]["analysis_rmax"] for i in test_idx])
-    test_mask = analysis_rmax_test < 100000
+    test_mask = analysis_rmax_test < 181000
     test_idx_filtered = test_idx[test_mask]
     ir_test   = X_array[test_idx_filtered]
     sar_test  = sar_array[test_idx_filtered]
@@ -512,11 +512,16 @@ def plot_metric_scatter(
     true_values = np.array(true_values, dtype=float)
     pred_values = np.array(pred_values, dtype=float)
 
-    # Basic stats
-    mean_true = np.nanmean(true_values)
-    mean_pred = np.nanmean(pred_values)
-    max_true  = np.nanmax(true_values)
-    max_pred  = np.nanmax(pred_values)
+    errors = pred_values - true_values
+    mae = np.nanmean(np.abs(errors))
+    rmse = np.sqrt(np.nanmean(errors**2))
+    bias = np.nanmean(errors)
+    textstr = (
+        f"MAE  : {mae:.2f} kt\n"
+        f"RMSE : {rmse:.2f} kt\n"
+        f"Bias : {bias:.2f} kt\n"
+    )
+
 
     # Create figure
     plt.figure(figsize=(7, 7))
@@ -531,6 +536,13 @@ def plot_metric_scatter(
     plt.xlabel(xlabel, fontsize=12)
     plt.ylabel(ylabel, fontsize=12)
     plt.title(title, fontsize=14)
+
+    ax = plt.gca()
+    ax.text(0.02, 0.98, textstr,
+            transform=ax.transAxes,
+            fontsize=11,
+            verticalalignment="top",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
 
     plt.grid(True, linestyle="--", alpha=0.5)
 
@@ -835,7 +847,7 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
 
     for ir, sar, mask, inf in zip(ir_tensor, sar_tensor, mask_tensor, infos) :
         # print("rmax_unities llllllll",np.nanmax(np.array(inf["analysis_vmax"])))
-        if np.nanmax(np.array(inf["analysis_rmax"])) > 100000:     # delete storms with radisu of max wind speed less than 100km
+        if np.nanmax(np.array(inf["analysis_rmax"])) > 181000:     # delete storms with radisu of max wind speed less than 100km
             continue
         # original
         ir_aug.append(ir)
@@ -844,29 +856,29 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
         infos_aug.append(inf)
 
         # rotations
-        if np.nanmax(np.array(inf["analysis_vmax"])) > 50:   # for storms with max wind speed more than 50m/s
-            for angle in [180,90]:
-                ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
-                ir_aug.append(ir_r)
-                sar_aug.append(sar_r)
-                mask_aug.append(mask_r)
-                infos_aug.append(inf)
+        # if np.nanmax(np.array(inf["analysis_vmax"])) > 60:   # for storms with max wind speed more than 50m/s
+        #     for angle in [180]:
+        #         ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
+        #         ir_aug.append(ir_r)
+        #         sar_aug.append(sar_r)
+        #         mask_aug.append(mask_r)
+        #         infos_aug.append(inf)
         # print(np.nanmax(np.array(inf["analysis_rmax"])))
-        if np.nanmax(np.array(inf["analysis_rmax"])) > 30000 and np.nanmax(np.array(inf["analysis_rmax"])) < 60000:   # for storms with radius of max wind speed more than 50km
+        if np.nanmax(np.array(inf["analysis_rmax"])) > 50000 and np.nanmax(np.array(inf["analysis_rmax"])) < 100000:   # for storms with radius of max wind speed more than 50km
             for flip in ["h","v"]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
                 ir_aug.append(ir_r)
                 sar_aug.append(sar_r)
                 mask_aug.append(mask_r)
                 infos_aug.append(inf)
-        if np.nanmax(np.array(inf["analysis_rmax"])) > 60000:   # for storms with radius of max wind speed more than 60km
+        if np.nanmax(np.array(inf["analysis_rmax"])) > 100000:   # for storms with radius of max wind speed more than 60km
             for flip in ["h","v"]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
                 ir_aug.append(ir_r)
                 sar_aug.append(sar_r)
                 mask_aug.append(mask_r)
                 infos_aug.append(inf)
-            for angle in [270]:
+            for angle in [270,90,180]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
                 ir_aug.append(ir_r)
                 sar_aug.append(sar_r)
