@@ -432,6 +432,15 @@ def train_val_test_split(
         xlabel="vmax",
         ylabel="analysis_vmax"
     )
+    plot_metric_scatter(
+        true_values=[d["vmax"] for d in infos_test],
+        pred_values=[d["analysis_vmax"] for d in infos_test],
+        output_path=target_dir,
+        file_name="analysis_vmax_and_vmax_comparaison_test",
+        title="analysis vmax and vmax comparaison in the test set",
+        xlabel="vmax",
+        ylabel="analysis_vmax"
+    )
     plot_rmax_distribution(
         infos_train=infos_train,
         infos_val=infos_val,
@@ -567,9 +576,9 @@ def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SA
     import os
     import pickle as pkl
 
-    df = pd.read_csv("/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v5.csv")
+    df = pd.read_csv("/scale/user/mtannaou/alternance/excels/SARGEO_SAR_09_janvier_v1_add_cyclobs_data.csv")
     SARGEO_PATH = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v00r00/cyclobs"
-    SARAEQD_PATH = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_v3"
+    SARAEQD_PATH = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_09_janvier"
 
     CANAL = "IRWIN"
 
@@ -614,7 +623,15 @@ def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SA
 
         nc_sargeo_path = os.path.join(SARGEO_PATH, cyclone, CANAL, row["fichier"])
         nc_aeqd_path = row["sar_xy"]
-
+        
+        if pd.isna(nc_aeqd_path):
+            print(f"[SKIP] sar_xy is NaN for cyclone={cyclone} file={row.get('fichier')}")
+            continue
+            
+        nc_aeqd_path = str(nc_aeqd_path)
+        if not os.path.isfile(nc_aeqd_path):
+            print(f"[SKIP] missing AEQD file: {nc_aeqd_path}")
+            continue
         ds_aeqd = xr.open_dataset(nc_aeqd_path)
         ds_sargeo = xr.open_dataset(nc_sargeo_path)
 
@@ -664,7 +681,7 @@ def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SA
                 data_pkl["analysis_vmax"].append(row["analysis_vmax"])
                 data_pkl["analysis_rmax"].append(row["analysis_rmax"])
     # Save to file
-    output_path = os.path.join(output_folder, "ir_sar_sargeo_with_cyclobs_infos.pkl")
+    output_path = os.path.join(output_folder, "ir_sargeo_09_janvier.pkl")
     with open(output_path, "wb") as f:
         pkl.dump(data_pkl, f)
 

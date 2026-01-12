@@ -108,7 +108,7 @@ class PrepareDataSet():
         else:
             self.X_features = None
             self.feature_names = []
-            print("ℹ️ No features added to the blotelneck")
+            print("ℹ️ No features added to the bottleneck")
 
         #  Extract SAR windspeed as target
         self.sar = np.array(data["owiwindspeed"])

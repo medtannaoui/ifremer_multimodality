@@ -258,19 +258,14 @@ def main(cfg: IR_SAR_Config,test=False):
                              train_split=cfg.train_split,val_split=cfg.val_split,test_split=cfg.test_split,target_dir = target_dir,augmentation=cfg.augmentation)
     # X_all, sar_all = full_data.dataset.X, full_data.dataset.sar
 
-    if cfg.barycenter == "yes" : 
-        dx = full_data.dataset.dx_sar
-        dy = full_data.dataset.dy_sar
-
-    
-    
-    
     
     train_ds = PairedDataset(*(full_data.dataset.X_train,full_data.dataset.sar_train),full_data.dataset.dictio["mask_sar_train"], full_data.dataset.dictio["infos_train"])  #X (multi-channel input), SAR target
     val_ds   = PairedDataset(*(full_data.dataset.X_val,full_data.dataset.sar_val),full_data.dataset.dictio["mask_sar_val"], full_data.dataset.dictio["infos_val"])
+    test_ds   = PairedDataset(*(full_data.dataset.X_test,full_data.dataset.sar_test),full_data.dataset.dictio["mask_sar_test"], full_data.dataset.dictio["infos_test"])
 
     train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, collate_fn=custom_collate)
     val_loader   = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=custom_collate)
+    test_loader = DataLoader(test_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=custom_collate)
 
     # --- Fabric init with callbacks ---   #QUentin
     
@@ -370,7 +365,7 @@ def main(cfg: IR_SAR_Config,test=False):
                 "on_validation_plots",
                 model=model,
                 epoch=epoch,
-                dataloader=[train_loader, val_loader],
+                dataloader=[train_loader, val_loader, test_loader],
                 device=fabric.device
             )
             print("----- plots saved")
@@ -413,7 +408,7 @@ def main(cfg: IR_SAR_Config,test=False):
                 "on_validation_plots",
                 model=model,
                 epoch=epoch,   # dernier epoch
-                dataloader=[train_loader, val_loader],
+                dataloader=[train_loader, val_loader, test_loader],
                 device=fabric.device
             )
             break

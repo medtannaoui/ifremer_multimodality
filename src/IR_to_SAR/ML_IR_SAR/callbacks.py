@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import pickle as pkl
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
@@ -271,6 +272,12 @@ class LogValidationSamples:
         pred_np = pred_denorm
         if isinstance(mask, torch.Tensor):
             mask_np = mask.cpu().numpy()
+        else:
+            mask_np=mask
+        if isinstance(infos, torch.Tensor):
+            infos_np = infos.cpu().numpy()
+        else : 
+            infos_np=infos
 
         batch_size = ir_np.shape[0]
         num = batch_size if batch_size< self.num_samples else self.num_samples
@@ -312,6 +319,8 @@ class LogValidationSamples:
         sar_2d  = sar_denorm   # (B, H, W)
         pred_2d = pred_denorm # (B, H, W)
         mask_2d = mask_np                                # (B, H, W)
+        with open(os.path.join(self.output_dir,"predictions_denormalisées.pkl"),"wb") as f:
+            pkl.dump({f"{set}":[ir_np,sar_2d,pred_2d,mask_2d,infos_np]},f)
 
         # Conversion en knots
         sar_2d_knots  = sar_2d * 1.94384
@@ -446,32 +455,40 @@ class LogValidationSamples:
 
     def on_validation_plots(self, model, epoch, dataloader, device):
         print(f"📸 Logging validation samples at epoch {epoch +1}")
+        print("size of dataloader",len(dataloader))
 
         all_ir_val = []
         all_sar_val = []
+        all_sar_test = []
+        all_ir_test = []
         all_ir_train = []
         all_sar_train = []
 
+
         mask_train = []
         mask_val = []
+        mask_test = []
         infos_val = []
         infos_train = []
+        infos_test = []
 
-        
-
-        # Parcourir tout le DataLoader et accumuler IR et SAR
         for ir, sar, mask, inf in dataloader[1]:
             all_ir_val.append(ir)
             all_sar_val.append(sar)
             mask_val.append(mask)
             infos_val.append(inf)
-    
-        
+        # train
         for ir, sar, mask, inf in dataloader[0]:
             all_ir_train.append(ir)
             all_sar_train.append(sar)
             mask_train.append(mask)
             infos_train.append(inf)
+        
+        for ir, sar, mask, inf in dataloader[2]:
+            all_ir_test.append(ir)
+            all_sar_test.append(sar)
+            mask_test.append(mask)
+            infos_test.append(inf)
 
       
 
@@ -485,13 +502,19 @@ class LogValidationSamples:
         ir_full_train = torch.cat(all_ir_train, dim=0)   # → (Total, 1, H, W)
         sar_full_train = torch.cat(all_sar_train, dim=0) # → (Total, 1, H, W)
         mask_train = torch.cat(mask_train, dim=0)
-        infos_train = [d for batch in infos_train for d in batch]   # concat lists
+        infos_train = [d for batch in infos_train for d in batch]  # concat lists
         
+        ir_full_test = torch.cat(all_ir_test, dim=0)   # → (Total, 1, H, W)
+        sar_full_test = torch.cat(all_sar_test, dim=0) # → (Total, 1, H, W)
+        mask_test = torch.cat(mask_test, dim=0)
+        infos_test = [d for batch in infos_test for d in batch]  
 
         # Créer un tuple exactement comme un batch
         batch_full_val = (ir_full_val, sar_full_val, mask_val, infos_val)
         batch_full_train = (ir_full_train, sar_full_train, mask_train, infos_train)
+        batch_full_test = (ir_full_test, sar_full_test, mask_test, infos_test)
 
         self.log_batch(model, batch_full_val, epoch, device)
         self.log_batch(model, batch_full_train, epoch, device, set="train")
+        self.log_batch(model, batch_full_test, epoch, device, set="test")
 
