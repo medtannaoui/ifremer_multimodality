@@ -92,6 +92,8 @@ class LogValidationSamples:
         self.num_epochs = num_epochs
         self.infos = infos
         self.radial_profil = radial_mean
+        self.vmax_bins_knots = None
+        self.rmax_bins_km = None
         
 
 
@@ -245,6 +247,90 @@ class LogValidationSamples:
 
             return sar
 
+        def _compute_stats(err):
+            """err: 1D numpy array (no nan)"""
+            bias = np.mean(err)
+            std  = np.std(err)
+            rmse = np.sqrt(np.mean(err**2))
+            mae  = np.mean(np.abs(err))
+            return bias, std, rmse, mae
+
+
+        def _split_bins_from_train( values_train, n_intervals=3):
+            """Build bins from TRAIN only using linspace(min,max,n_intervals+1)."""
+            v = np.asarray(values_train)
+            v = v[np.isfinite(v)]
+            if v.size == 0:
+                return None
+            bins = np.linspace(v.min(), v.max(), n_intervals + 1)
+            return bins
+
+
+        def _plot_4panel_error_hist(errors, cat_values, bins, title_prefix, unit, save_path, xlim=None):
+            """
+            errors: 1D array (pred - analysis) in desired unit
+            cat_values: 1D array used to assign categories (typically analysis values)
+            bins: array length 4 -> 3 intervals
+            """
+            errors = np.asarray(errors)
+            cat_values = np.asarray(cat_values)
+
+            # keep finite
+            ok = np.isfinite(errors) & np.isfinite(cat_values)
+            errors = errors[ok]
+            cat_values = cat_values[ok]
+
+            fig, axes = plt.subplots(1, 4, figsize=(18, 5))
+
+            def draw(ax, err_subset, subtitle):
+                err_subset = np.asarray(err_subset)
+                err_subset = err_subset[np.isfinite(err_subset)]
+                if err_subset.size == 0:
+                    ax.set_title(subtitle + "\n(empty)")
+                    ax.grid(True, linestyle="--", alpha=0.4)
+                    return
+
+                bias, std, rmse, mae = _compute_stats(err_subset)
+
+                ax.hist(err_subset, bins=40)
+                ax.set_title(subtitle)
+                ax.set_xlabel(f"Error ({unit})")
+                ax.set_ylabel("Count")
+                ax.grid(True, linestyle="--", alpha=0.4)
+
+                txt = (f"bias = {bias:.2f} {unit}\n"
+                    f"stddev = {std:.2f} {unit}\n"
+                    f"rmse = {rmse:.2f} {unit}\n"
+                    f"mae = {mae:.2f} {unit}")
+                ax.text(0.97, 0.97, txt, transform=ax.transAxes,
+                        ha="right", va="top", fontsize=10,
+                        bbox=dict(facecolor="white", alpha=0.85, edgecolor="none"))
+
+                if xlim is not None:
+                    ax.set_xlim(xlim)
+
+            # Panel 1: all
+            draw(axes[0], errors, f"{title_prefix}\nAll cases")
+
+            # Panels 2-4: three categories from bins
+            # categories: [bins[0], bins[1]), [bins[1], bins[2]), [bins[2], bins[3]]
+            for k in range(3):
+                lo, hi = bins[k], bins[k+1]
+                if k < 2:
+                    sel = (cat_values >= lo) & (cat_values < hi)
+                else:
+                    sel = (cat_values >= lo) & (cat_values <= hi)
+
+                subtitle = f"{title_prefix}\nCat{k+1}: [{lo:.1f}, {hi:.1f}]"
+                draw(axes[k+1], errors[sel], subtitle)
+
+            plt.tight_layout()
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            plt.savefig(save_path, dpi=150)
+            plt.close(fig)
+
+
+        # ---------------------------------------------------------------------------------------------------------------------------------------------------
         # On ne visualise que le canal IRWIN (canal 0)
         ir = x[:, 0, :, :]
         ir = ir.squeeze().cpu().numpy()
@@ -278,6 +364,74 @@ class LogValidationSamples:
             infos_np = infos.cpu().numpy()
         else : 
             infos_np=infos
+        
+        B, H, W = pred_np.shape
+        cx, cy = W // 2, H // 2
+
+        pred_vmax_knots = np.full(B, np.nan, dtype=np.float32)
+        pred_rmax_km    = np.full(B, np.nan, dtype=np.float32)
+
+        for i in range(B):
+            vmax1d_pred_kt, rmax1d_pred_pix = self.compute_vmax1d_rmax1d(pred_np[i], cx, cy)
+            pred_vmax_knots[i] = vmax1d_pred_kt
+            pred_rmax_km[i] = rmax1d_pred_pix * 2.0  # 2 km per pixel
+
+        # ==========================
+        # Analysis values in same units
+        # ==========================
+        analysis_vmax = np.array(analysis_vmax, dtype=np.float32)  # m/s (often)
+        analysis_rmax = np.array(analysis_rmax, dtype=np.float32)  # meters
+
+        analysis_vmax_knots = analysis_vmax * 1.94384
+        analysis_rmax_km = analysis_rmax / 1000.0
+
+        # filter missing analysis
+        ok_vmax = np.isfinite(analysis_vmax_knots) & np.isfinite(pred_vmax_knots)
+        ok_rmax = np.isfinite(analysis_rmax_km) & np.isfinite(pred_rmax_km)
+
+        # Errors
+        err_vmax = (pred_vmax_knots - analysis_vmax_knots)[ok_vmax]
+        cat_vmax = analysis_vmax_knots[ok_vmax]  # categories based on analysis
+        err_rmax = (pred_rmax_km - analysis_rmax_km)[ok_rmax]
+        cat_rmax = analysis_rmax_km[ok_rmax]     # categories based on analysis
+
+        # ==========================
+        # Build bins from TRAIN only (once), reuse for val/test
+        # ==========================
+        if set == "train":
+            self.vmax_bins_knots = _split_bins_from_train(values_train=cat_vmax, n_intervals=3)
+            self.rmax_bins_km    = _split_bins_from_train(values_train=cat_rmax, n_intervals=3)
+
+        # fallback if train not logged yet
+        if self.vmax_bins_knots is None:
+            self.vmax_bins_knots = _split_bins_from_train(values_train=cat_vmax, n_intervals=3)
+        if self.rmax_bins_km is None:
+            self.rmax_bins_km = _split_bins_from_train(values_train=cat_rmax, n_intervals=3)
+
+        # If still None, skip plotting
+        if self.vmax_bins_knots is not None and err_vmax.size > 0:
+            save_path_vmax = os.path.join(self.output_dir, "errors_hist", set, f"vmax_error_epoch_{epoch+1:04d}.png")
+            _plot_4panel_error_hist(
+                errors=err_vmax,
+                cat_values=cat_vmax,
+                bins=self.vmax_bins_knots,
+                title_prefix="Vmax error",
+                unit="kt",
+                save_path=save_path_vmax,
+                xlim=None  # you can set e.g. (-80, 80)
+            )
+
+        if self.rmax_bins_km is not None and err_rmax.size > 0:
+            save_path_rmax = os.path.join(self.output_dir, "errors_hist", set, f"rmax_error_epoch_{epoch+1:04d}.png")
+            _plot_4panel_error_hist(
+                errors=err_rmax,
+                cat_values=cat_rmax,
+                bins=self.rmax_bins_km,
+                title_prefix="Rmax error",
+                unit="km",
+                save_path=save_path_rmax,
+                xlim=None  # you can set e.g. (-120, 120)
+            )
 
         batch_size = ir_np.shape[0]
         num = batch_size if batch_size< self.num_samples else self.num_samples
@@ -325,6 +479,8 @@ class LogValidationSamples:
         # Conversion en knots
         sar_2d_knots  = sar_2d * 1.94384
         pred_2d_knots = pred_2d * 1.94384
+
+
 
         # → Vmax utilise les champs 2D
         for min,max in zip([19,63,83,96,113],[63,83,96,113,200]):

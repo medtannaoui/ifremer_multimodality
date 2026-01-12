@@ -475,8 +475,9 @@ def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False
 
     plt.tight_layout()
 
-    filename = f"Vmax_Comparison_{set}_{title_end}.png"
-    plt.savefig(os.path.join(output_dir, filename), dpi=150)
+    filename = f"Vmax_Comparison_{title_end}.png"
+    os.makedirs(os.path.join(output_dir,"vmax_compare",set),exist_ok=True)
+    plt.savefig(os.path.join(output_dir,"vmax_compare",set, filename), dpi=150)
     plt.close(fig)
 
 
@@ -491,7 +492,8 @@ def compare_sar_distribution(sar_knots, pred_knots, output_dir, set, epoch):
         plt.xlabel("Wind Speed (knots)")
         plt.ylabel("Density")
         plt.title(f"Global Wind Speed Distribution —_{set}")
-        out_path = os.path.join(output_dir, f"wind_distribution_{set}.png")
+        os.makedirs(os.path.join(output_dir, "compare_sar_distribution",set),exist_ok=True)
+        out_path = os.path.join(output_dir, "compare_sar_distribution",set,f"wind_distribution.png")
         plt.savefig(out_path, dpi=150)
         plt.close('all')
 
@@ -507,8 +509,7 @@ def compare_radial_vmax(
     dr=1, 
     plot=False
 ):
-    if set == "train":
-        return None
+    
     
     # Shapes
     assert sars_true.shape == sars_predict.shape, "sars_true and sars_predict must have the same shape"
@@ -550,13 +551,16 @@ def compare_radial_vmax(
     vmax_r_pred = np.array(vmax_r_pred)
     r_centers   = np.array(r_centers)
     
-    r_norm = r_centers /r_centers.max()
+    
 
     vmax1d_true = np.nanmax(vmax_r_true)
     vmax1d_pred = np.nanmax(vmax_r_pred)
 
-    rmax1d_true = r_norm[np.nanargmax(vmax_r_true)]
-    rmax1d_pred = r_norm[np.nanargmax(vmax_r_pred)]
+    rmax1d_true = r_centers[np.nanargmax(vmax_r_true)]
+    rmax1d_pred = r_centers[np.nanargmax(vmax_r_pred)]
+    r_norm = r_centers /rmax1d_true
+    rmax1d_true /= rmax1d_true
+    rmax1d_pred /= rmax1d_true
 
   
     error = np.abs(vmax_r_true - vmax_r_pred)
@@ -564,9 +568,9 @@ def compare_radial_vmax(
   
     plt.figure(figsize=(10, 6))
 
-    plt.plot(r_norm, vmax_r_true*1.94384, color="green", linewidth=2, label="Reel SAR Radial Vmax")
-    plt.plot(r_norm, vmax_r_pred*1.94384, color="blue", linewidth=2, label="Predict SAR Radial Vmax")
-    plt.plot(r_norm, error*1.94384, color="red", linestyle="--", linewidth=2, label="Absolute Error")
+    plt.plot(r_norm, vmax_r_true*1.94384, color="green", linewidth=2, label="Reel SAR Radial Vmax (knots)")
+    plt.plot(r_norm, vmax_r_pred*1.94384, color="blue", linewidth=2, label="Predict SAR Radial Vmax (knots)")
+    plt.plot(r_norm, error*1.94384, color="red", linestyle="--", linewidth=2, label="Absolute Error (knots)")
 
     # --- Add vertical lines for Rmax
     plt.axvline(rmax1d_true, color="green", linestyle="--", linewidth=1.5, label=f"Reel Rmax1D = {rmax1d_true*2:.1f} Km")
@@ -585,7 +589,8 @@ def compare_radial_vmax(
 
     # --- Save
     if not plot:
-        out_path = os.path.join(output_dir, f"radial_vmax_{set}.png")
+        os.makedirs(os.path.join(output_dir,"compare_radial_vmax",set),exist_ok=True)
+        out_path = os.path.join(output_dir,"compare_radial_vmax",set, f"radial_vmax_{set}.png")
         plt.savefig(out_path, dpi=150)
         plt.close()
     else:
@@ -620,7 +625,8 @@ def compute_mae_metric(sar_true, sar_pred, output_dir, set, epoch, plot=False):
     plt.title(f"Mean Absolute Error Map — {set} (Epoch {epoch+1})")
     plt.axis("off")
     if not plot : 
-        save_path = os.path.join(output_dir, f"mae_map_{set}.png")
+        os.makedirs(os.path.join(output_dir,"compute_mae_metric",set),exist_ok=True)
+        save_path = os.path.join(output_dir,"compute_mae_metric",set, f"mae_map_{set}.png")
         plt.savefig(save_path, dpi=150)
         plt.close()
 
@@ -752,7 +758,8 @@ def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False
     if plot:
         plt.show()
     else:
-        out_path = os.path.join(output_dir, f"Rmax_Comparison_{set}_{title_end}.png")
+        os.makedirs(os.path.join(output_dir,"rmax_compare",set,),exist_ok=True)
+        out_path = os.path.join(output_dir,"rmax_compare",set, f"Rmax_Comparison_{set}_{title_end}.png")
         plt.savefig(out_path, dpi=150)
         plt.close()
 
