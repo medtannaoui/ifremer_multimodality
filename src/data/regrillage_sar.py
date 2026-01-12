@@ -10,7 +10,7 @@ import shutil
 tcprimed_path = "/scale/project/ifremer-isi-jumeaunumerique/TC_PRIMED_DATASET/v01r01/final"   #tcprimed path
 tcprimed_path_preliminary = "/scale/project/ifremer-isi-jumeaunumerique/TC_PRIMED_DATASET/v01r01/preliminary"
 
-def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=2, center="storm"):
+def convert_sar_to_xy(sar_file, i, row, sargeo_df, output_dir, max_r=300, dxy=2, center="storm"):
     """
     Convertit un fichier SAR en coordonnées (x, y) centrées sur le cyclone
     en utilisant la méthode NESDIS.aeqd().
@@ -23,15 +23,15 @@ def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=2, center=
     filename = os.path.basename(sar_file).split(".nc")[0][:-6]
 
     # Trouver le centre correspondant dans le DataFrame
-    #vmax,analysis_vmax,analysis_center_quality_flag,analysis_rmax
-    match = sargeo_df[sargeo_df["sar_inter"].str.contains(filename, case=False, na=False)]
-    if match.empty:
+    # vmax,analysis_vmax,analysis_center_quality_flag,analysis_rmax
+    match = row
+    if pd.isna(match.get("lat_centre")):         #si lat_centre est null
         print(f"⚠️ Aucun centre trouvé pour {filename}")
         return
-    cyclone_name = match.iloc[0]["cyclone"]
-    lat_centre = float(match.iloc[0]["eye_center_lat"]) if center == "eye" else    float(match.iloc[0]["lat_centre"])       #use the eye_center
+    cyclone_name = match.get("cyclone")
+    lat_centre = float(match.get("eye_center_lat")) if center == "eye" else    float(match.get("lat_centre"))       #use the eye_center
 
-    lon_centre = float(match.iloc[0]["eye_center_lon"]) if center == "eye" else float(match.iloc[0]["lon_centre"])
+    lon_centre = float(match.get("eye_center_lon")) if center == "eye" else float(match.get("lon_centre"))
     lon_centre = (lon_centre + 180) % 360 - 180  # longitude center normalisation
 
     print(f"📡 Traitement du fichier {filename} — centre cyclone : ({lat_centre}, {lon_centre})")
@@ -87,7 +87,7 @@ def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=2, center=
     ds.close()
 
     # Mettre à jour ton CSVa ton avis 
-    current_index = match.index[0]
+    current_index = i
     sargeo_df.at[current_index, "sar_xy"] = out_file
     sargeo_df.to_csv("excels/SARGEO_SAR_v5.csv", index=False)
 
@@ -95,16 +95,17 @@ def convert_sar_to_xy(sar_file, sargeo_df, output_dir, max_r=300, dxy=2, center=
 
 
 def main(dxy=2,max_r=300,center="storm"):
-    output_dir = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_v4"
-    sargeo = pd.read_csv("excels/SARGEO_SAR_v5.csv")
+    output_dir = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_09_janvier"
+    sargeo = pd.read_csv("excels/SARGEO_SAR_v00r00_09_janvier_v1.csv")
 
     # test only for al122024
     # sargeo = sargeo[sargeo["cyclone"] == "al122024"]
     sargeo = sargeo[sargeo["lat_centre"] != 0]
 
-    for file_path in sargeo["sar_path"]:
+    for i, row in sargeo.iterrows():
+        file_path =  row["sar_path"]
         try:
-            convert_sar_to_xy(file_path, sargeo, output_dir, max_r=max_r, dxy=dxy, center=center)
+            convert_sar_to_xy(file_path, i ,row, sargeo, output_dir, max_r=max_r, dxy=dxy, center=center)
         except Exception as e:
             print(f"❌ Erreur pour {file_path}: {e}")
 
@@ -112,132 +113,4 @@ def main(dxy=2,max_r=300,center="storm"):
 
 
 if __name__ == "__main__":
-    main(2,300, center="eye")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# import os
-# import xarray as xr
-# import pyproj
-# from matplotlib import pyplot as plt
-# import pandas as pd
-
-# run = True
-
-# def convert_sar_to_xy(sar_file, sargeo_df, output_dir):
-#     """
-#     Converts a SAR file into (x, y) coordinates centered on the cyclone.
-#     Adds the x_sar and y_sar fields and saves a new NetCDF file.
-
-#     sar_file : str → path to the SAR .nc file
-#     sargeo_df : DataFrame → contains the cyclone centers (lat_center, lon_center)
-#     output_dir : str → output directory
-
-#     for file_path in sargeo["sar_path"]:
-#         try:
-#             fct.convert_sar_to_xy(file_path, sargeo, output_dir)
-#         except Exception as e:
-#             print(f"❌ Error for {file_path}: {e}")
-#     """
-
-#     # Charger le fichier SAR
-#     ds = xr.open_dataset(sar_file)
-#     filename = os.path.basename(sar_file).split(".nc")[0]
-    
-#     match = sargeo_df[sargeo_df["sar_inter"].str.contains(filename, case=False, na=False)]
-
-#     if match.empty:
-#         print(f"⚠️ Aucun centre trouvé pour {filename}")
-#         return
-
-#     lat_centre = float(match.iloc[0]["lat_centre"])
-#     lon_centre = float(match.iloc[0]["lon_centre"])
-#     # (ds[coords["lon"]] + 180) % 360 - 180
-#     lon_centre = (lon_centre + 180) % 360 -180    # longitude verification
-#     # if lon_centre > 180:
-#     #     lon_centre -= 360
-
-#     # Use the AEQD projection 
-#     proj_geo = pyproj.Proj(proj='latlong', datum='WGS84')
-#     proj_xy = pyproj.Proj(proj='aeqd', lon_0=lon_centre, lat_0=lat_centre, datum='WGS84', units='km')
-
-#     # caluculate x and y with pyproj
-#     ds["owiLon"].values = (ds["owiLon"].values + 180) % 360 - 180
-#     x, y = pyproj.transform(
-#         proj_geo, proj_xy,
-#         ds["owiLon"].values,
-#         ds["owiLat"].values,
-#         always_xy=True
-#     )
-
-#     # add x_sar and y_sar
-#     ds["x_sar"] = (("owiAzSize", "owiRaSize"), x)
-#     ds["y_sar"] = (("owiAzSize", "owiRaSize"), y)
-
-#     # save the new file
-#     os.makedirs(output_dir, exist_ok=True)
-#     out_file = os.path.join(output_dir, f"{filename}_aeqd.nc")
-#     #recuperer l indice de la ligne courante dans le dataframe
-#     current_index = sargeo_df[sargeo_df["sar_inter"].str.contains(filename, case=False, na=False)].index[0]
-#     # update the new path of the file in the dataframe
-#     sargeo_df.at[current_index, "sar_xy"] = out_file
-#     sargeo_df.to_csv("excels/SARGEO_SAR_v1.csv", index=False)  # updatethe csv file
-#     ds.to_netcdf(out_file)
-
-#     ds.close()
-
-
-# def main():
-#     output_dir = "/scale/user/mtannaou/alternance/donnees_sar_changes_update"
-#     sargeo = pd.read_csv("excels/SARGEO_SAR.csv")
-
-#     for file_path in sargeo["sar_path"]: 
-#         try: 
-#             convert_sar_to_xy(file_path, sargeo, output_dir) 
-#         except Exception as e: 
-#             print(f"❌ Erreur pour {file_path}: {e}")
-
-#     print(len(os.listdir(output_dir)))
-
-
-# if run : 
-#     main()
+    main(2,300, center="storm")

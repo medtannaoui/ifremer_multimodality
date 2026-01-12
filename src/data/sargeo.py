@@ -76,19 +76,28 @@ def create_sargeo_sar_csv():
     df = pd.DataFrame(infos)
 
     # --- Sauvegarde CSV ---
-    output_csv = "/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v00r00.csv"
+    output_csv = "/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v00r00_09_janvier.csv"
     os.makedirs(os.path.dirname(output_csv), exist_ok=True)
     df.to_csv(output_csv, index=False)
 
 
 ### create sargeo_sar_csv() ###
 def add_sar_listing_path():
-    sargeo_csv_path = "/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v00r00.csv"
-    listing_sar_path = "/scale/user/mtannaou/alternance/excels/listing_res_3km.csv"
-    output_path = "/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v3.csv"
+    sargeo_csv_path = "/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v00r00_09_janvier.csv"
+    listing_sar_path = "/scale/user/mtannaou/alternance/excels/listing_sar_09_janvier.csv"
+    output_path = "/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v00r00_09_janvier_v1.csv"
     listing_df = pd.read_csv(listing_sar_path)
     sargeo = pd.read_csv(sargeo_csv_path)
     #add inter column
+    listing_df = listing_df.copy()
+    listing_df["date_l2m"] = pd.to_datetime(
+        listing_df["L2M path"].str.extract(r"(\d{8}t\d{6})")[0],
+        format="%Y%m%dt%H%M%S",
+        errors="coerce"
+    )
+
+    time_window = pd.Timedelta(minutes=3)
+
     for i, row in sargeo.iterrows():
         file_path = row["fichier"]
         #rcm1-sclnd-owi-cm-20250217t134001-20250217t134117-00003
@@ -98,6 +107,28 @@ def add_sar_listing_path():
         
         if len(match) > 0:
             sargeo.loc[i, "sar_path"] = match["L2M path"].values[0]
+        else:
+            # 2) Fallback : même satellite + delta temps <= 2 minutes
+
+            # satellite = premier token avant "-"
+            parts = sargeo.loc[i, "sar_inter"].split("-")
+            if len(parts) < 5:
+                continue
+
+            satellite = parts[0]   # rcm1 / s1a / s1b etc.
+            date_str = parts[4]    # 20250217t134001 (d'après ton format)
+
+            date_ref = pd.to_datetime(date_str, format="%Y%m%dt%H%M%S", errors="coerce")
+            if pd.isna(date_ref):
+                continue
+
+            match2 = listing_df[
+                listing_df["L2M path"].str.contains(satellite, na=False)
+                & listing_df["date_l2m"].between(date_ref - time_window, date_ref + time_window)
+            ]
+
+            if len(match2) > 0:
+                sargeo.loc[i, "sar_path"] = match2["L2M path"].iloc[0]
     sargeo.to_csv(output_path, index=False)
     print(f"SARGEO with SAR path saved to {output_path}")
     
