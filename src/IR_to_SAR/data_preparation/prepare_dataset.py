@@ -113,28 +113,7 @@ class PrepareDataSet():
         #  Extract SAR windspeed as target
         self.sar = np.array(data["owiwindspeed"])
 
-        ############################################
-        ###### filter analysis_rmax ################
-        # analysis_rmax = np.array(data["analysis_rmax"])
-
-        # valid_mask = (
-        #     (analysis_rmax < 180000)
-        # )
-        # self.X = self.X[valid_mask] 
-        # self.sar = self.sar[valid_mask]
-        # keys = [
-        #     "cyclone_id", "sar_time", "vmax",
-        #     "analysis_vmax", "analysis_rmax",
-        #     "analysis_center_quality_flag"
-        # ]
-
-        # self.infos = [
-        #     {k: data[k][i] for k in keys}
-        #     for i in np.where(valid_mask)[0]
-        # ]
-        
-
-
+    
         # Center crop 
         N, C, H, W = self.X.shape
         self.X = self.X[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2]
@@ -145,7 +124,7 @@ class PrepareDataSet():
 
         # Optional: remove SAR samples with too many NaNs ===
         if drop_nan_100:
-            self.X, self.sar, self.infos = dataprep.remove_sar_nan(self.X, self.sar, radius_km=100, threshold=0.5, infos=self.infos)
+            self.X, self.sar, self.infos = dataprep.remove_sar_nan(self.X, self.sar, radius_km=128, threshold=0.7, infos=self.infos)
 
         #  Create SAR valid pixel mask ===
         self.mask_sar = np.isfinite(self.sar).astype(np.float32)
@@ -153,7 +132,7 @@ class PrepareDataSet():
         # Replace NaN & Inf ===
         self.X = np.nan_to_num(self.X, nan=0.0, posinf=0.0, neginf=0.0)
         self.sar = np.nan_to_num(self.sar, nan=0.0, posinf=0.0, neginf=0.0)
-        # self.sar = dataprep.create_moment_sar(self.sar)
+        self.sar = dataprep.create_moment_sar(self.sar)
 
         # --- Split ---
         self.dictio = dataprep.train_val_test_split(

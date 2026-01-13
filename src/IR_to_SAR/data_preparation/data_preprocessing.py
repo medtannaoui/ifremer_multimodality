@@ -314,6 +314,7 @@ def train_val_test_split(
     def quantile_bins(x, n_bins):
         q = np.nanquantile(x, np.linspace(0, 1, n_bins + 1)[1:-1])
         return np.digitize(x, q)
+   
 
     vmax_bin  = quantile_bins(analysis_vmax, n_bins)
     rmax_bin  = quantile_bins(analysis_rmax, n_bins)
@@ -856,56 +857,68 @@ def create_moment_sar(sar):
 
     return moment
 
-
+def add_white_noise(img, sigma):
+    noise = np.random.normal(0, sigma, img.shape)
+    return img + noise
 
 def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
-    
-    ir_aug, sar_aug, mask_aug, infos_aug = [], [], [], []
+    # ---------- PASS 1: filter + white noise ----------
+    base_ir, base_sar, base_mask, base_infos = [], [], [], []
 
-    for ir, sar, mask, inf in zip(ir_tensor, sar_tensor, mask_tensor, infos) :
-        # print("rmax_unities llllllll",np.nanmax(np.array(inf["analysis_vmax"])))
-        if np.nanmax(np.array(inf["analysis_rmax"])) > 181000:     # delete storms with radisu of max wind speed less than 100km
+    for ir, sar, mask, inf in zip(ir_tensor, sar_tensor, mask_tensor, infos):
+        rmax = inf.get("analysis_rmax", np.nan)
+        # si c'est une liste/array -> prends max, sinon prends valeur
+        rmax = np.nanmax(rmax) if np.ndim(rmax) > 0 else float(rmax)
+
+        # skip storms too large
+        if np.isfinite(rmax) and rmax > 180000:
             continue
-        # original
-        ir_aug.append(ir)
-        sar_aug.append(sar)
-        mask_aug.append(mask)
-        infos_aug.append(inf)
 
-        # rotations
-        # if np.nanmax(np.array(inf["analysis_vmax"])) > 60:   # for storms with max wind speed more than 50m/s
-        #     for angle in [180]:
-        #         ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
-        #         ir_aug.append(ir_r)
-        #         sar_aug.append(sar_r)
-        #         mask_aug.append(mask_r)
-        #         infos_aug.append(inf)
-        # print(np.nanmax(np.array(inf["analysis_rmax"])))
-        if np.nanmax(np.array(inf["analysis_rmax"])) > 50000 and np.nanmax(np.array(inf["analysis_rmax"])) < 100000:   # for storms with radius of max wind speed more than 50km
-            for flip in ["h","v"]:
+        # keep original
+        base_ir.append(ir)
+        base_sar.append(sar)
+        base_mask.append(mask)
+        base_infos.append(inf)
+
+        # add noise (duplicate)
+        for sigma in  [0.03,0.05] : 
+            base_ir.append(add_white_noise(ir, sigma))
+            base_sar.append(sar)
+            base_mask.append(mask)
+            base_infos.append(inf)
+
+    out_ir, out_sar, out_mask, out_infos = [], [], [], []
+
+    for ir, sar, mask, inf in zip(base_ir, base_sar, base_mask, base_infos):
+        out_ir.append(ir)
+        out_sar.append(sar)
+        out_mask.append(mask)
+        out_infos.append(inf)
+
+        rmax = inf.get("analysis_rmax", np.nan)
+        rmax = np.nanmax(rmax) if np.ndim(rmax) > 0 else float(rmax)
+
+        # flips
+        if np.isfinite(rmax) and (50000 < rmax < 100000):
+            for flip in ["h", "v"]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
-                ir_aug.append(ir_r)
-                sar_aug.append(sar_r)
-                mask_aug.append(mask_r)
-                infos_aug.append(inf)
-        if np.nanmax(np.array(inf["analysis_rmax"])) > 100000:   # for storms with radius of max wind speed more than 60km
-            for flip in ["h","v"]:
+                out_ir.append(ir_r); out_sar.append(sar_r); out_mask.append(mask_r); out_infos.append(inf)
+
+        if np.isfinite(rmax) and (rmax > 100000):
+            for flip in ["h", "v"]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
-                ir_aug.append(ir_r)
-                sar_aug.append(sar_r)
-                mask_aug.append(mask_r)
-                infos_aug.append(inf)
-            for angle in [270,90,180]:
+                out_ir.append(ir_r); out_sar.append(sar_r); out_mask.append(mask_r); out_infos.append(inf)
+
+            for angle in [270, 90, 180]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
-                ir_aug.append(ir_r)
-                sar_aug.append(sar_r)
-                mask_aug.append(mask_r)
-                infos_aug.append(inf)
+                out_ir.append(ir_r); out_sar.append(sar_r); out_mask.append(mask_r); out_infos.append(inf)
+
+    
     return (
-        np.array(ir_aug),
-        np.array(sar_aug),
-        np.array(mask_aug),
-        np.array(infos_aug)
+        np.stack(out_ir, axis=0),
+        np.stack(out_sar, axis=0),
+        np.stack(out_mask, axis=0),
+        out_infos
     )
 
 

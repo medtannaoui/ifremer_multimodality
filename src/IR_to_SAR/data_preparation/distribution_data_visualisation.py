@@ -528,29 +528,43 @@ def compare_radial_vmax(
 
     vmax_r_true = []
     vmax_r_pred = []
+    err_of_means = []      # RED
+    mean_of_errors = []    # ORANGE
     r_centers = []
 
     for r0 in r_bins[:-1]:
         mask = (R >= r0) & (R < r0 + dr)
-
         if np.sum(mask) == 0:
             continue
 
-        # max over the shell for each sample, then mean over all samples
-        vmax_true_shell = np.nanmean(np.nanmax(sars_true[:, mask], axis=1))
-        vmax_pred_shell = np.nanmean(np.nanmax(sars_predict[:, mask], axis=1))
+        # Per-sample vmax on the shell (shape: [N])
+        vmax_true_per_sample = np.nanmax(sars_true[:, mask], axis=1)
+        vmax_pred_per_sample = np.nanmax(sars_predict[:, mask], axis=1)
+
+        # Means (your current approach)
+        vmax_true_shell = np.nanmean(vmax_true_per_sample)
+        vmax_pred_shell = np.nanmean(vmax_pred_per_sample)
 
         vmax_r_true.append(vmax_true_shell)
         vmax_r_pred.append(vmax_pred_shell)
+
+        # RED: error of means
+        err_of_means.append(np.abs(vmax_true_shell - vmax_pred_shell))
+
+        #ORANGE: mean of per-sample absolute errors
+        per_sample_abs_err = np.abs(vmax_true_per_sample - vmax_pred_per_sample)
+        mean_of_errors.append(np.nanmean(per_sample_abs_err))
 
         r_centers.append(r0 + dr / 2)
 
     
 
-    vmax_r_true = np.array(vmax_r_true)
-    vmax_r_pred = np.array(vmax_r_pred)
-    r_centers   = np.array(r_centers)
-    
+    vmax_r_true     = np.array(vmax_r_true)
+    vmax_r_pred     = np.array(vmax_r_pred)
+    err_of_means    = np.array(err_of_means)
+    mean_of_errors  = np.array(mean_of_errors)
+    r_centers       = np.array(r_centers)
+        
     
 
     vmax1d_true = np.nanmax(vmax_r_true)
@@ -559,8 +573,9 @@ def compare_radial_vmax(
     rmax1d_true = r_centers[np.nanargmax(vmax_r_true)]
     rmax1d_pred = r_centers[np.nanargmax(vmax_r_pred)]
     r_norm = r_centers /rmax1d_true
-    rmax1d_true /= rmax1d_true
-    rmax1d_pred /= rmax1d_true
+    rmax_1d_with_norme = rmax1d_true
+    rmax1d_true /= (rmax_1d_with_norme*2)
+    rmax1d_pred /= (rmax_1d_with_norme*2)
 
   
     error = np.abs(vmax_r_true - vmax_r_pred)
@@ -570,16 +585,19 @@ def compare_radial_vmax(
 
     plt.plot(r_norm, vmax_r_true*1.94384, color="green", linewidth=2, label="Reel SAR Radial Vmax (knots)")
     plt.plot(r_norm, vmax_r_pred*1.94384, color="blue", linewidth=2, label="Predict SAR Radial Vmax (knots)")
-    plt.plot(r_norm, error*1.94384, color="red", linestyle="--", linewidth=2, label="Absolute Error (knots)")
+    plt.plot(r_norm, err_of_means*1.94384, linestyle="--", linewidth=2,
+         label="|Error of means| = |E(true)-E(pred)| (kt)")
+    plt.plot(r_norm, mean_of_errors*1.94384, linestyle="-.", linewidth=2, color="orange",
+         label="Mean absolute error = E(|true-pred|) (kt)")
 
     # --- Add vertical lines for Rmax
-    plt.axvline(rmax1d_true, color="green", linestyle="--", linewidth=1.5, label=f"Reel Rmax1D = {rmax1d_true*2:.1f} Km")
-    plt.axvline(rmax1d_pred, color="blue", linestyle="--", linewidth=1.5, label=f"Pred Rmax1D = {rmax1d_pred*2:.1f} Km")
+    plt.axvline(rmax1d_true*2, color="green", linestyle="--", linewidth=1.5, label=f"Reel Rmax1D = {rmax1d_true*2:.1f} Km")
+    plt.axvline(rmax1d_pred*2, color="blue", linestyle="--", linewidth=1.5, label=f"Pred Rmax1D = {rmax1d_pred*2:.1f} Km")
     print("--------------------------",vmax1d_true)
     plt.axhline(vmax1d_true*1.94384, color="green", linestyle="--", linewidth=1.5, label=f"Reel Vmax1D = {vmax1d_true*1.94384:.1f} Kt")
     plt.axhline(vmax1d_pred*1.94384, color="blue", linestyle="--", linewidth=1.5, label=f"Pred Vmax1D = {vmax1d_pred*1.94384:.1f} Kt")
 
-    plt.xlabel("Radius R ()", fontsize=14)
+    plt.xlabel("Radius R* (R/RMW)", fontsize=14)
     plt.ylabel("Vmax Mean (Kt)", fontsize=14)
     plt.title(f"Radial Vmax Profile — {set} (Epoch {epoch+1})", fontsize=16)
     plt.grid(True, linestyle="--", alpha=0.4)

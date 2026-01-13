@@ -376,9 +376,6 @@ def main(cfg: IR_SAR_Config,test=False):
             f"📊 Epoch {epoch+1}: Train Loss={train_loss:.6f}, "
             
             f"LR={scheduler.get_last_lr()[0]:.6f}, "
-            f"pix2pix loss={l_pix.item():.6f},  "
-            f"gradient loss={l_grad.item():.6f},  "
-            f"radial loss={l_radial.item():.6f}  "
             f"Val Loss={val_loss:.6f},  "
             # f"Train metrics={train_metrics}, Val metrics={val_metrics}"
         )
