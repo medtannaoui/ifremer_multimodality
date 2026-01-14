@@ -290,7 +290,7 @@ def train_val_test_split(
     test_size=0.15,
     augmentation=True,
     target_dir=None,
-    n_bins=3,
+    n_bins=2,
 ):
    
 
@@ -306,7 +306,7 @@ def train_val_test_split(
     analysis_rmax = np.array([d["analysis_rmax"] for d in infos])
     vmax = np.array([d["vmax"] for d in infos])
 
-    delta_vmax = vmax - analysis_vmax
+    # delta_vmax = vmax - analysis_vmax
 
     # --------------------------------------------------
     # 2) Quantile binning (robust to imbalance)
@@ -318,15 +318,15 @@ def train_val_test_split(
 
     vmax_bin  = quantile_bins(analysis_vmax, n_bins)
     rmax_bin  = quantile_bins(analysis_rmax, n_bins)
+    basin = np.array([d["cyclone_id"][:2].lower() for d in infos])
     # delta_bin = quantile_bins(delta_vmax, n_bins)
 
     # --------------------------------------------------
     # 3) Combine bins → single stratification key
     # --------------------------------------------------
     stratify_key = (
-        vmax_bin.astype(str) + "_" +
-        rmax_bin.astype(str) + "_" 
-        # delta_bin.astype(str)
+        basin.astype(str) + "_" 
+        # + vmax_bin.astype(str) + "_"
     )
 
     # --------------------------------------------------
@@ -449,9 +449,7 @@ def train_val_test_split(
         file_name="analysis_rmax_distribution_train_vs_val.png"
     )
 
-    # --------------------------------------------------
-    # 10) Return dict (compatible with your pipeline)
-    # --------------------------------------------------
+
     return {
         "train": (ir_train, sar_train),
         "val":   (ir_val, sar_val),

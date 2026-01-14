@@ -349,8 +349,8 @@ class LogValidationSamples:
         
         # sar_denorm = add_radial_mean(sar_denorm,self.radial_profil)
         # pred_denorm = add_radial_mean(pred_denorm,self.radial_profil)
-        sar_denorm = moment_to_sar(sar_denorm)
-        pred_denorm = moment_to_sar(pred_denorm)
+        # sar_denorm = moment_to_sar(sar_denorm)
+        # pred_denorm = moment_to_sar(pred_denorm)
 
         # Conversion numpy
         ir_np   = ir_denorm
@@ -472,8 +472,9 @@ class LogValidationSamples:
         # =================================================
         sar_2d  = sar_denorm   # (B, H, W)
         pred_2d = pred_denorm # (B, H, W)
-        mask_2d = mask_np                                # (B, H, W)
-        with open(os.path.join(self.output_dir,"predictions_denormalisées.pkl"),"wb") as f:
+        mask_2d = mask_np 
+        os.makedirs(os.path.join(self.output_dir,'predictions_denormalisees',set))                               # (B, H, W)
+        with open(os.path.join(self.output_dir,"predictions_denormalisees",set,"predictions_denormalisées.pkl"),"wb") as f:
             pkl.dump({f"{set}":[ir_np,sar_2d,pred_2d,mask_2d,infos_np]},f)
 
         # Conversion en knots
