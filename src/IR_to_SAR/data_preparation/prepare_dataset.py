@@ -5,9 +5,11 @@ import xarray as xr
 import numpy as np
 from loguru import logger
 import pickle as pkl
+import os
 from importlib import reload
 import matplotlib.pyplot as plt
-
+import pandas as pd
+from tqdm import tqdm
 import src.IR_to_SAR.data_preparation.data_preprocessing as dataprep
 from src.visualisation.utils_colormap import CMAP
 cmap_ir , cmap_sar = CMAP.cira_ir(), CMAP.cmap_sar()
@@ -33,49 +35,100 @@ class PrepareDataSet():
         self.target_dir=target_dir
         
 
-        print("🔹 Loading PKL data...")
-        with open(pkl_file, "rb") as f:
-            data = pkl.load(f)   # dictionary
-#         mask = [x <= 1.4 for x in data["analysis_center_quality_flag"]]
+        print("🔹 Loading data...")
+        # with open(pkl_file, "rb") as f:
+        #     data = pkl.load(f)   # dictionary
+        print("🔹 Loading data...")
+        data = pd.read_csv("/scale/user/mtannaou/alternance/TCVA_matched_with_SARGEO_df.csv")
+        print("data before filtering", len(data))
 
-#         data = {
-#             key: [value[i] for i in range(len(value)) if mask[i]]
-#             for key, value in data.items()
-# }
-        #  IRWIN is always included as the first channel ===
+        data = data[~data["sar_aeqd_path"].isnull()].reset_index(drop=True)
+        print("data after filtering (non-null sar_aeqd_path)", len(data))
+
+        data =data[data["nan_ratio_within_100km"] <= 0.5]
+        print("data after filter with nan_ratio within radius of 100km",len(data))
+
+        data =data[data["analysis_rmax"] <= 180000]
+        print("data size after remove SAR with analysis_rmax bigger than 180Km")
+
+
         final_channels = ["irwin"]
-        if input_channels is not None:
-            final_channels += input_channels   # append additional channels
-
         print(f"📎 Using input channels: {final_channels}")
 
-        #  Extract metadata ===
-        keys = ["cyclone_id", "sar_time", "vmax", 
-        "analysis_vmax", "analysis_rmax", 
-        "analysis_center_quality_flag"]
+        # ---- Keep only rows that open well ----
+        
+        
+        N = len(data)
+        if os.path.exists("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/pairs_from_csv.pkl"):
+            with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/pairs_from_csv.pkl","rb") as f: 
+                data_pkl = pkl.load(f)
+            sar_all  = np.array(data_pkl["owiWindSpeed"])
+            irwin_all = np.array(data_pkl["irwin"])
+        else : 
+            good_rows, bad_rows = [], []
+            irwin_all = []
+            sar_all = []
+            pbar = tqdm(total=N, desc="Checking files", unit="row")
+            for i, row in data.iterrows():
+                try:
+                    with xr.open_dataset(row["sargeo_path"]) as sargeo:
+                        if "IRWIN" not in sargeo:
+                            raise KeyError("Missing IRWIN")
+                        irwin_all.append(sargeo["IRWIN"].values)
 
-        self.infos = [
-            {k: data[k][i] for k in keys}
-            for i in range(len(data["cyclone_id"]))
-        ]
-                        
+                    with xr.open_dataset(row["sar_aeqd_path"]) as ds_aeqd:
+                        if "owiWindSpeed" not in ds_aeqd:
+                            raise KeyError("Missing owiWindSpeed")
+                        sar_all.append(ds_aeqd["owiWindSpeed"].values)
 
-        #  Extract X channels ===
-       
+                    good_rows.append(i)
+
+                except Exception as e:
+                    bad_rows.append(i)
+
+                pbar.set_postfix(good=len(good_rows), bad=len(bad_rows))
+                pbar.update(1)
+
+            pbar.close()
+            with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/pairs_from_csv.pkl","wb") as f:
+                pkl.dump({"owiWindSpeed":np.array(sar_all),"irwin":np.array(irwin_all)},f)
+                         
+            # Filter dataframe to only good indices
+            data = data.loc[good_rows].reset_index(drop=True)
+
+            print(f"✅ Kept rows that open correctly: {len(data)}")
+            print(f"❌ Dropped rows that failed: {len(bad_rows)}")
+
+
+
+        irwin_all = np.array(irwin_all)
+        sar_all = np.array(sar_all)
+
+        # ---- Now proceed safely ----
+
+        keys = ["cyclone_id", "sar_time", "vmax",
+                "analysis_vmax", "analysis_rmax",
+                "analysis_center_quality_flag"]
+
+        self.infos = data[keys].to_dict(orient="records")
+
         image_channels = []
         feature_arrays = []
-        feature_names = []   # for debug
+        feature_names = [] 
+        
 
+       
+    
         # all irwins (9)
-        irwin_all = np.array(data["irwin"])    # (N, 9, H, W) par ex.
+        irwin_all = np.array(irwin_all)    # (N, 9, H, W) par ex.
         N, _, H, W = irwin_all.shape
 
         # for i in [0,1,2,3,4,5,6,7,8]:
         #     irwin = irwin_all[:, i, :, :]      # (N, H, W)  # add multiple irs
         #     image_channels.append(irwin)
         image_channels.append(irwin_all[:,4,:,:])
-        image_channels.append(np.gradient(irwin_all[:,4,:,:])[0])
-        image_channels.append(np.gradient(irwin_all[:,4,:,:])[1])
+        # image_channels.append(np.gradient(irwin_all[:,4,:,:])[0])
+        # image_channels.append(np.gradient(irwin_all[:,4,:,:])[1])
 
         # image_channels.append(np.nanmean(irwin_all,axis=1)) #mean of th nine irs
 
@@ -111,20 +164,21 @@ class PrepareDataSet():
             print("ℹ️ No features added to the bottleneck")
 
         #  Extract SAR windspeed as target
-        self.sar = np.array(data["owiwindspeed"])
+        self.sar = np.array(sar_all)
 
     
         # Center crop 
+        print(self.sar.shape)
+        print(self.X.shape)
         N, C, H, W = self.X.shape
+        N,H_sar,W_sar = self.sar.shape
         self.X = self.X[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2]
-        self.sar = self.sar[:, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2]
+        self.sar = self.sar[:, H_sar//2-size//2:H_sar//2+size//2, W_sar//2-size//2:W_sar//2+size//2]
+        print(self.sar.shape)
+        print(self.X.shape)
 
         #  Convert IR from Kelvin to Celsius ===
         self.X[:, 0] = self.X[:, 0] - 273.15   # always channel 0 = irwin
-
-        # Optional: remove SAR samples with too many NaNs ===
-        if drop_nan_100:
-            self.X, self.sar, self.infos = dataprep.remove_sar_nan(self.X, self.sar, radius_km=128, threshold=0.7, infos=self.infos)
 
         #  Create SAR valid pixel mask ===
         self.mask_sar = np.isfinite(self.sar).astype(np.float32)

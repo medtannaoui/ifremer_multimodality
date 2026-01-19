@@ -481,6 +481,8 @@ def main(cfg: IR_SAR_Config,test=False):
 
 
     
+    #copir la config 
+
     
     logger.info("🎯 Training Complete!")
 

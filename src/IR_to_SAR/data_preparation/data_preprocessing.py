@@ -280,6 +280,7 @@ from sklearn.model_selection import train_test_split
 from collections import Counter
 
 
+
 def train_val_test_split(
     X_array,
     sar_array,
@@ -290,48 +291,26 @@ def train_val_test_split(
     test_size=0.15,
     augmentation=True,
     target_dir=None,
-    n_bins=2,
+    n_bins=2,  
 ):
-   
-
-    # assert abs(train_size + val_size + test_size - 1.0) < 1e-6
 
     N = len(X_array)
     all_indices = np.arange(N)
 
-    # --------------------------------------------------
-    # 1) Extract stratification variables
-    # --------------------------------------------------
-    analysis_vmax = np.array([d["analysis_vmax"] for d in infos])
-    analysis_rmax = np.array([d["analysis_rmax"] for d in infos])
-    vmax = np.array([d["vmax"] for d in infos])
+    # --- stratification variables ---
+    analysis_rmax = np.array([d["analysis_rmax"] for d in infos], dtype=float)
+    basin = np.array([str(d["cyclone_id"][:2]).lower() for d in infos])
 
-    # delta_vmax = vmax - analysis_vmax
-
-    # --------------------------------------------------
-    # 2) Quantile binning (robust to imbalance)
-    # --------------------------------------------------
+    # --- quantile bins ---
     def quantile_bins(x, n_bins):
         q = np.nanquantile(x, np.linspace(0, 1, n_bins + 1)[1:-1])
-        return np.digitize(x, q)
-   
+        return np.digitize(x, q) 
 
-    vmax_bin  = quantile_bins(analysis_vmax, n_bins)
-    rmax_bin  = quantile_bins(analysis_rmax, n_bins)
-    basin = np.array([d["cyclone_id"][:2].lower() for d in infos])
-    # delta_bin = quantile_bins(delta_vmax, n_bins)
+    rmax_bin = quantile_bins(analysis_rmax, n_bins)
 
-    # --------------------------------------------------
-    # 3) Combine bins → single stratification key
-    # --------------------------------------------------
-    stratify_key = (
-        basin.astype(str) + "_" 
-        # + vmax_bin.astype(str) + "_"
-    )
+    stratify_key = basin.astype(str) + "_" + rmax_bin.astype(str)
 
-    # --------------------------------------------------
-    # 4) Remove rare classes (sklearn requirement)
-    # --------------------------------------------------
+    
     counts = Counter(stratify_key)
     valid_mask = np.array([counts[k] >= 2 for k in stratify_key])
 
@@ -340,9 +319,7 @@ def train_val_test_split(
 
     print(f"📊 Stratification classes kept: {len(set(stratify_key))}")
 
-    # --------------------------------------------------
-    # 5) Train vs Temp split
-    # --------------------------------------------------
+    # --- train vs temp ---
     train_idx, temp_idx = train_test_split(
         all_indices,
         test_size=(1 - train_size),
@@ -351,9 +328,7 @@ def train_val_test_split(
         stratify=stratify_key
     )
 
-    # --------------------------------------------------
-    # 6) Val vs Test split
-    # --------------------------------------------------
+    # --- val vs test ---
     stratify_temp = stratify_key[np.isin(all_indices, temp_idx)]
     val_rel_size = val_size / (val_size + test_size)
 
@@ -363,13 +338,6 @@ def train_val_test_split(
         random_state=0,
         shuffle=True,
         stratify=stratify_temp
-    )
-
-    print(
-        "🎯 Stratified Split — "
-        f"Train: {len(train_idx)} | "
-        f"Val: {len(val_idx)} | "
-        f"Test: {len(test_idx)}"
     )
 
     # --------------------------------------------------
@@ -411,10 +379,11 @@ def train_val_test_split(
     # 9) Data augmentation (TRAIN ONLY)
     # --------------------------------------------------
     if augmentation:
+        print("Start Data Augmentation for train set : ----------")
         ir_train, sar_train, mask_train, infos_train = data_augmentation(
             ir_train, sar_train, mask_train, infos_train
         )
-
+    print("Plot Data distribution : --------------------")
     plot_metric_scatter(
         true_values=[d["vmax"] for d in infos_train],
         pred_values=[d["analysis_vmax"] for d in infos_train],
@@ -777,6 +746,7 @@ def remove_sar_nan(X_batch, sar_batch, radius_km=100, km_per_pixel=2, threshold=
         sar_batch = sar_batch.cpu().numpy()
 
     N, C, H, W = X_batch.shape
+    print(sar_batch.shape)
     assert sar_batch.shape == (N, H, W), "Shapes do not match"
 
     # Create circular mask
@@ -809,7 +779,7 @@ def remove_sar_nan(X_batch, sar_batch, radius_km=100, km_per_pixel=2, threshold=
 
 
 def augmentation_sar_safe(ir, sar, mask, angle=None, flip=None):
-    
+   
     ir_t = torch.tensor(ir, dtype=torch.float32).unsqueeze(0)
     sar_t = torch.tensor(sar, dtype=torch.float32).unsqueeze(0)
     mask_t = torch.tensor(mask, dtype=torch.float32).unsqueeze(0)
@@ -861,33 +831,10 @@ def add_white_noise(img, sigma):
 
 def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
     # ---------- PASS 1: filter + white noise ----------
-    base_ir, base_sar, base_mask, base_infos = [], [], [], []
-
-    for ir, sar, mask, inf in zip(ir_tensor, sar_tensor, mask_tensor, infos):
-        rmax = inf.get("analysis_rmax", np.nan)
-        # si c'est une liste/array -> prends max, sinon prends valeur
-        rmax = np.nanmax(rmax) if np.ndim(rmax) > 0 else float(rmax)
-
-        # skip storms too large
-        if np.isfinite(rmax) and rmax > 180000:
-            continue
-
-        # keep original
-        base_ir.append(ir)
-        base_sar.append(sar)
-        base_mask.append(mask)
-        base_infos.append(inf)
-
-        # add noise (duplicate)
-        for sigma in  [0.03,0.05] : 
-            base_ir.append(add_white_noise(ir, sigma))
-            base_sar.append(sar)
-            base_mask.append(mask)
-            base_infos.append(inf)
-
     out_ir, out_sar, out_mask, out_infos = [], [], [], []
 
-    for ir, sar, mask, inf in zip(base_ir, base_sar, base_mask, base_infos):
+
+    for ir, sar, mask, inf in zip(ir_tensor, sar_tensor, mask_tensor, infos):
         out_ir.append(ir)
         out_sar.append(sar)
         out_mask.append(mask)
@@ -897,12 +844,12 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
         rmax = np.nanmax(rmax) if np.ndim(rmax) > 0 else float(rmax)
 
         # flips
-        if np.isfinite(rmax) and (50000 < rmax < 100000):
+        if np.isfinite(rmax) and (50000 < rmax < 110000):
             for flip in ["h", "v"]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
                 out_ir.append(ir_r); out_sar.append(sar_r); out_mask.append(mask_r); out_infos.append(inf)
 
-        if np.isfinite(rmax) and (rmax > 100000):
+        if np.isfinite(rmax) and (rmax > 110000):
             for flip in ["h", "v"]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
                 out_ir.append(ir_r); out_sar.append(sar_r); out_mask.append(mask_r); out_infos.append(inf)
@@ -910,6 +857,9 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
             for angle in [270, 90, 180]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
                 out_ir.append(ir_r); out_sar.append(sar_r); out_mask.append(mask_r); out_infos.append(inf)
+            for sigma in [0.03,0.05]:
+                ir_r,sar_r = add_white_noise(ir,sigma), add_white_noise(sar,sigma)
+                out_ir.append(ir_r); out_sar.append(sar_r); out_mask.append(mask); out_infos.append(inf)
 
     
     return (
