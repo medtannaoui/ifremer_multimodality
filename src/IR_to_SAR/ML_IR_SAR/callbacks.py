@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import pickle as pkl
+import pandas as pd
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
@@ -68,11 +69,12 @@ class LogValidationSamples:
 
     def __init__(self, base_dir, mean_X, std_X, mean_sar, std_sar, norm,
              num_samples=4, start_epoch=20, every_n_epochs=1,
-             cmap_ir="gray", cmap_sar="viridis", num_epochs=0, infos=None, distance_km=None, mask_train=None, mask_val = None,target_dir = None,
-             radial_mean=None):
+             cmap_ir="gray", cmap_sar="viridis", num_epochs=0, infos_train=None, infos_val=None, infos_test=None, 
+             mask_train=None, mask_val = None,mask_test=None,
+             target_dir = None,input_data="normal", output_data="sar"
+             ):
 
         self.base_dir = Path(base_dir)
-        # self.output_dir = self._create_unique_dir(self.base_dir)
         self.output_dir = target_dir
 
         self.num_samples = num_samples
@@ -89,14 +91,20 @@ class LogValidationSamples:
         self.norm = norm
         self.mask_train = mask_train
         self.mask_val = mask_val
+        self.mask_test=mask_test
         self.num_epochs = num_epochs
-        self.infos = infos
-        self.radial_profil = radial_mean
+        self.infos_train = infos_train
+        self.infos_val = infos_val
+        self.infos_test = infos_test
+
         self.vmax_bins_knots = None
         self.rmax_bins_km = None
+
+        self.input_data = input_data
+        self.output_data=output_data
+
         
-
-
+        
     def _create_unique_dir(self, base_dir):
         i = 1
         while (base_dir / f"train_ir_sar_{i}").exists():
@@ -111,43 +119,28 @@ class LogValidationSamples:
         - Vmax1D: maximum wind speed along radial profile
         - Rmax1D: radius at which Vmax1D occurs
         """
-
         H, W = sar_2d.shape
-
         Y, X = np.indices((H, W))
         R = np.sqrt((X - cx)**2 + (Y - cy)**2)
-
         Rmax = int(R.max())
         radii = np.arange(0, Rmax)
-
         vmax_profile = []
-
         for R0 in radii:
             mask = (np.abs(R - R0) < 0.5)
-
             if np.sum(mask) == 0:
                 vmax_profile.append(np.nan)
             else:
                 vmax_profile.append(np.nanmax(sar_2d[mask]))
-
         vmax_profile = np.array(vmax_profile)
-
         # Remove NaNs
         valid = ~np.isnan(vmax_profile)
         vmax_profile = vmax_profile[valid]
         radii = radii[valid]
-
         vmax1d = np.nanmax(vmax_profile)
         rmax1d = radii[np.nanargmax(vmax_profile)]
-
-        # Convert:
-        # - Vmax in knots
-        # - Rmax in km (each pixel = 2 km)
-        vmax1d_knots = vmax1d * 1.94384
+        vmax1d_knots = vmax1d * 1.94384   #kt
         rmax1d_km = rmax1d
-
         return vmax1d_knots, rmax1d_km
-
 
     def log_batch(self, model, batch, epoch, device, set="validation"):
         """
@@ -171,19 +164,12 @@ class LogValidationSamples:
         sar = sar.to(device)
         mask = mask.to(device)
         
-        # ------------------------------------------------------------
-        # 1) Prédiction
-        # ------------------------------------------------------------
         with torch.no_grad():
             pred = model(x, timestep=0).sample  # (B,1,H,W)
-
-        # ------------------------------------------------------------
-        # 2) Dé-normalisation
-        # ------------------------------------------------------------
+            
 
         def denorm(t, mean, std):
             return t * (std + 1e-10) + mean
-            # return std + t*(1e-10 + mean  -std)
 
         def annular_denormalization(
             images_norm,
@@ -204,32 +190,6 @@ class LogValidationSamples:
                     images[:, radial_bins == b] * std[b]
                 ) + mean[b]
             return images
-        
-        def add_radial_mean(
-            images_anom,
-            radial_profile,
-            bin_size=1
-        ):
-
-            single = images_anom.ndim == 2
-            if single:
-                images_anom = images_anom[None, ...]
-
-            N, H, W = images_anom.shape
-            cy, cx = H // 2, W // 2
-
-            y, x = np.indices((H, W))
-            radius = np.sqrt((y - cy)**2 + (x - cx)**2)
-            radial_bins = (radius // bin_size).astype(np.int32)
-
-            images = images_anom.copy()
-            n_bins = len(radial_profile)
-
-            for b in range(n_bins):
-                images[:, radial_bins == b] += radial_profile[b]
-
-            return images[0] if single else images
-
 
         def moment_to_sar(moment):
             assert moment.ndim == 3, "moment must be (N, H, W)"
@@ -254,7 +214,7 @@ class LogValidationSamples:
             rmse = np.sqrt(np.mean(err**2))
             mae  = np.mean(np.abs(err))
             return bias, std, rmse, mae
-
+        
 
         def _split_bins_from_train( values_train, n_intervals=3):
             """Build bins from TRAIN only using linspace(min,max,n_intervals+1)."""
@@ -264,7 +224,7 @@ class LogValidationSamples:
                 return None
             bins = np.linspace(v.min(), v.max(), n_intervals + 1)
             return bins
-
+        
 
         def _plot_4panel_error_hist(errors, cat_values, bins, title_prefix, unit, save_path, xlim=None):
             """
@@ -299,9 +259,10 @@ class LogValidationSamples:
                 ax.grid(True, linestyle="--", alpha=0.4)
 
                 txt = (f"bias = {bias:.2f} {unit}\n"
-                    f"stddev = {std:.2f} {unit}\n"
-                    f"rmse = {rmse:.2f} {unit}\n"
-                    f"mae = {mae:.2f} {unit}")
+                        f"stddev = {std:.2f} {unit}\n"
+                        f"rmse = {rmse:.2f} {unit}\n"
+                        f"mae = {mae:.2f} {unit}\n"
+                        f"n = {err_subset.size}\n")
                 ax.text(0.97, 0.97, txt, transform=ax.transAxes,
                         ha="right", va="top", fontsize=10,
                         bbox=dict(facecolor="white", alpha=0.85, edgecolor="none"))
@@ -332,25 +293,26 @@ class LogValidationSamples:
 
         # ---------------------------------------------------------------------------------------------------------------------------------------------------
         # On ne visualise que le canal IRWIN (canal 0)
-        ir = x[:, 0, :, :]
+        ch = 4 if x.shape[1] == 9 else 0
+        ir = x[:, ch, :, :]
         ir = ir.squeeze().cpu().numpy()
         sar = sar.squeeze().cpu().numpy()
         pred = pred.squeeze().cpu().numpy()
         
+        ir_denorm   = denorm(ir,  self.mean_X[ch],   self.std_X[ch])
+       
+
         if self.norm == "z_score":
-            ir_denorm   = denorm(ir,  self.mean_X[0],   self.std_X[0])
             sar_denorm  = denorm(sar, self.mean_sar,    self.std_sar)
             pred_denorm = denorm(pred, self.mean_sar,   self.std_sar)
+
         elif self.norm == "annular" :
-            
-            ir_denorm = denorm(ir,mean=self.mean_X[0],std=self.std_X[0])
             sar_denorm = annular_denormalization(sar, stats={"mean": self.mean_sar,"std":  self.std_sar} )
             pred_denorm = annular_denormalization(pred, stats={"mean": self.mean_sar,"std":  self.std_sar})
-        
-        # sar_denorm = add_radial_mean(sar_denorm,self.radial_profil)
-        # pred_denorm = add_radial_mean(pred_denorm,self.radial_profil)
-        # sar_denorm = moment_to_sar(sar_denorm)
-        # pred_denorm = moment_to_sar(pred_denorm)
+
+        if self.output_data == "aam":
+            sar_denorm = moment_to_sar(sar_denorm)
+            pred_denorm = moment_to_sar(pred_denorm)
 
         # Conversion numpy
         ir_np   = ir_denorm
@@ -473,7 +435,7 @@ class LogValidationSamples:
         sar_2d  = sar_denorm   # (B, H, W)
         pred_2d = pred_denorm # (B, H, W)
         mask_2d = mask_np 
-        os.makedirs(os.path.join(self.output_dir,'predictions_denormalisees',set))                               # (B, H, W)
+        os.makedirs(os.path.join(self.output_dir,'predictions_denormalisees',set),exist_ok=True)                               # (B, H, W)
         with open(os.path.join(self.output_dir,"predictions_denormalisees",set,"predictions_denormalisées.pkl"),"wb") as f:
             pkl.dump({f"{set}":[ir_np,sar_2d,pred_2d,mask_2d,infos_np]},f)
 
@@ -552,7 +514,7 @@ class LogValidationSamples:
 
             
             rmax = analysis_rmax[i] / 2000    #pixel
-            vmax = analysis_vmax[i] *1.94384
+            vmax = analysis_vmax[i] *1.94384  #m/s to kt
             if vmax is None or np.isnan(rmax):
                 vmax = 99999
             if rmax is None or np.isnan(rmax):
@@ -620,14 +582,17 @@ class LogValidationSamples:
         all_ir_test = []
         all_ir_train = []
         all_sar_train = []
+        ir_anggrek, sar_anggrek = [], []
 
 
         mask_train = []
         mask_val = []
         mask_test = []
+        mask_anggrek  = []
         infos_val = []
         infos_train = []
         infos_test = []
+        infos_anggrek = []
 
         for ir, sar, mask, inf in dataloader[1]:
             all_ir_val.append(ir)
@@ -646,6 +611,13 @@ class LogValidationSamples:
             all_sar_test.append(sar)
             mask_test.append(mask)
             infos_test.append(inf)
+        
+        #anggrek data
+        for ir, sar, mask, inf in dataloader[3]:
+            ir_anggrek.append(ir)
+            sar_anggrek.append(sar)
+            mask_anggrek.append(mask)
+            infos_anggrek.append(inf)
 
       
 
@@ -666,12 +638,318 @@ class LogValidationSamples:
         mask_test = torch.cat(mask_test, dim=0)
         infos_test = [d for batch in infos_test for d in batch]  
 
+        ir_full_anggrek = torch.cat(ir_anggrek, dim=0)
+        sar_full_anggrek = torch.cat(sar_anggrek, dim=0)
+        mask_anggrek = torch.cat(mask_anggrek, dim=0)
+        infos_anggrek = [d for batch in infos_anggrek for d in batch]
+
         # Créer un tuple exactement comme un batch
         batch_full_val = (ir_full_val, sar_full_val, mask_val, infos_val)
         batch_full_train = (ir_full_train, sar_full_train, mask_train, infos_train)
         batch_full_test = (ir_full_test, sar_full_test, mask_test, infos_test)
+        batch_full_anggrek = (ir_full_anggrek, sar_full_anggrek, mask_anggrek, infos_anggrek)
 
         self.log_batch(model, batch_full_val, epoch, device)
         self.log_batch(model, batch_full_train, epoch, device, set="train")
         self.log_batch(model, batch_full_test, epoch, device, set="test")
+        self.anggrek_plots(model, batch_full_anggrek, epoch, device)
 
+
+
+
+    def anggrek_plots(self, model, batch, epoch, device):
+        """
+        batch = (x, sar, mask, infos) for split 'test2' (Anggrek lifecycle)
+        Produces:
+        1) big lifecycle figure (IR / true SAR / pred SAR) sorted by time
+        2) mean normalized radial vmax profile (r/rmw)
+        3) time series for vmax and rmax + error
+        4) scatter plots analysis vs pred with stats
+        """
+        model.eval()
+
+        x, sar, mask, infos = batch
+        x = x.to(device)
+        sar = sar.to(device)
+        mask = mask.to(device)
+
+        # ---------- predict ----------
+        with torch.no_grad():
+            pred = model(x, timestep=0).sample  # (B,1,H,W)
+
+        # ---------- helpers ----------
+        def denorm(t, mean, std):
+            return t * (std + 1e-10) + mean
+
+        def annular_denormalization(images_norm, stats, bin_size=1):
+            # images_norm: (B,H,W)
+            N, H, W = images_norm.shape
+            cx, cy = (W - 1) / 2, (H - 1) / 2
+            y, x_ = np.indices((H, W))
+            radius = np.sqrt((y - cy)**2 + (x_ - cx)**2)
+            radial_bins = (radius // bin_size).astype(np.int32)
+            mean = stats["mean"]
+            std = stats["std"]
+            images = images_norm.copy()
+            for b in range(len(mean)):
+                images[:, radial_bins == b] = images[:, radial_bins == b] * std[b] + mean[b]
+            return images
+
+        def _stats(err):
+            err = np.asarray(err)
+            err = err[np.isfinite(err)]
+            if err.size == 0:
+                return dict(bias=np.nan, rmse=np.nan, mae=np.nan)
+            return dict(
+                bias=float(np.mean(err)),
+                rmse=float(np.sqrt(np.mean(err**2))),
+                mae=float(np.mean(np.abs(err)))
+            )
+
+        def radial_vmax_profile(sar2d, cx, cy, bin_size=1.0):
+            """Return radii (pixels) and vmax(r) computed from 2D field."""
+            H, W = sar2d.shape
+            y, x_ = np.indices((H, W))
+            r = np.sqrt((x_ - cx)**2 + (y - cy)**2)
+            rmax = int(np.nanmax(r))
+            radii = np.arange(0, rmax + 1)
+            prof = np.full_like(radii, np.nan, dtype=np.float32)
+            for k, R0 in enumerate(radii):
+                m = np.abs(r - R0) < (bin_size / 2.0)
+                if np.any(m):
+                    prof[k] = np.nanmax(sar2d[m])
+            return radii, prof
+        
+        def moment_to_sar(moment):
+                assert moment.ndim == 3, "moment must be (N, H, W)"
+                N, H, W = moment.shape
+                y, x = np.indices((H, W))
+                cy, cx = H // 2, W // 2
+                r = np.sqrt((x - cx)**2 + (y - cy)**2)
+                r_safe = np.maximum(r, 1.0)
+                sar = moment / r_safe[None, :, :]
+                return sar
+
+        # ---------- move to numpy ----------
+        x_np   = x.detach().cpu().numpy()      # (B,C,H,W)
+        sar_np = sar.detach().squeeze().cpu().numpy()    # (B,1,H,W)
+        pred_np= pred.detach().squeeze().cpu().numpy()   # (B,1,H,W)
+        mask_np= mask.detach().squeeze().cpu().numpy()   # (B,1,H,W) or (B,H,W)
+
+        B = x_np.shape[0]
+        ch = 4 if x_np.shape[1] == 9 else 0
+        ir = x_np[:, ch, :, :]                 # (B,H,W)
+        sar1 = sar_np                          # (B,H,W)
+        pred1= pred_np                         # (B,H,W)
+
+        # ---------- denormalize ----------
+        ir_den = denorm(ir, self.mean_X[ch], self.std_X[ch])
+
+        if self.norm == "z_score":
+            sar_den  = denorm(sar1,  self.mean_sar, self.std_sar)
+            pred_den = denorm(pred1, self.mean_sar, self.std_sar)
+        elif self.norm == "annular":
+            sar_den  = annular_denormalization(sar1,  stats={"mean": self.mean_sar, "std": self.std_sar})
+            pred_den = annular_denormalization(pred1, stats={"mean": self.mean_sar, "std": self.std_sar})
+        else:
+            sar_den, pred_den = sar1, pred1
+
+        # if output is "aam" moments -> convert to SAR
+        if self.output_data == "aam":
+            sar_den  = moment_to_sar(sar_den)
+            pred_den = moment_to_sar(pred_den)
+
+        # ---------- sort by time ----------
+        # robust parse
+        sar_time = [d.get("sar_time") for d in infos]
+        time_parsed = pd.to_datetime(sar_time, errors="coerce")
+        order = np.argsort(time_parsed.values.astype("datetime64[ns]"))
+
+        ir_den   = ir_den[order]
+        sar_den  = sar_den[order]
+        pred_den = pred_den[order]
+        mask_ord = mask_np[order]
+        infos_ord= [infos[i] for i in order]
+        time_parsed = time_parsed[order]
+
+        # ---------- compute predicted vmax/rmax ----------
+        H, W = sar_den.shape[1], sar_den.shape[2]
+        cx, cy = (W - 1) / 2, (H - 1) / 2
+
+        pred_vmax_kt = np.full(B, np.nan, dtype=np.float32)
+        pred_rmax_km = np.full(B, np.nan, dtype=np.float32)
+
+        for i in range(B):
+            vmax1d_kt, rmax1d_pix = self.compute_vmax1d_rmax1d(pred_den[i], cx, cy)
+            pred_vmax_kt[i] = vmax1d_kt
+            pred_rmax_km[i] = rmax1d_pix * 2.0  # 2 km per pixel (as in your code)
+
+        # analysis arrays
+        analysis_vmax = np.array([d.get("analysis_vmax", np.nan) for d in infos_ord], dtype=np.float32)  # m/s
+        analysis_rmax = np.array([d.get("analysis_rmax", np.nan) for d in infos_ord], dtype=np.float32)  # meters
+        analysis_vmax_kt = analysis_vmax * 1.94384
+        analysis_rmax_km = analysis_rmax / 1000.0
+
+        # ---------- output dir ----------
+        out_dir = os.path.join(self.output_dir, "anggrek_monitoring", f"epoch_{epoch+1:04d}")
+        os.makedirs(out_dir, exist_ok=True)
+
+        # ======================================================================
+        # (1) Lifecycle samples in one big figure (3 cols × B rows)
+        # ======================================================================
+        fig_h = max(4, 3 * B)
+        fig, axes = plt.subplots(B, 3, figsize=(18, fig_h))
+        if B == 1:
+            axes = np.expand_dims(axes, 0)
+
+        for i in range(B):
+            info = infos_ord[i]
+            cname = info.get("cyclone_name", "ANGGREK")
+            cid   = info.get("cyclone_id", "")
+            stime = str(info.get("sar_time", ""))
+
+            av_kt = analysis_vmax_kt[i]
+            ar_km = analysis_rmax_km[i]
+            pv_kt = pred_vmax_kt[i]
+            pr_km = pred_rmax_km[i]
+
+            title = (f"{cname} | {cid} | {stime}\n"
+                    f"Analysis Vmax={av_kt:.1f} kt | Pred Vmax={pv_kt:.1f} kt\n"
+                    f"Analysis Rmax={ar_km:.1f} km | Pred Rmax={pr_km:.1f} km")
+
+            axes[i, 0].imshow(ir_den[i], cmap=self.cmap_ir)
+            axes[i, 0].set_title("IR (denorm)")
+            axes[i, 0].axis("off")
+
+            sar_vis = sar_den[i].copy()
+            # apply mask if shape is (B,1,H,W) or (B,H,W)
+            m = mask_ord[i]
+            if m.ndim == 3:
+                m = m[0]
+            sar_vis = np.where(m == 1, sar_vis, np.nan)
+            axes[i, 1].imshow(sar_vis, cmap=self.cmap_sar)
+            axes[i, 1].set_title("True SAR (denorm)")
+            axes[i, 1].axis("off")
+
+            pred_vis = pred_den[i].copy()
+            
+            axes[i, 2].imshow(pred_vis,cmap=self.cmap_sar)
+            axes[i, 2].set_title("Pred SAR (denorm)")
+            axes[i, 2].axis("off")
+
+            # put meta info as a y-label (to avoid huge titles)
+            axes[i, 0].set_ylabel(title, fontsize=9)
+
+        plt.tight_layout()
+        fig.savefig(os.path.join(out_dir, "lifecycle_all_samples.png"), dpi=150)
+        plt.close(fig)
+
+        # ======================================================================
+        # (2) Mean normalized radial profile (r/rmw) over all lifecycle images
+        #     We'll compute vmax(r) for each image then resample on common grid.
+        # ======================================================================
+        rgrid = np.linspace(0, 4.0, 200)  # normalized radius r/rmw, up to 4
+        profiles_true = []
+        profiles_pred = []
+
+        for i in range(B):
+            # choose Rmw reference (analysis_rmax_km preferred, else predicted)
+            rmw = analysis_rmax_km[i]
+            if not np.isfinite(rmw) or rmw <= 0:
+                rmw = pred_rmax_km[i]
+            if not np.isfinite(rmw) or rmw <= 0:
+                continue
+
+            radii_pix, prof_true = radial_vmax_profile(sar_den[i] * 1.94384, cx, cy)   # knots
+            radii_pix2, prof_pred = radial_vmax_profile(pred_den[i] * 1.94384, cx, cy) # knots
+
+            # convert pixels -> km (2 km per pixel) then normalize by rmw (km)
+            r_km = radii_pix * 2.0
+            r_norm = r_km / rmw
+
+            # interpolate onto common grid
+            true_interp = np.interp(rgrid, r_norm, prof_true, left=np.nan, right=np.nan)
+            pred_interp = np.interp(rgrid, r_norm, prof_pred, left=np.nan, right=np.nan)
+
+            profiles_true.append(true_interp)
+            profiles_pred.append(pred_interp)
+
+        if len(profiles_true) > 0:
+            mean_true = np.nanmean(np.stack(profiles_true, 0), 0)
+            mean_pred = np.nanmean(np.stack(profiles_pred, 0), 0)
+
+            plt.figure(figsize=(8,5))
+            plt.plot(rgrid, mean_true, label="True mean radial Vmax (kt)")
+            plt.plot(rgrid, mean_pred, label="Pred mean radial Vmax (kt)")
+            plt.xlabel("Normalized radius r / Rmw")
+            plt.ylabel("Vmax(r) [kt]")
+            plt.grid(True, linestyle="--", alpha=0.4)
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(os.path.join(out_dir, "mean_normalized_radial_profile.png"), dpi=150)
+            plt.close()
+
+        # ======================================================================
+        # (3) Time series: Vmax + error (and same for Rmax)
+        # ======================================================================
+        # Use sorted time; if parsing failed, fallback to index
+        t = np.arange(B)
+
+        # Vmax
+        err_v = pred_vmax_kt - analysis_vmax_kt
+        plt.figure(figsize=(10,5))
+        plt.plot(t, analysis_vmax_kt, label="Analysis Vmax (kt)")
+        plt.plot(t, pred_vmax_kt, label="Pred Vmax (kt)")
+        plt.plot(t, err_v, label="Error (kt)")
+        plt.grid(True, linestyle="--", alpha=0.4)
+        plt.xlabel("Time order (sorted sar_time)")
+        plt.ylabel("kt")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(out_dir, "timeseries_vmax_and_error.png"), dpi=150)
+        plt.close()
+
+        # Rmax
+        err_r = pred_rmax_km - analysis_rmax_km
+        plt.figure(figsize=(10,5))
+        plt.plot(t, analysis_rmax_km, label="Analysis Rmax (km)")
+        plt.plot(t, pred_rmax_km, label="Pred Rmax (km)")
+        plt.plot(t, err_r, label="Error (km)")
+        plt.grid(True, linestyle="--", alpha=0.4)
+        plt.xlabel("Time order (sorted sar_time)")
+        plt.ylabel("km")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(out_dir, "timeseries_rmax_and_error.png"), dpi=150)
+        plt.close()
+
+        # ======================================================================
+        # (4) Scatter plots + stats
+        # ======================================================================
+        # Vmax scatter
+        ok = np.isfinite(analysis_vmax_kt) & np.isfinite(pred_vmax_kt)
+        stats_v = _stats(pred_vmax_kt[ok] - analysis_vmax_kt[ok])
+
+        plt.figure(figsize=(6,6))
+        plt.scatter(analysis_vmax_kt[ok], pred_vmax_kt[ok], s=20)
+        plt.xlabel("Analysis Vmax (kt)")
+        plt.ylabel("Pred Vmax (kt)")
+        plt.grid(True, linestyle="--", alpha=0.4)
+        plt.title(f"Vmax scatter | bias={stats_v['bias']:.2f} rmse={stats_v['rmse']:.2f} mae={stats_v['mae']:.2f}")
+        plt.tight_layout()
+        plt.savefig(os.path.join(out_dir, "scatter_vmax.png"), dpi=150)
+        plt.close()
+
+        # Rmax scatter
+        ok = np.isfinite(analysis_rmax_km) & np.isfinite(pred_rmax_km)
+        stats_r = _stats(pred_rmax_km[ok] - analysis_rmax_km[ok])
+
+        plt.figure(figsize=(6,6))
+        plt.scatter(analysis_rmax_km[ok], pred_rmax_km[ok], s=20)
+        plt.xlabel("Analysis Rmax (km)")
+        plt.ylabel("Pred Rmax (km)")
+        plt.grid(True, linestyle="--", alpha=0.4)
+        plt.title(f"Rmax scatter | bias={stats_r['bias']:.2f} rmse={stats_r['rmse']:.2f} mae={stats_r['mae']:.2f}")
+        plt.tight_layout()
+        plt.savefig(os.path.join(out_dir, "scatter_rmax.png"), dpi=150)
+        plt.close()

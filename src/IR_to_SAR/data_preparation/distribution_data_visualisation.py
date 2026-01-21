@@ -463,8 +463,8 @@ def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False
         f"MAE  : {mae:.2f} kt\n"
         f"RMSE : {rmse:.2f} kt\n"
         f"Bias : {bias:.2f} kt\n"
-        f"Max analysis vmax : {vmax_true.max():.2f}\n"
-        f"Max predicted vmax: {vmax_pred.max():.2f}"
+        f"Max analysis vmax : {vmax_true.max():.2f} kt\n"
+        f"Max predicted vmax: {vmax_pred.max():.2f} kt"
     )
 
     ax.text(0.02, 0.98, textstr,
@@ -486,8 +486,8 @@ def compare_sar_distribution(sar_knots, pred_knots, output_dir, set, epoch):
         if set == "train":
             return None
         plt.figure(figsize=(8, 6))
-        plt.hist(sar_knots, bins=60, alpha=0.5, density=True, label="True SAR", color="blue")
-        plt.hist(pred_knots, bins=60, alpha=0.5, density=True, label="Predicted SAR", color="orange")
+        plt.hist(sar_knots, bins=60, alpha=0.5, density=False, label="True SAR", color="blue")
+        plt.hist(pred_knots, bins=60, alpha=0.5, density=False, label="Predicted SAR", color="orange")
         plt.legend()
         plt.xlabel("Wind Speed (knots)")
         plt.ylabel("Density")

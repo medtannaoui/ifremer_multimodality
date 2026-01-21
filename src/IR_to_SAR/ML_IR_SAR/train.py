@@ -82,16 +82,16 @@ class IRSARDataset(Dataset):
     SAR shape: (N, H_ir, W_ir)
     """
     def __init__(self,test=False,size=256, norm = "z_score", barycenter = "no" ,augmentation = False, drop_nan_100 = True,input_channels=None,
-                 data_path=None,train_split=None,val_split=None,test_split=None,target_dir = None):
+                 data_path=None,train_split=None,val_split=None,test_split=None,target_dir = None, input_data="norm", output_data="sar"):
         self.norm = norm
         
         dataset = prep_dataset.PrepareDataSet(size=size, norm= norm, barycenter= barycenter, drop_nan_100=drop_nan_100,input_channels=input_channels,
                                               pkl_file=data_path,train_split=train_split,val_split=val_split,test_split=test_split,
-                                              augmentation=augmentation,target_dir = target_dir)
+                                              augmentation=augmentation,target_dir = target_dir, input_data=input_data, output_data=output_data)
          
         self.dataset = dataset     
         print("Data preparation finished")
-        # print(self.X.shape, np.expand_dims(self.sar, axis=1).shape)
+
 
     def __len__(self):    #number of observations
         return len(self.X)
@@ -141,39 +141,27 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_gr
         train_loader=dataloader, bin_edges=BIN_EDGES, device=fabric.device, alpha=0.5
     )
 
-    print("BIN_EDGES:", BIN_EDGES)
-    print("BIN_PROBS:", BIN_PROBS)
     print("BIN_WEIGHTS:", BIN_WEIGHTS)
-
 
     for x, sar, mask, _ in tqdm(dataloader, desc="Training"):
         x, sar, mask= x.to(fabric.device), sar.to(fabric.device), mask.to(fabric.device)
         optimizer.zero_grad()
-
         # Forward pass
         pred = model(x, timestep=0).sample  # (B,1,H,W)
         sar_valid = sar.nan_to_num()
         pred_valid = pred
-
         # compute weights
-        
-
         loss, l_pix, l_grad, l_radial = combined_sar_loss(
                                                             sar_valid, pred_valid, mask,
                                                             w_pix=w_pix, w_grad=w_grad, w_radial=w_radial,
                                                             bin_edges=BIN_EDGES, bin_weights=BIN_WEIGHTS,
                                                             use_weighted_pix=True
                                                         )
-
-        
-        
         if sar_valid.ndim == 3:
             sar_valid = sar_valid.unsqueeze(1)
-
         if mask.ndim == 3:
             mask = mask.unsqueeze(1)
-
-            # Backpropagation
+        # Backpropagation
         fabric.backward(loss)
         fabric.clip_gradients(model, optimizer, max_norm=1.0)
         optimizer.step()
@@ -255,17 +243,20 @@ def main(cfg: IR_SAR_Config,test=False):
     full_data = IRSARDataset(test=test, size=cfg.img_size, norm=cfg.norm, barycenter=cfg.barycenter, drop_nan_100=cfg.drop_nan_sar,
                              input_channels=cfg.input_channels,
                              data_path = cfg.data_path,
-                             train_split=cfg.train_split,val_split=cfg.val_split,test_split=cfg.test_split,target_dir = target_dir,augmentation=cfg.augmentation)
+                             train_split=cfg.train_split,val_split=cfg.val_split,test_split=cfg.test_split,
+                             target_dir = target_dir,augmentation=cfg.augmentation,input_data=cfg.input_data,output_data=cfg.output_data)
     # X_all, sar_all = full_data.dataset.X, full_data.dataset.sar
 
     
-    train_ds = PairedDataset(*(full_data.dataset.X_train,full_data.dataset.sar_train),full_data.dataset.dictio["mask_sar_train"], full_data.dataset.dictio["infos_train"])  #X (multi-channel input), SAR target
-    val_ds   = PairedDataset(*(full_data.dataset.X_val,full_data.dataset.sar_val),full_data.dataset.dictio["mask_sar_val"], full_data.dataset.dictio["infos_val"])
-    test_ds   = PairedDataset(*(full_data.dataset.X_test,full_data.dataset.sar_test),full_data.dataset.dictio["mask_sar_test"], full_data.dataset.dictio["infos_test"])
+    train_ds = PairedDataset(*(full_data.dataset.X_train,full_data.dataset.sar_train),full_data.dataset.mask_train, full_data.dataset.infos_train)  #X (multi-channel input), SAR target
+    val_ds   = PairedDataset(*(full_data.dataset.X_val,full_data.dataset.sar_val),full_data.dataset.mask_val, full_data.dataset.infos_val)
+    test_ds   = PairedDataset(*(full_data.dataset.X_test,full_data.dataset.sar_test),full_data.dataset.mask_test, full_data.dataset.infos_test)
+    anggrek_ds   = PairedDataset(*(full_data.dataset.X_anggrek,full_data.dataset.sar_anggrek),full_data.dataset.mask_anggrek, full_data.dataset.infos_anggrek)
 
     train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, collate_fn=custom_collate)
     val_loader   = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=custom_collate)
     test_loader = DataLoader(test_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=custom_collate)
+    anggrek_loader = DataLoader(anggrek_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=custom_collate)
 
     # --- Fabric init with callbacks ---   #QUentin
     
@@ -288,16 +279,22 @@ def main(cfg: IR_SAR_Config,test=False):
                 cmap_ir=cmap_ir,
                 cmap_sar=cmap_sar,
                 start_epoch=cfg.start_epoch,    
-                mask_train = full_data.dataset.dictio["mask_sar_train"],
-                mask_val = full_data.dataset.mask_sar[full_data.dataset.dictio["val_index"]],
-                infos = full_data.dataset.infos,
+                mask_train = full_data.dataset.mask_train,
+                mask_val = full_data.dataset.mask_val,
+                mask_test=full_data.dataset.mask_test,
+                infos_train = full_data.dataset.infos_train,
+                infos_val = full_data.dataset.infos_val,
+                infos_test = full_data.dataset.infos_test,
                 target_dir = target_dir,
-                radial_mean = full_data.dataset.radial_profil
+                input_data= cfg.input_data,
+                output_data=cfg.output_data,
+            
+                
             )
         ],
     )
     fabric.launch()
-    dataprep.visualize_dataset_statistics(full_data.dataset.dictio,target_dir,full_data.dataset.mask_sar)
+    # dataprep.visualize_dataset_statistics(full_data.dataset.dictio,target_dir,full_data.dataset.mask_sar)
 
     # --- Metrics ---
     metrics = torchmetrics.MetricCollection({
@@ -311,7 +308,10 @@ def main(cfg: IR_SAR_Config,test=False):
         image_size=cfg.img_size,
         dropout=cfg.dropout,
         in_channels=in_channels,       #
-        out_channels=cfg.out_channels
+        out_channels=cfg.out_channels,
+        block_out_channels = cfg.block_out_channels,
+        down_block_types = cfg.down_block_types,
+        up_block_types= cfg.up_block_types
     ).to(fabric.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate, weight_decay=1e-3)   #add regularisation
 
@@ -319,7 +319,10 @@ def main(cfg: IR_SAR_Config,test=False):
 
     # Prepare for Fabric
     model, optimizer = fabric.setup(model, optimizer)
-    train_loader, val_loader = fabric.setup_dataloaders(train_loader, val_loader)
+    train_loader, val_loader, test_loader, anggrek_loader = fabric.setup_dataloaders(
+                                                                                        train_loader, val_loader, test_loader, anggrek_loader
+                                                                                    )
+
 
     # --- Training Loop ---
     train_loss_history = []
@@ -365,7 +368,7 @@ def main(cfg: IR_SAR_Config,test=False):
                 "on_validation_plots",
                 model=model,
                 epoch=epoch,
-                dataloader=[train_loader, val_loader, test_loader],
+                dataloader=[train_loader, val_loader, test_loader, anggrek_loader],
                 device=fabric.device
             )
             print("----- plots saved")
@@ -405,7 +408,7 @@ def main(cfg: IR_SAR_Config,test=False):
                 "on_validation_plots",
                 model=model,
                 epoch=epoch,   # dernier epoch
-                dataloader=[train_loader, val_loader, test_loader],
+                dataloader=[train_loader, val_loader, test_loader, anggrek_loader],
                 device=fabric.device
             )
             break
@@ -479,15 +482,25 @@ def main(cfg: IR_SAR_Config,test=False):
     plt.savefig(plot_path)
     plt.close()
 
-
-    
-    #copir la config 
-
-    
     logger.info("🎯 Training Complete!")
+    dst_cfg = os.path.join(target_dir, "config.yaml")
+    config_path ="/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/config.yaml"
+
+    if hasattr(cfg, "config_path") and config_path and os.path.exists(config_path):
+        shutil.copy(config_path, dst_cfg)
+        logger.info(f"📄 Config copied to: {dst_cfg}")
+    else:
+        # fallback: save cfg content as text if the yaml path isn't available
+        with open(os.path.join(target_dir, "config_fallback.txt"), "w") as f:
+            for k, v in cfg.__dict__.items():
+                f.write(f"{k}: {v}\n")
+        logger.warning("⚠️ config.yaml path not found, saved config_fallback.txt instead")
 
 
 if __name__ == "__main__":
     from src.IR_to_SAR.ML_IR_SAR.config import IR_SAR_Config
-    cfg = IR_SAR_Config.from_yaml("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/config.yaml")
-    main(cfg,test=False)
+
+    config_path = "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/config.yaml"
+    cfg = IR_SAR_Config.from_yaml(config_path)
+
+    main(cfg, test=False)

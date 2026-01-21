@@ -23,63 +23,85 @@ class PrepareDataSet():
     def __init__(self, pkl_file=None,
                   input_channels=None, 
                   barycenter="no", 
-                  size=256, 
+                  size=128, 
                   norm="z_score", 
                   drop_nan_100=True,
-                  train_split=None,val_split=None,test_split=None,augmentation=False,target_dir = None
+                  train_split=None,
+                  val_split=None,
+                  test_split=None,
+                  augmentation=False,
+                  target_dir = None,
+                  input_data = "normal",
+                  output_data = "sar"
                  ):
         self.train_split = train_split
         self.val_split=val_split
         self.test_split=test_split
         self.augmentation=augmentation
         self.target_dir=target_dir
+        self.input_data = input_data
+        self.output_data = output_data
         
 
-        print("🔹 Loading data...")
-        # with open(pkl_file, "rb") as f:
-        #     data = pkl.load(f)   # dictionary
-        print("🔹 Loading data...")
-        data = pd.read_csv("/scale/user/mtannaou/alternance/TCVA_matched_with_SARGEO_df.csv")
+        print("🔹 Loading data from csv ...")
+        data = pd.read_csv("/scale/user/mtannaou/alternance/TCVA_matched_with_SARGEO_v2.csv")
         print("data before filtering", len(data))
 
-        data = data[~data["sar_aeqd_path"].isnull()].reset_index(drop=True)
-        print("data after filtering (non-null sar_aeqd_path)", len(data))
 
-        data =data[data["nan_ratio_within_100km"] <= 0.5]
-        print("data after filter with nan_ratio within radius of 100km",len(data))
-
-        data =data[data["analysis_rmax"] <= 180000]
-        print("data size after remove SAR with analysis_rmax bigger than 180Km")
-
-
-        final_channels = ["irwin"]
-        print(f"📎 Using input channels: {final_channels}")
+        data = data[~data["split"].isna()]
+        print("data after filtering",len(data))
 
         # ---- Keep only rows that open well ----
         
-        
-        N = len(data)
-        if os.path.exists("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/pairs_from_csv.pkl"):
-            with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/pairs_from_csv.pkl","rb") as f: 
-                data_pkl = pkl.load(f)
-            sar_all  = np.array(data_pkl["owiWindSpeed"])
-            irwin_all = np.array(data_pkl["irwin"])
-        else : 
+        if True  : 
+            keys = ["cyclone_name","cyclone_id", "sar_time", "vmax",
+                "analysis_vmax", "analysis_rmax",
+                "analysis_center_quality_flag"]
             good_rows, bad_rows = [], []
-            irwin_all = []
-            sar_all = []
-            pbar = tqdm(total=N, desc="Checking files", unit="row")
-            for i, row in data.iterrows():
+            irwin_train, irwin_val, irwin_test, irwin_anggrek= [], [], [], []
+            sar_train, sar_val, sar_test, sar_anggrek = [], [], [], []
+            infos_train, infos_val, infos_test, infos_anggrek = [], [], [], []
+
+            N = len(data[data["split"]=="train"])
+            pbar = tqdm(total=N, desc="Checking train files", unit="row")
+            for i, row in data[data["split"]=="train"].iterrows():
                 try:
                     with xr.open_dataset(row["sargeo_path"]) as sargeo:
                         if "IRWIN" not in sargeo:
                             raise KeyError("Missing IRWIN")
-                        irwin_all.append(sargeo["IRWIN"].values)
+                        irwin_train.append(sargeo["IRWIN"].values)
 
                     with xr.open_dataset(row["sar_aeqd_path"]) as ds_aeqd:
                         if "owiWindSpeed" not in ds_aeqd:
                             raise KeyError("Missing owiWindSpeed")
-                        sar_all.append(ds_aeqd["owiWindSpeed"].values)
+                        sar_train.append(ds_aeqd["owiWindSpeed"].values)
+                    infos_train.append({k: row[k] for k in keys})
+
+                    good_rows.append(i)
+
+                except Exception as e:
+                    print(e)
+                    bad_rows.append(i)
+
+                pbar.set_postfix(good=len(good_rows), bad=len(bad_rows))
+                pbar.update(1)
+            pbar.close()
+
+            #validation set 
+            N = len(data[data["split"]=="val"])
+            pbar = tqdm(total=N, desc="Checking validation files", unit="row")
+            for i, row in data[data["split"]=="val"].iterrows():
+                try:
+                    with xr.open_dataset(row["sargeo_path"]) as sargeo:
+                        if "IRWIN" not in sargeo:
+                            raise KeyError("Missing IRWIN")
+                        irwin_val.append(sargeo["IRWIN"].values)
+
+                    with xr.open_dataset(row["sar_aeqd_path"]) as ds_aeqd:
+                        if "owiWindSpeed" not in ds_aeqd:
+                            raise KeyError("Missing owiWindSpeed")
+                        sar_val.append(ds_aeqd["owiWindSpeed"].values)
+                    infos_val.append({k: row[k] for k in keys})
 
                     good_rows.append(i)
 
@@ -88,10 +110,62 @@ class PrepareDataSet():
 
                 pbar.set_postfix(good=len(good_rows), bad=len(bad_rows))
                 pbar.update(1)
-
             pbar.close()
-            with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/pairs_from_csv.pkl","wb") as f:
-                pkl.dump({"owiWindSpeed":np.array(sar_all),"irwin":np.array(irwin_all)},f)
+
+            #test set 
+            N = len(data[data["split"]=="test"])
+            pbar = tqdm(total=N, desc="Checking test files", unit="row")
+            for i, row in data[data["split"]=="test"].iterrows():
+                try:
+                    with xr.open_dataset(row["sargeo_path"]) as sargeo:
+                        if "IRWIN" not in sargeo:
+                            raise KeyError("Missing IRWIN")
+                        irwin_test.append(sargeo["IRWIN"].values)
+
+                    with xr.open_dataset(row["sar_aeqd_path"]) as ds_aeqd:
+                        if "owiWindSpeed" not in ds_aeqd:
+                            raise KeyError("Missing owiWindSpeed")
+                        sar_test.append(ds_aeqd["owiWindSpeed"].values)
+                    infos_test.append({k: row[k] for k in keys})
+
+                    good_rows.append(i)
+
+                except Exception as e:
+                    bad_rows.append(i)
+
+                pbar.set_postfix(good=len(good_rows), bad=len(bad_rows))
+                pbar.update(1)
+            pbar.close()
+            self.infos_train = infos_train
+            self.infos_val = infos_val
+            self.infos_test = infos_test
+            self.infos_anggrek = infos_anggrek
+
+
+            #anggrek cyclone
+            N = len(data[data["split"]=="test2"])
+            pbar = tqdm(total=N, desc="Checking ANGGREK files", unit="row")
+            for i, row in data[data["split"]=="test2"].iterrows():
+                try:
+                    with xr.open_dataset(row["sargeo_path"]) as sargeo:
+                        if "IRWIN" not in sargeo:
+                            raise KeyError("Missing IRWIN")
+                        irwin_anggrek.append(sargeo["IRWIN"].values)
+
+                    with xr.open_dataset(row["sar_aeqd_path"]) as ds_aeqd:
+                        if "owiWindSpeed" not in ds_aeqd:
+                            raise KeyError("Missing owiWindSpeed")
+                        sar_anggrek.append(ds_aeqd["owiWindSpeed"].values)
+                    infos_anggrek.append({k: row[k] for k in keys})
+
+                    good_rows.append(i)
+
+                except Exception as e:
+                    bad_rows.append(i)
+
+                pbar.set_postfix(good=len(good_rows), bad=len(bad_rows))
+                pbar.update(1)
+            pbar.close()
                          
             # Filter dataframe to only good indices
             data = data.loc[good_rows].reset_index(drop=True)
@@ -100,206 +174,211 @@ class PrepareDataSet():
             print(f"❌ Dropped rows that failed: {len(bad_rows)}")
 
 
-
-        irwin_all = np.array(irwin_all)
-        sar_all = np.array(sar_all)
-
-        # ---- Now proceed safely ----
-
-        keys = ["cyclone_id", "sar_time", "vmax",
-                "analysis_vmax", "analysis_rmax",
-                "analysis_center_quality_flag"]
-
-        self.infos = data[keys].to_dict(orient="records")
-
-        image_channels = []
-        feature_arrays = []
-        feature_names = [] 
-        
-
-       
+        image_channels_train, image_channels_val, image_channels_test, image_channels_anggrek = [], [], [], []
     
         # all irwins (9)
-        irwin_all = np.array(irwin_all)    # (N, 9, H, W) par ex.
-        N, _, H, W = irwin_all.shape
+        irwin_train = np.array(irwin_train)    # (N, 9, H, W) par ex.
+        irwin_val,irwin_test, irwin_anggrek = np.array(irwin_val), np.array(irwin_test), np.array(irwin_anggrek)
+        self.sar_train, self.sar_val, self.sar_test, self.sar_anggrek = np.array(sar_train), np.array(sar_val), np.array(sar_test), np.array(sar_anggrek)
+        print("train size :",len(sar_train))
+        print("val_size : ",len(sar_val))
+        print("Test size: ",len(sar_test))
+        
+        N, _, H, W = irwin_train.shape
+        
+        #train 
+        if self.input_data == "all_channels":
+            for i in [0,1,2,3,4,5,6,7,8]:
+                image_channels_train.append(irwin_train[:, i, :, :]  )
+                image_channels_val.append(irwin_val[:,i,:,:])
+                image_channels_test.append(irwin_test[:,i,:,:])
+                image_channels_anggrek.append(irwin_anggrek[:,i,:,:])
 
-        # for i in [0,1,2,3,4,5,6,7,8]:
-        #     irwin = irwin_all[:, i, :, :]      # (N, H, W)  # add multiple irs
-        #     image_channels.append(irwin)
-        image_channels.append(irwin_all[:,4,:,:])
-        # image_channels.append(np.gradient(irwin_all[:,4,:,:])[0])
-        # image_channels.append(np.gradient(irwin_all[:,4,:,:])[1])
+        elif self.input_data == "normal":
+            image_channels_train.append(irwin_train[:,4,:,:])  
+            image_channels_val.append(irwin_val[:,4,:,:])  
+            image_channels_test.append(irwin_test[:,4,:,:])  
+            image_channels_anggrek.append(irwin_anggrek[:,4,:,:])  
 
-        # image_channels.append(np.nanmean(irwin_all,axis=1)) #mean of th nine irs
+        elif self.input_data == "normal+gradients":
+            image_channels_train.append(np.gradient(irwin_train[:,4,:,:])[0])
+            image_channels_train.append(np.gradient(irwin_train[:,4,:,:])[1])
 
-        if input_channels is not None:
-            for var in input_channels:
-                arr = np.array(data[var])   # shape variable (N, ...) 
+            image_channels_val.append(np.gradient(irwin_val[:,4,:,:])[0])
+            image_channels_val.append(np.gradient(irwin_val[:,4,:,:])[1])
 
-                # if a feature has already a shape like irwin (N,H,W) we add it to the features list
-                if arr.ndim == 3 and arr.shape[1:] == (H, W):
-                    print(f"{var}: traité comme IMAGE (N,H,W) = {arr.shape}")
-                    image_channels.append(arr)
+            image_channels_test.append(np.gradient(irwin_test[:,4,:,:])[0])
+            image_channels_test.append(np.gradient(irwin_test[:,4,:,:])[1])
 
-                # flatt the last dimensions so we have (N,F)
-                else:
-                    # 
-                    arr_flat = arr.reshape(N, -1)   # (N, F_var)
-                    feature_arrays.append(arr_flat)
-                    feature_names.append(var)
-                    print(f"{var}: Features with shape = {arr_flat.shape}")
+            image_channels_anggrek.append(np.gradient(irwin_anggrek[:,4,:,:])[0])
+            image_channels_anggrek.append(np.gradient(irwin_anggrek[:,4,:,:])[1])
 
-        # 3) stack the pictures list
-        self.X = np.stack(image_channels, axis=1)   # (N, C, H, W)
+        elif self.input_data == "normal mean":
+            image_channels_train.append(np.nanmean(irwin_train,axis=1)) 
+            image_channels_val.append(np.nanmean(irwin_val,axis=1)) 
+            image_channels_test.append(np.nanmean(irwin_test,axis=1)) 
+            image_channels_anggrek.append(np.nanmean(irwin_anggrek,axis=1)) 
 
-        # concatenate the faetures primed
-        if len(feature_arrays) > 0:
-            self.X_features = np.concatenate(feature_arrays, axis=1)  # (N, F_total)
-            self.feature_names = feature_names
-            print("🔍 Final features shape:", self.X_features.shape)
-            print("📎 Feature names:", self.feature_names)
-        else:
-            self.X_features = None
-            self.feature_names = []
-            print("ℹ️ No features added to the bottleneck")
+        #stack the pictures list
+        self.X_train = np.stack(image_channels_train, axis=1)  
+        self.X_val = np.stack(image_channels_val, axis=1)
+        self.X_test = np.stack(image_channels_test, axis=1)
+        self.X_anggrek = np.stack(image_channels_anggrek, axis=1)
 
-        #  Extract SAR windspeed as target
-        self.sar = np.array(sar_all)
 
-    
-        # Center crop 
-        print(self.sar.shape)
-        print(self.X.shape)
-        N, C, H, W = self.X.shape
-        N,H_sar,W_sar = self.sar.shape
-        self.X = self.X[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2]
-        self.sar = self.sar[:, H_sar//2-size//2:H_sar//2+size//2, W_sar//2-size//2:W_sar//2+size//2]
-        print(self.sar.shape)
-        print(self.X.shape)
+        print("Start Reshaping Data ........")
+        N, C, H, W = self.X_train.shape
+        N,H_sar,W_sar = self.sar_train.shape
+        self.X_train = self.X_train[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2]
+        self.X_val = self.X_val[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2]
+        self.X_test = self.X_test[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2]
+        self.X_anggrek = self.X_anggrek[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2]
+
+
+        self.sar_train = self.sar_train[:, H_sar//2-size//2:H_sar//2+size//2, W_sar//2-size//2:W_sar//2+size//2]
+        self.sar_val = self.sar_val[:, H_sar//2-size//2:H_sar//2+size//2, W_sar//2-size//2:W_sar//2+size//2]
+        self.sar_test = self.sar_test[:, H_sar//2-size//2:H_sar//2+size//2, W_sar//2-size//2:W_sar//2+size//2]
+        self.sar_anggrek = self.sar_anggrek[:, H_sar//2-size//2:H_sar//2+size//2, W_sar//2-size//2:W_sar//2+size//2]
+
+        print("Final Shape of train Input is ",self.X_train.shape)
+        print("Final Shape of train Output is ",self.sar_train.shape)
+
+
 
         #  Convert IR from Kelvin to Celsius ===
-        self.X[:, 0] = self.X[:, 0] - 273.15   # always channel 0 = irwin
+        for c in range(self.X_train.shape[1]) : 
+            self.X_train[:, c] = self.X_train[:, c] - 273.15  
+            self.X_val[:,c] = self.X_val[:,c] - 273.15
+            self.X_test[:,c] = self.X_test[:,c] - 273.15
+            self.X_anggrek[:,c] = self.X_anggrek[:,c] - 273.15
+
 
         #  Create SAR valid pixel mask ===
-        self.mask_sar = np.isfinite(self.sar).astype(np.float32)
+        self.mask_train = np.isfinite(self.sar_train).astype(np.float32)
+        self.mask_val = np.isfinite(self.sar_val).astype(np.float32)
+        self.mask_test = np.isfinite(self.sar_test).astype(np.float32)
+        self.mask_anggrek = np.isfinite(self.sar_anggrek).astype(np.float32)
 
-        # Replace NaN & Inf ===
-        self.X = np.nan_to_num(self.X, nan=0.0, posinf=0.0, neginf=0.0)
-        self.sar = np.nan_to_num(self.sar, nan=0.0, posinf=0.0, neginf=0.0)
-        # self.sar = dataprep.create_moment_sar(self.sar)
 
-        # --- Split ---
-        self.dictio = dataprep.train_val_test_split(
-            np.array(self.X), np.array(self.sar),
-            train_size=self.train_split,
-            val_size=self.val_split,
-            test_size=self.test_split,
-            augmentation=self.augmentation,
-            mask_sar = self.mask_sar,
-            infos = self.infos,
-            target_dir=self.target_dir
+        # Replace NaN & Inf by 0 ===
+        self.X_train = np.nan_to_num(self.X_train, nan=0.0, posinf=0.0, neginf=0.0)
+        self.X_val = np.nan_to_num(self.X_val, nan=0.0, posinf=0.0, neginf=0.0)
+        self.X_test = np.nan_to_num(self.X_test, nan=0.0, posinf=0.0, neginf=0.0)
+        self.X_anggrek = np.nan_to_num(self.X_anggrek, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+        self.sar_train = np.nan_to_num(self.sar_train, nan=0.0, posinf=0.0, neginf=0.0)
+        self.sar_val = np.nan_to_num(self.sar_val, nan=0.0, posinf=0.0, neginf=0.0)
+        self.sar_test = np.nan_to_num(self.sar_test, nan=0.0, posinf=0.0, neginf=0.0)
+        self.sar_anggrek = np.nan_to_num(self.sar_anggrek, nan=0.0, posinf=0.0, neginf=0.0)
+
+        if self.output_data == "aam":
+            self.sar_train = dataprep.create_moment_sar(self.sar_train)
+            self.sar_val = dataprep.create_moment_sar(self.sar_val)
+            self.sar_test = dataprep.create_moment_sar(self.sar_test)
+            self.sar_anggrek = dataprep.create_moment_sar(self.sar_anggrek)
+
+
+        if self.augmentation:
+            
+            print("Start Data Augmentation for train set : ----------")
+            self.X_train, self.sar_train, self.mask_train, self.infos_train = dataprep.data_augmentation(
+                    self.X_train, self.sar_train, self.mask_train, self.infos_train
+                )
+        print("New train size after augmentation is ",len(self.X_train))
+
+        print("Plot Data distribution : --------------------")
+        dataprep.plot_metric_scatter(
+            true_values=[d["vmax"] for d in self.infos_train],
+            pred_values=[d["analysis_vmax"] for d in self.infos_train],
+            output_path=self.target_dir,
+            file_name="analysis_vmax_and_vmax_comparaison_train",
+            title="analysis vmax and vmax comparaison in the train set",
+            xlabel="vmax (m\s)",
+            ylabel="analysis_vmax (m\s)"
         )
+        dataprep.plot_metric_scatter(
+            true_values=[d["vmax"] for d in self.infos_val],
+            pred_values=[d["analysis_vmax"] for d in self.infos_val],
+            output_path=self.target_dir,
+            file_name="analysis_vmax_and_vmax_comparaison_val",
+            title="analysis vmax and vmax comparaison in the val set",
+            xlabel="vmax (m\s)",
+            ylabel="analysis_vmax (m\s)"
+        )
+        dataprep.plot_metric_scatter(
+            true_values=[d["vmax"] for d in self.infos_test],
+            pred_values=[d["analysis_vmax"] for d in self.infos_test],
+            output_path=self.target_dir,
+            file_name="analysis_vmax_and_vmax_comparaison_test",
+            title="analysis vmax and vmax comparaison in the test set",
+            xlabel="vmax (m\s)",
+            ylabel="analysis_vmax (m\s)"
+        )
+        dataprep.plot_rmax_distribution(
+            infos_train=self.infos_train,
+            infos_val=self.infos_val,
+            output_path=self.target_dir,
+            file_name="analysis_rmax_distribution_train_vs_val.png"
+        )
+    
 
 
-        #"substract mean radial profil "
-        self.radial_profil = None
-        # self.sar_train,self.radial_profil = dataprep.subtract_radial_mean(self.dictio["train"][1],bin_size=1)
-        # self.sar_val, _ = dataprep.subtract_radial_mean(self.dictio["val"][1],radial_profil=self.radial_profil)
-        # self.sar_test, _ = dataprep.subtract_radial_mean(self.dictio["test"][1],radial_profil=self.radial_profil)
-        self.sar_train = self.dictio["train"][1]
-        self.sar_val = self.dictio["val"][1]
-        self.sar_test = self.dictio["test"][1]
-        #  Normalization for SAR (always continuous) ===
+
+        print("Start Normalisation......")
+        mean_x, std_x = [], []
+        for c in range(self.X_train.shape[1]):
+            self.X_train[:,c], mean, std = dataprep.z_score(self.X_train[:,c])
+            mean_x.append(mean);std_x.append(std)
+        self.mean_X,self.std_X = mean_x, std_x
+
+        for c in range(self.X_train.shape[1]):
+            self.X_val[:,c],_,_ = dataprep.z_score(self.X_val[:,c],mean_value=mean_x[c], std_value=std_x[c])
+            self.X_test[:,c],_,_ = dataprep.z_score(self.X_test[:,c],mean_value=mean_x[c], std_value=std_x[c])
+            self.X_anggrek[:,c],_,_ = dataprep.z_score(self.X_anggrek[:,c], mean_value=mean_x[c], std_value=std_x[c])
+
 
         if norm == "z_score":
             self.sar_train, self.mean_sar, self.std_sar = dataprep.z_score(self.sar_train)
             self.sar_val,_,_  = dataprep.z_score(self.sar_val,mean_value=self.mean_sar,std_value=self.std_sar)
             self.sar_test,_,_  = dataprep.z_score(self.sar_test,mean_value=self.mean_sar,std_value=self.std_sar)
-
+            self.sar_anggrek,_,_  = dataprep.z_score(self.sar_anggrek,mean_value=self.mean_sar,std_value=self.std_sar)
         elif norm == "annular":
             self.sar_train,stats = dataprep.annular_normalization(self.sar_train,bin_size=1,mask=None)
             self.mean_sar = stats["mean"]
             self.std_sar = stats["std"]
             self.sar_val,_ = dataprep.annular_normalization(self.sar_val,bin_size=1,mask=None,stats=stats)
             self.sar_test,_ = dataprep.annular_normalization(self.sar_test,mask=None,stats=stats)
-                    
-        else:
-            self.sar, self.min_sar, self.max_sar = dataprep.min_max(self.sar)
+            self.sar_anggrek,_ = dataprep.annular_normalization(self.sar_anggrek,mask=None,stats=stats)
 
-        print("📌 SAR normalized.")
+        out_stats_dir = os.path.join(self.target_dir, "stats_normalisation", "OUTPUT")
+        os.makedirs(out_stats_dir, exist_ok=True)
 
-        #  Normalize only continuous input channels ===
-        self.mean_X = {}
-        self.std_X = {}
-        self.min_X = {}
-        self.max_X = {}
-        X_train = self.dictio["train"][0]   # shape (N, C, H, W)
-        X_val   = self.dictio["val"][0]
-        X_test  = self.dictio["test"][0]
+        with open(os.path.join(out_stats_dir, "stats.pkl"), "wb") as f:
+            pkl.dump(
+                {
+                    "normalisation_type": str(norm),
+                    "std_sar": self.std_sar,
+                    "mean_sar": self.mean_sar,
+                    "mean_x": mean_x,
+                    "std_x": std_x,
+                },
+                f
+            )
 
-        # Initialisation
-        self.X_train = X_train.copy()
-        self.X_val   = X_val.copy()
-        self.X_test  = X_test.copy()
+        # ---------- ANGGREK data ----------
+        anggrek_dir = os.path.join(
+            self.target_dir, "stats_normalisation", "Anggrek_data_normalised"
+        )
+        os.makedirs(anggrek_dir, exist_ok=True)
 
-        C = self.X.shape[1]  # number of channels
-        for c in range(C):
-            channel_data = self.dictio["train"][0][:,c,:,:]
-            unique_vals = np.unique(channel_data)
-
-            if np.nanstd(channel_data) > 1e-6:   # Continuous channel → normalize
-                if True:
-                    norm_data, mean_val, std_val = dataprep.z_score(channel_data)
-                    self.X_train[:, c, :, :] = norm_data
-                    self.mean_X[c] = mean_val
-                    self.std_X[c] = std_val
-                # elif norm =="minmax":  # Min-max normalization
-                #     norm_data, min_val, max_val = dataprep.min_max(channel_data)
-                #     self.X_train[:, c, :, :] = norm_data
-                #     self.min_X[c] = min_val
-                #     self.max_X[c] = max_val
-                # elif norm == "annular":
-                #     norm_data,stats = dataprep.annular_normalization(channel_data,bin_size=1)
-                #     self.X_train[:,c,:,:] = norm_data
-                #     self.mean_X[c] = stats["mean"]
-                #     self.std_X[c] = stats["std"]
-        for set in ["val","test"]:
-            for c in range(C):
-                channel_data = self.dictio[set][0][:,c,:,:]
-                unique_vals = np.unique(channel_data)
-
-                if np.nanstd(channel_data) > 1e-8:   # Continuous channel → normalize
-                    if True:
-                        norm_data, mean_val, std_val = dataprep.z_score(channel_data,mean_value=self.mean_X[c],std_value=self.std_X[c])
-                        if set =="val":
-                            self.X_val[:, c, :, :] = norm_data
-                        else : 
-                            self.X_test[:,c,:,:]=norm_data
-                        
-                    # elif norm =="minmax":  # Min-max normalization
-                    #     norm_data, min_val, max_val = dataprep.min_max(channel_data)
-                    #     self.X_train[:, c, :, :] = norm_data
-                    #     self.min_X[c] = min_val
-                    #     self.max_X[c] = max_val
-                    # elif norm == "annular":
-                    #     norm_data,stats = dataprep.annular_normalization(channel_data,bin_size=1,mean_value=self.mean_X[c],std_value=self.std_X[c])
-                    #     if set =="val":
-                    #         self.X_val[:, c, :, :] = norm_data
-                    #     else : 
-                    #         self.X_test[:,c,:,:]=norm_data
-                        
-                
-
-               
-
-                else:
-                    print(f"⏭️ Skipped channel {c} — only {len(unique_vals)} unique values (categorical)")
-
-        
-        print("🔍 Final X shape:", self.X.shape)  # (N, C, size, size)
-        print("🔍 Final SAR shape:", np.expand_dims(self.sar, axis=1).shape)
-
-
-
-        print(f"🎯 Dataset prepared successfully with {self.X.shape[1]} input channels.")
+        with open(os.path.join(anggrek_dir, "data.pkl"), "wb") as f:
+            pkl.dump(
+                {
+                    "IR_anggrek": self.X_anggrek,
+                    "sar_anggrek": self.sar_anggrek,
+                },
+                f
+    )
+        print("SAR normalized.")
 

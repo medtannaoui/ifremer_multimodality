@@ -168,6 +168,7 @@ def z_score(tensor, eps = 1e-10,mean_value=None,std_value=None):
         std_value = np.std(tensor)
 
     normalized_tensor = (tensor - mean_value)/(std_value + eps)
+    
 
     return normalized_tensor, mean_value, std_value
             
@@ -292,6 +293,7 @@ def train_val_test_split(
     augmentation=True,
     target_dir=None,
     n_bins=2,  
+    csv=None
 ):
 
     N = len(X_array)
@@ -494,9 +496,9 @@ def plot_metric_scatter(
     rmse = np.sqrt(np.nanmean(errors**2))
     bias = np.nanmean(errors)
     textstr = (
-        f"MAE  : {mae:.2f} kt\n"
-        f"RMSE : {rmse:.2f} kt\n"
-        f"Bias : {bias:.2f} kt\n"
+        f"MAE  : {mae:.2f} m\s\n"
+        f"RMSE : {rmse:.2f} m\s\n"
+        f"Bias : {bias:.2f} m\s\n"
     )
 
 
