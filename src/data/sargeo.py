@@ -6,7 +6,12 @@ Output CSV columns:
 
 It only keeps IRWIN and WV subfolders.
 """
-
+import warnings
+import numpy
+def fxn():
+    warnings.warn("deprecated", DeprecationWarning)
+with warnings.catch_warnings(action="ignore"):
+    fxn()
 import os
 import xarray as xr
 import pandas as pd
@@ -38,13 +43,13 @@ def create_sargeo_sar_csv():
         # print(f"🌀 Traitement du cyclone : {cyclone}")
 
         # --- On regarde s'il y a les sous-dossiers IRWIN et WV ---
-        for subdir in ["IRWIN", "WV"]:
+        for subdir in ["IRWIN"]:
             sub_path = os.path.join(cyclone_path, subdir)
             if not os.path.exists(sub_path):
                 # print(f"  ⚠️ Pas de dossier {subdir} pour {cyclone}")
                 continue
 
-            # --- Liste des fichiers NetCDF ---
+            # --- Liste des fichiers NetCDF --- 
             nc_files = [f for f in os.listdir(sub_path) if f.endswith(".nc")]
 
             for nc_file in nc_files:
@@ -76,16 +81,16 @@ def create_sargeo_sar_csv():
     df = pd.DataFrame(infos)
 
     # --- Sauvegarde CSV ---
-    output_csv = "/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v00r00_09_janvier.csv"
+    output_csv = "/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v00r00_16_janvier.csv"
     os.makedirs(os.path.dirname(output_csv), exist_ok=True)
     df.to_csv(output_csv, index=False)
 
 
 ### create sargeo_sar_csv() ###
 def add_sar_listing_path():
-    sargeo_csv_path = "/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v00r00_09_janvier.csv"
+    sargeo_csv_path = "/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v00r00_16_janvier.csv"
     listing_sar_path = "/scale/user/mtannaou/alternance/excels/listing_sar_09_janvier.csv"
-    output_path = "/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v00r00_09_janvier_v1.csv"
+    output_path = "/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v00r00_16_janvier_v1.csv"
     listing_df = pd.read_csv(listing_sar_path)
     sargeo = pd.read_csv(sargeo_csv_path)
     #add inter column
