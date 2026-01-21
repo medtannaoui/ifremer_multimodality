@@ -899,7 +899,7 @@ class LogValidationSamples:
         err_v = pred_vmax_kt - analysis_vmax_kt
         plt.figure(figsize=(10,5))
         plt.plot(t, analysis_vmax_kt, label="Analysis Vmax (kt)")
-        plt.plot(t, pred_vmax_kt, label="Pred Vmax (kt)")
+        plt.plot(t, abs(pred_vmax_kt), label="Pred Vmax (kt)")
         plt.plot(t, err_v, label="Error (kt)")
         plt.grid(True, linestyle="--", alpha=0.4)
         plt.xlabel("Time order (sorted sar_time)")
@@ -914,7 +914,7 @@ class LogValidationSamples:
         plt.figure(figsize=(10,5))
         plt.plot(t, analysis_rmax_km, label="Analysis Rmax (km)")
         plt.plot(t, pred_rmax_km, label="Pred Rmax (km)")
-        plt.plot(t, err_r, label="Error (km)")
+        plt.plot(t, abs(err_r), label="Error (km)")
         plt.grid(True, linestyle="--", alpha=0.4)
         plt.xlabel("Time order (sorted sar_time)")
         plt.ylabel("km")
@@ -928,28 +928,78 @@ class LogValidationSamples:
         # ======================================================================
         # Vmax scatter
         ok = np.isfinite(analysis_vmax_kt) & np.isfinite(pred_vmax_kt)
-        stats_v = _stats(pred_vmax_kt[ok] - analysis_vmax_kt[ok])
+        x = analysis_vmax_kt[ok]
+        y = pred_vmax_kt[ok]
 
-        plt.figure(figsize=(6,6))
-        plt.scatter(analysis_vmax_kt[ok], pred_vmax_kt[ok], s=20)
+        stats_v = _stats(y - x)
+        from scipy.stats import linregress
+
+        # Linear regression
+        slope, intercept, r_value, _, _ = linregress(x, y)
+
+        plt.figure(figsize=(6, 6))
+        plt.scatter(x, y, s=20, label="Samples")
+
+        # y = x reference line
+        lims = [min(x.min(), y.min()), max(x.max(), y.max())]
+        plt.plot(lims, lims, "r--", linewidth=2, label="y = x")
+
+        # Regression line
+        y_fit = slope * x + intercept
+        plt.plot(x, y_fit, "k-", linewidth=2,
+                label=f"Fit: y = {slope:.2f}x + {intercept:.2f}\n$R^2$ = {r_value**2:.2f}")
+
         plt.xlabel("Analysis Vmax (kt)")
         plt.ylabel("Pred Vmax (kt)")
         plt.grid(True, linestyle="--", alpha=0.4)
-        plt.title(f"Vmax scatter | bias={stats_v['bias']:.2f} rmse={stats_v['rmse']:.2f} mae={stats_v['mae']:.2f}")
+        plt.legend()
+
+        plt.title(
+            f"Vmax scatter | bias={stats_v['bias']:.2f} "
+            f"rmse={stats_v['rmse']:.2f} "
+            f"mae={stats_v['mae']:.2f}"
+        )
+
         plt.tight_layout()
         plt.savefig(os.path.join(out_dir, "scatter_vmax.png"), dpi=150)
         plt.close()
 
-        # Rmax scatter
-        ok = np.isfinite(analysis_rmax_km) & np.isfinite(pred_rmax_km)
-        stats_r = _stats(pred_rmax_km[ok] - analysis_rmax_km[ok])
 
-        plt.figure(figsize=(6,6))
-        plt.scatter(analysis_rmax_km[ok], pred_rmax_km[ok], s=20)
+        # =========================
+        # Rmax scatter
+        # =========================
+        ok = np.isfinite(analysis_rmax_km) & np.isfinite(pred_rmax_km)
+        x = analysis_rmax_km[ok]
+        y = pred_rmax_km[ok]
+
+        stats_r = _stats(y - x)
+
+        # Linear regression
+        slope, intercept, r_value, _, _ = linregress(x, y)
+
+        plt.figure(figsize=(6, 6))
+        plt.scatter(x, y, s=20, label="Samples")
+
+        # y = x reference line
+        lims = [min(x.min(), y.min()), max(x.max(), y.max())]
+        plt.plot(lims, lims, "r--", linewidth=2, label="y = x")
+
+        # Regression line
+        y_fit = slope * x + intercept
+        plt.plot(x, y_fit, "k-", linewidth=2,
+                label=f"Fit: y = {slope:.2f}x + {intercept:.2f}\n$R^2$ = {r_value**2:.2f}")
+
         plt.xlabel("Analysis Rmax (km)")
         plt.ylabel("Pred Rmax (km)")
         plt.grid(True, linestyle="--", alpha=0.4)
-        plt.title(f"Rmax scatter | bias={stats_r['bias']:.2f} rmse={stats_r['rmse']:.2f} mae={stats_r['mae']:.2f}")
+        plt.legend()
+
+        plt.title(
+            f"Rmax scatter | bias={stats_r['bias']:.2f} "
+            f"rmse={stats_r['rmse']:.2f} "
+            f"mae={stats_r['mae']:.2f}"
+        )
+
         plt.tight_layout()
         plt.savefig(os.path.join(out_dir, "scatter_rmax.png"), dpi=150)
         plt.close()

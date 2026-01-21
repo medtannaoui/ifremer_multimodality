@@ -38,6 +38,7 @@ class IR_SAR_Config:
     block_out_channels : list[int]
     down_block_types : list[str]
     up_block_types : list[str]
+    scheduler : str
     @staticmethod
     def from_yaml(path: str):
         with open(path, "r") as file:

@@ -131,7 +131,7 @@ class PairedDataset(Dataset):
 # =============================
 # 🧠 2) Train / Validate functions
 # =============================
-def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.0):
+def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.0,scheduler=None,scheduler_name=None):
     model.train()
     total_loss = 0
     metrics.reset()
@@ -146,6 +146,8 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_gr
     for x, sar, mask, _ in tqdm(dataloader, desc="Training"):
         x, sar, mask= x.to(fabric.device), sar.to(fabric.device), mask.to(fabric.device)
         optimizer.zero_grad()
+
+        
         # Forward pass
         pred = model(x, timestep=0).sample  # (B,1,H,W)
         sar_valid = sar.nan_to_num()
@@ -165,6 +167,8 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_gr
         fabric.backward(loss)
         fabric.clip_gradients(model, optimizer, max_norm=1.0)
         optimizer.step()
+        if scheduler_name == "onecycle":
+            scheduler.step()
 
         total_loss += loss.item()
         metrics.update(pred_valid*mask, sar_valid*mask)
@@ -315,7 +319,40 @@ def main(cfg: IR_SAR_Config,test=False):
     ).to(fabric.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate, weight_decay=1e-3)   #add regularisation
 
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.num_epochs, eta_min=1e-6)
+    if cfg.scheduler == "cosin":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.num_epochs, eta_min=1e-6)
+        
+
+
+    elif cfg.scheduler == "expo":
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(
+        optimizer,
+        gamma=0.98
+    )
+        
+    elif cfg.scheduler == "reduceplateau":
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",         
+            factor=0.5,          
+            patience=5,          
+            threshold=1e-4,
+            min_lr=1e-6,
+            verbose=True
+        )
+        
+    elif cfg.scheduler == "onecycle" : 
+        steps_per_epoch = len(train_loader)  # ton DataLoader train
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=cfg.learning_rate,     # peak lr
+            epochs=cfg.num_epochs,
+            steps_per_epoch=steps_per_epoch,
+            pct_start=0.1,                # 10% warmup
+            div_factor=10.0,              # lr initial = max_lr/div_factor
+            final_div_factor=1e4          # lr final = max_lr/final_div_factor
+        )
+
 
     # Prepare for Fabric
     model, optimizer = fabric.setup(model, optimizer)
@@ -336,7 +373,10 @@ def main(cfg: IR_SAR_Config,test=False):
         train_loss, train_metrics,l_pix, l_grad, l_radial = train_one_epoch(fabric, model, train_loader, optimizer, metrics,
                                                     w_pix=cfg.w_pix,
                                                     w_grad=cfg.w_grad,
-                                                    w_radial=cfg.w_radial)
+                                                    w_radial=cfg.w_radial,
+                                                    scheduler=scheduler,
+                                                    scheduler_name=cfg.scheduler)
+        
         val_loss, val_metrics, l_pix_val,l_grad_val, l_radial_val = validate(fabric, model, val_loader, metrics,
                                          w_pix=cfg.w_pix,
                                          w_grad=cfg.w_grad,
@@ -351,7 +391,12 @@ def main(cfg: IR_SAR_Config,test=False):
         radial_loss_history.append((l_radial,l_radial_val))
 
 
-        scheduler.step()
+        if cfg.scheduler == "reduceplateau":
+                scheduler.step(val_loss)   # needs metric
+        elif cfg.scheduler in ["cosin", "expo"]:
+            scheduler.step()           # epoch-based, no metric
+        elif cfg.scheduler == "onecycle":
+            pass  # stepped per-batch inside train_one_epoch
 
         fabric.call(
             "on_validation_epoch_end",
