@@ -44,7 +44,7 @@ class PrepareDataSet():
         
 
         print("🔹 Loading data from csv ...")
-        data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/TCVA_matched_with_SARGEO_v2.csv")
+        data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/TCVA_matched_with_SARGEO_v3_split_by_cyclone_name.csv")
         print("data before filtering", len(data))
 
 
