@@ -654,30 +654,37 @@ class LogValidationSamples:
         self.log_batch(model, batch_full_test, epoch, device, set="test")
         self.anggrek_plots(model, batch_full_anggrek, epoch, device)
 
-
-
-
     def anggrek_plots(self, model, batch, epoch, device):
         """
-        batch = (x, sar, mask, infos) for split 'test2' (Anggrek lifecycle)
-        Produces:
-        1) big lifecycle figure (IR / true SAR / pred SAR) sorted by time
-        2) mean normalized radial vmax profile (r/rmw)
-        3) time series for vmax and rmax + error
-        4) scatter plots analysis vs pred with stats
+        Produces ONLY:
+        (1) field_plots/<YYYYmmddHHMMSS>/<YYYYmmddHHMMSS>_fields.png with IR + PRED
+        (2) vmax_comparison.png : Vmax (infos) vs Vmax_pred (max of pred_den), with RMSE
         """
+        import os
+        from pathlib import Path
+        import numpy as np
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        import matplotlib.dates as mdates
+        import torch
+
         model.eval()
 
-        x, sar, mask, infos = batch
+        # -------------------------
+        # Unpack batch
+        # -------------------------
+        x, _, _, infos = batch
         x = x.to(device)
-        sar = sar.to(device)
-        mask = mask.to(device)
 
-        # ---------- predict ----------
+        # -------------------------
+        # Predict
+        # -------------------------
         with torch.no_grad():
             pred = model(x, timestep=0).sample  # (B,1,H,W)
 
-        # ---------- helpers ----------
+        # -------------------------
+        # Helpers
+        # -------------------------
         def denorm(t, mean, std):
             return t * (std + 1e-10) + mean
 
@@ -686,7 +693,7 @@ class LogValidationSamples:
             N, H, W = images_norm.shape
             cx, cy = (W - 1) / 2, (H - 1) / 2
             y, x_ = np.indices((H, W))
-            radius = np.sqrt((y - cy)**2 + (x_ - cx)**2)
+            radius = np.sqrt((y - cy) ** 2 + (x_ - cx) ** 2)
             radial_bins = (radius // bin_size).astype(np.int32)
             mean = stats["mean"]
             std = stats["std"]
@@ -695,311 +702,132 @@ class LogValidationSamples:
                 images[:, radial_bins == b] = images[:, radial_bins == b] * std[b] + mean[b]
             return images
 
-        def _stats(err):
-            err = np.asarray(err)
-            err = err[np.isfinite(err)]
-            if err.size == 0:
-                return dict(bias=np.nan, rmse=np.nan, mae=np.nan)
-            return dict(
-                bias=float(np.mean(err)),
-                rmse=float(np.sqrt(np.mean(err**2))),
-                mae=float(np.mean(np.abs(err)))
-            )
-
-        def radial_vmax_profile(sar2d, cx, cy, bin_size=1.0):
-            """Return radii (pixels) and vmax(r) computed from 2D field."""
-            H, W = sar2d.shape
-            y, x_ = np.indices((H, W))
-            r = np.sqrt((x_ - cx)**2 + (y - cy)**2)
-            rmax = int(np.nanmax(r))
-            radii = np.arange(0, rmax + 1)
-            prof = np.full_like(radii, np.nan, dtype=np.float32)
-            for k, R0 in enumerate(radii):
-                m = np.abs(r - R0) < (bin_size / 2.0)
-                if np.any(m):
-                    prof[k] = np.nanmax(sar2d[m])
-            return radii, prof
-        
         def moment_to_sar(moment):
-                assert moment.ndim == 3, "moment must be (N, H, W)"
-                N, H, W = moment.shape
-                y, x = np.indices((H, W))
-                cy, cx = H // 2, W // 2
-                r = np.sqrt((x - cx)**2 + (y - cy)**2)
-                r_safe = np.maximum(r, 1.0)
-                sar = moment / r_safe[None, :, :]
-                return sar
+            # moment: (B,H,W)
+            assert moment.ndim == 3, "moment must be (B,H,W)"
+            B, H, W = moment.shape
+            y, x = np.indices((H, W))
+            cy, cx = H // 2, W // 2
+            r = np.sqrt((x - cx) ** 2 + (y - cy) ** 2)
+            r_safe = np.maximum(r, 1.0)
+            return moment / r_safe[None, :, :]
 
-        # ---------- move to numpy ----------
-        x_np   = x.detach().cpu().numpy()      # (B,C,H,W)
-        sar_np = sar.detach().squeeze().cpu().numpy()    # (B,1,H,W)
-        pred_np= pred.detach().squeeze().cpu().numpy()   # (B,1,H,W)
-        mask_np= mask.detach().squeeze().cpu().numpy()   # (B,1,H,W) or (B,H,W)
+        def robust_limits(arr, qmin=1, qmax=99):
+            a = np.asarray(arr)
+            a = a[np.isfinite(a)]
+            if a.size == 0:
+                return None, None
+            return np.percentile(a, qmin), np.percentile(a, qmax)
+
+        # -------------------------
+        # To numpy + denorm
+        # -------------------------
+        x_np = x.detach().cpu().numpy()  # (B,C,H,W)
+        pred_np = pred.detach().squeeze().cpu().numpy()  # (B,H,W) or (H,W) if B=1
+
+        if pred_np.ndim == 2:
+            pred_np = pred_np[None, ...]  # force (B,H,W)
 
         B = x_np.shape[0]
-        ch = 4 if x_np.shape[1] == 9 else 0
-        ir = x_np[:, ch, :, :]                 # (B,H,W)
-        sar1 = sar_np                          # (B,H,W)
-        pred1= pred_np                         # (B,H,W)
+        ch = 0  # IR channel index
+        ir = x_np[:, ch, :, :]  # (B,H,W)
+        pred1 = pred_np          # (B,H,W)
 
-        # ---------- denormalize ----------
         ir_den = denorm(ir, self.mean_X[ch], self.std_X[ch])
 
         if self.norm == "z_score":
-            sar_den  = denorm(sar1,  self.mean_sar, self.std_sar)
             pred_den = denorm(pred1, self.mean_sar, self.std_sar)
         elif self.norm == "annular":
-            sar_den  = annular_denormalization(sar1,  stats={"mean": self.mean_sar, "std": self.std_sar})
             pred_den = annular_denormalization(pred1, stats={"mean": self.mean_sar, "std": self.std_sar})
         else:
-            sar_den, pred_den = sar1, pred1
+            # fallback: assume already denorm
+            pred_den = pred1
 
-        # if output is "aam" moments -> convert to SAR
-        if self.output_data == "aam":
-            sar_den  = moment_to_sar(sar_den)
+        if getattr(self, "output_data", "") == "aam":
             pred_den = moment_to_sar(pred_den)
 
-        # ---------- sort by time ----------
-        # robust parse
-        sar_time = [d.get("sar_time") for d in infos]
+        # -------------------------
+        # Sort by time
+        # -------------------------
+        sar_time = [d.get("date") for d in infos]
         time_parsed = pd.to_datetime(sar_time, errors="coerce")
         order = np.argsort(time_parsed.values.astype("datetime64[ns]"))
 
-        ir_den   = ir_den[order]
-        sar_den  = sar_den[order]
+        ir_den = ir_den[order]
         pred_den = pred_den[order]
-        mask_ord = mask_np[order]
-        infos_ord= [infos[i] for i in order]
+        infos_ord = [infos[i] for i in order]
         time_parsed = time_parsed[order]
 
-        # ---------- compute predicted vmax/rmax ----------
-        H, W = sar_den.shape[1], sar_den.shape[2]
-        cx, cy = (W - 1) / 2, (H - 1) / 2
+        # -------------------------
+        # Output dirs
+        # -------------------------
+        out_root = Path(self.output_dir) / "anggrek_monitoring"
+        field_dir = out_root / "field_plots"
+        field_dir.mkdir(parents=True, exist_ok=True)
 
-        pred_vmax_kt = np.full(B, np.nan, dtype=np.float32)
-        pred_rmax_km = np.full(B, np.nan, dtype=np.float32)
 
+        # -------------------------
+        # (1) Save IR + Pred per date
+        # -------------------------
         for i in range(B):
-            vmax1d_kt, rmax1d_pix = self.compute_vmax1d_rmax1d(pred_den[i], cx, cy)
-            pred_vmax_kt[i] = vmax1d_kt
-            pred_rmax_km[i] = rmax1d_pix * 2.0  # 2 km per pixel (as in your code)
+            t = time_parsed[i]
 
-        # analysis arrays
-        analysis_vmax = np.array([d.get("analysis_vmax", np.nan) for d in infos_ord], dtype=np.float32)  # m/s
-        analysis_rmax = np.array([d.get("analysis_rmax", np.nan) for d in infos_ord], dtype=np.float32)  # meters
-        analysis_vmax_kt = analysis_vmax * 1.94384
-        analysis_rmax_km = analysis_rmax / 1000.0
+            if pd.isna(t):
+                date_key = f"unknown_{i:03d}"
+                fname = f"unknown_{i:03d}_fields.png"
+                supt = f"Unknown time (idx={i})"
+            else:
+                date_key = t.strftime("%Y%m%d%H%M%S")  
+                fname = f"{date_key}_fields.png"
+                supt = t.strftime("%Y-%m-%d %H:%M:%S")
 
-        # ---------- output dir ----------
-        out_dir = os.path.join(self.output_dir, "anggrek_monitoring", f"epoch_{epoch+1:04d}")
-        os.makedirs(out_dir, exist_ok=True)
+            sub = field_dir
+            sub.mkdir(parents=True, exist_ok=True)
 
-        # ======================================================================
-        # (1) Lifecycle samples in one big figure (3 cols × B rows)
-        # ======================================================================
-        fig_h = max(4, 3 * B)
-        fig, axes = plt.subplots(B, 3, figsize=(18, fig_h))
-        if B == 1:
-            axes = np.expand_dims(axes, 0)
+            fig, axs = plt.subplots(1, 2, figsize=(8, 4), constrained_layout=True)
 
-        for i in range(B):
-            info = infos_ord[i]
-            cname = info.get("cyclone_name", "ANGGREK")
-            cid   = info.get("cyclone_id", "")
-            stime = str(info.get("sar_time", ""))
-
-            av_kt = analysis_vmax_kt[i]
-            ar_km = analysis_rmax_km[i]
-            pv_kt = pred_vmax_kt[i]
-            pr_km = pred_rmax_km[i]
-
-            title = (f"{cname} | {cid} | {stime}\n"
-                    f"Analysis Vmax={av_kt:.1f} kt | Pred Vmax={pv_kt:.1f} kt\n"
-                    f"Analysis Rmax={ar_km:.1f} km | Pred Rmax={pr_km:.1f} km")
-
-            axes[i, 0].imshow(ir_den[i], cmap=self.cmap_ir)
-            axes[i, 0].set_title("IR (denorm)")
-            axes[i, 0].axis("off")
-
-            sar_vis = sar_den[i].copy()
-            # apply mask if shape is (B,1,H,W) or (B,H,W)
-            m = mask_ord[i]
-            if m.ndim == 3:
-                m = m[0]
-            sar_vis = np.where(m == 1, sar_vis, np.nan)
-            axes[i, 1].imshow(sar_vis, cmap=self.cmap_sar)
-            axes[i, 1].set_title("True SAR (denorm)")
-            axes[i, 1].axis("off")
-
-            pred_vis = pred_den[i].copy()
+            im0 = axs[0].imshow(ir_den[i], cmap=self.cmap_ir)
+            axs[0].set_title("IRWIN")
+            axs[0].axis("off")
             
-            axes[i, 2].imshow(pred_vis,cmap=self.cmap_sar)
-            axes[i, 2].set_title("Pred SAR (denorm)")
-            axes[i, 2].axis("off")
 
-            # put meta info as a y-label (to avoid huge titles)
-            axes[i, 0].set_ylabel(title, fontsize=9)
+            im1 = axs[1].imshow(pred_den[i], cmap=self.cmap_sar)
+            axs[1].set_title("Prediction")
+            axs[1].axis("off")
+            
 
-        plt.tight_layout()
-        fig.savefig(os.path.join(out_dir, "lifecycle_all_samples.png"), dpi=150)
+            fig.suptitle(supt)
+            fig.savefig(sub / fname, dpi=150)
+            plt.close(fig)
+
+        # -------------------------
+        # (2) Vmax comparison plot
+        # -------------------------
+        # truth vmax from infos (m/s)
+        vmax = np.array([d.get("vmax", np.nan) for d in infos_ord], dtype=float)
+
+        # predicted vmax from pred field (m/s)
+        pred_vmax = np.nanmax(pred_den.reshape(B, -1), axis=1)
+
+        ok = np.isfinite(vmax) & np.isfinite(pred_vmax)
+        rmse = float(np.sqrt(np.mean((pred_vmax[ok] - vmax[ok]) ** 2))) if np.any(ok) else np.nan
+
+        fig, ax = plt.subplots(figsize=(11, 6))
+        ax.plot(time_parsed, vmax, color="black", linewidth=2, label="Vmax")
+        ax.plot(time_parsed, pred_vmax, color="magenta", linewidth=2, label="Pred Vmax")
+
+        ax.set_title(f"Lifecycle Vmax Comparison — RMSE = {rmse:.2f} m/s")
+        ax.set_xlabel("Time")
+        ax.set_ylabel("Vmax (m/s)")
+
+        # clean date axis like your IBTrACS figure
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=2))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
+        plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
+
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(out_root / "vmax_comparison.png", dpi=150)
         plt.close(fig)
 
-        # ======================================================================
-        # (2) Mean normalized radial profile (r/rmw) over all lifecycle images
-        #     We'll compute vmax(r) for each image then resample on common grid.
-        # ======================================================================
-        rgrid = np.linspace(0, 4.0, 200)  # normalized radius r/rmw, up to 4
-        profiles_true = []
-        profiles_pred = []
-
-        for i in range(B):
-            # choose Rmw reference (analysis_rmax_km preferred, else predicted)
-            rmw = analysis_rmax_km[i]
-            if not np.isfinite(rmw) or rmw <= 0:
-                rmw = pred_rmax_km[i]
-            if not np.isfinite(rmw) or rmw <= 0:
-                continue
-
-            radii_pix, prof_true = radial_vmax_profile(sar_den[i] * 1.94384, cx, cy)   # knots
-            radii_pix2, prof_pred = radial_vmax_profile(pred_den[i] * 1.94384, cx, cy) # knots
-
-            # convert pixels -> km (2 km per pixel) then normalize by rmw (km)
-            r_km = radii_pix * 2.0
-            r_norm = r_km / rmw
-
-            # interpolate onto common grid
-            true_interp = np.interp(rgrid, r_norm, prof_true, left=np.nan, right=np.nan)
-            pred_interp = np.interp(rgrid, r_norm, prof_pred, left=np.nan, right=np.nan)
-
-            profiles_true.append(true_interp)
-            profiles_pred.append(pred_interp)
-
-        if len(profiles_true) > 0:
-            mean_true = np.nanmean(np.stack(profiles_true, 0), 0)
-            mean_pred = np.nanmean(np.stack(profiles_pred, 0), 0)
-
-            plt.figure(figsize=(8,5))
-            plt.plot(rgrid, mean_true, label="True mean radial Vmax (kt)")
-            plt.plot(rgrid, mean_pred, label="Pred mean radial Vmax (kt)")
-            plt.xlabel("Normalized radius r / Rmw")
-            plt.ylabel("Vmax(r) [kt]")
-            plt.grid(True, linestyle="--", alpha=0.4)
-            plt.legend()
-            plt.tight_layout()
-            plt.savefig(os.path.join(out_dir, "mean_normalized_radial_profile.png"), dpi=150)
-            plt.close()
-
-        # ======================================================================
-        # (3) Time series: Vmax + error (and same for Rmax)
-        # ======================================================================
-        # Use sorted time; if parsing failed, fallback to index
-        t = np.arange(B)
-
-        # Vmax
-        err_v = pred_vmax_kt - analysis_vmax_kt
-        plt.figure(figsize=(10,5))
-        plt.plot(t, analysis_vmax_kt, label="Analysis Vmax (kt)")
-        plt.plot(t, abs(pred_vmax_kt), label="Pred Vmax (kt)")
-        plt.plot(t, err_v, label="Error (kt)")
-        plt.grid(True, linestyle="--", alpha=0.4)
-        plt.xlabel("Time order (sorted sar_time)")
-        plt.ylabel("kt")
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig(os.path.join(out_dir, "timeseries_vmax_and_error.png"), dpi=150)
-        plt.close()
-
-        # Rmax
-        err_r = pred_rmax_km - analysis_rmax_km
-        plt.figure(figsize=(10,5))
-        plt.plot(t, analysis_rmax_km, label="Analysis Rmax (km)")
-        plt.plot(t, pred_rmax_km, label="Pred Rmax (km)")
-        plt.plot(t, abs(err_r), label="Error (km)")
-        plt.grid(True, linestyle="--", alpha=0.4)
-        plt.xlabel("Time order (sorted sar_time)")
-        plt.ylabel("km")
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig(os.path.join(out_dir, "timeseries_rmax_and_error.png"), dpi=150)
-        plt.close()
-
-        # ======================================================================
-        # (4) Scatter plots + stats
-        # ======================================================================
-        # Vmax scatter
-        ok = np.isfinite(analysis_vmax_kt) & np.isfinite(pred_vmax_kt)
-        x = analysis_vmax_kt[ok]
-        y = pred_vmax_kt[ok]
-
-        stats_v = _stats(y - x)
-        from scipy.stats import linregress
-
-        # Linear regression
-        slope, intercept, r_value, _, _ = linregress(x, y)
-
-        plt.figure(figsize=(6, 6))
-        plt.scatter(x, y, s=20, label="Samples")
-
-        # y = x reference line
-        lims = [min(x.min(), y.min()), max(x.max(), y.max())]
-        plt.plot(lims, lims, "r--", linewidth=2, label="y = x")
-
-        # Regression line
-        y_fit = slope * x + intercept
-        plt.plot(x, y_fit, "k-", linewidth=2,
-                label=f"Fit: y = {slope:.2f}x + {intercept:.2f}\n$R^2$ = {r_value**2:.2f}")
-
-        plt.xlabel("Analysis Vmax (kt)")
-        plt.ylabel("Pred Vmax (kt)")
-        plt.grid(True, linestyle="--", alpha=0.4)
-        plt.legend()
-
-        plt.title(
-            f"Vmax scatter | bias={stats_v['bias']:.2f} "
-            f"rmse={stats_v['rmse']:.2f} "
-            f"mae={stats_v['mae']:.2f}"
-        )
-
-        plt.tight_layout()
-        plt.savefig(os.path.join(out_dir, "scatter_vmax.png"), dpi=150)
-        plt.close()
-
-
-        # =========================
-        # Rmax scatter
-        # =========================
-        ok = np.isfinite(analysis_rmax_km) & np.isfinite(pred_rmax_km)
-        x = analysis_rmax_km[ok]
-        y = pred_rmax_km[ok]
-
-        stats_r = _stats(y - x)
-
-        # Linear regression
-        slope, intercept, r_value, _, _ = linregress(x, y)
-
-        plt.figure(figsize=(6, 6))
-        plt.scatter(x, y, s=20, label="Samples")
-
-        # y = x reference line
-        lims = [min(x.min(), y.min()), max(x.max(), y.max())]
-        plt.plot(lims, lims, "r--", linewidth=2, label="y = x")
-
-        # Regression line
-        y_fit = slope * x + intercept
-        plt.plot(x, y_fit, "k-", linewidth=2,
-                label=f"Fit: y = {slope:.2f}x + {intercept:.2f}\n$R^2$ = {r_value**2:.2f}")
-
-        plt.xlabel("Analysis Rmax (km)")
-        plt.ylabel("Pred Rmax (km)")
-        plt.grid(True, linestyle="--", alpha=0.4)
-        plt.legend()
-
-        plt.title(
-            f"Rmax scatter | bias={stats_r['bias']:.2f} "
-            f"rmse={stats_r['rmse']:.2f} "
-            f"mae={stats_r['mae']:.2f}"
-        )
-
-        plt.tight_layout()
-        plt.savefig(os.path.join(out_dir, "scatter_rmax.png"), dpi=150)
-        plt.close()

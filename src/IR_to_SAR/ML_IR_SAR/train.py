@@ -255,7 +255,7 @@ def main(cfg: IR_SAR_Config,test=False):
     train_ds = PairedDataset(*(full_data.dataset.X_train,full_data.dataset.sar_train),full_data.dataset.mask_train, full_data.dataset.infos_train)  #X (multi-channel input), SAR target
     val_ds   = PairedDataset(*(full_data.dataset.X_val,full_data.dataset.sar_val),full_data.dataset.mask_val, full_data.dataset.infos_val)
     test_ds   = PairedDataset(*(full_data.dataset.X_test,full_data.dataset.sar_test),full_data.dataset.mask_test, full_data.dataset.infos_test)
-    anggrek_ds   = PairedDataset(*(full_data.dataset.X_anggrek,full_data.dataset.sar_anggrek),full_data.dataset.mask_anggrek, full_data.dataset.infos_anggrek)
+    anggrek_ds   = PairedDataset(*(full_data.dataset.X_anggrek,full_data.dataset.X_anggrek),full_data.dataset.X_anggrek, full_data.dataset.infos_anggrek)
 
     train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, collate_fn=custom_collate)
     val_loader   = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=custom_collate)
