@@ -150,7 +150,7 @@ def combined_sar_loss(
     loss = loss / s
     loss_dict["loss_total"] = loss.detach()
 
-    return loss, l_pix.detach(), l_grad.detach(), l_radial.detach()
+    return loss, l_pix.detach() if w_pix>0 else l_pix, l_grad.detach() if w_grad>0 else l_grad, l_radial.detach() if w_radial >0 else l_radial
 
 @torch.no_grad()
 def compute_bin_weights_from_loader(
