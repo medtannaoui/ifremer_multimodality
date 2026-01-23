@@ -46,7 +46,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import shutil
 
-from src.IR_to_SAR.ML_IR_SAR.losses import combined_sar_loss,compute_bin_weights_from_loader,compute_bin_edges_quantiles
+from src.IR_to_SAR.ML_IR_SAR.losses import *
 
 import src.IR_to_SAR.data_preparation.data_preprocessing as dataprep
 from src.visualisation.utils_colormap import CMAP
@@ -131,7 +131,8 @@ class PairedDataset(Dataset):
 # =============================
 # 🧠 2) Train / Validate functions
 # =============================
-def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.0,scheduler=None,scheduler_name=None):
+def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.0,scheduler=None,
+                    scheduler_name=None,vmax_train=None,rmin_train=None):
     model.train()
     total_loss = 0
     metrics.reset()
@@ -159,6 +160,15 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_gr
                                                             bin_edges=BIN_EDGES, bin_weights=BIN_WEIGHTS,
                                                             use_weighted_pix=True
                                                         )
+        wmap = make_weight_map_wspd_rad(
+            target=sar_valid,
+            mask=mask,
+            vmax_train_max=vmax_train,
+            rmw_train_min=rmin_train,
+            r_map=None  # ou ta r_map pré-calculée
+        )
+
+        loss = weighted_mse_wspd_rad(pred_valid, sar_valid, mask, wmap)
         if sar_valid.ndim == 3:
             sar_valid = sar_valid.unsqueeze(1)
         if mask.ndim == 3:
@@ -173,10 +183,10 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_gr
         total_loss += loss.item()
         metrics.update(pred_valid*mask, sar_valid*mask)
 
-    return total_loss / len(dataloader), metrics.compute(), l_pix.cpu(), l_grad.cpu(), l_radial.cpu()
+    return total_loss / len(dataloader), metrics.compute(), l_pix, l_grad, l_radial
 
 
-def validate(fabric, model, dataloader, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.0):
+def validate(fabric, model, dataloader, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.0,vmax_train=None,rmin_train=None):
     model.eval()
     total_loss = 0
     metrics.reset()
@@ -195,6 +205,15 @@ def validate(fabric, model, dataloader, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.
                                      w_pix=w_pix,
                                      w_grad=w_grad,
                                      w_radial=w_radial)
+            wmap = make_weight_map_wspd_rad(
+                target=sar_valid,
+                mask=mask,
+                vmax_train_max=vmax_train,
+                rmw_train_min=rmin_train,
+                r_map=None  # ou ta r_map pré-calculée
+            )
+
+            loss = weighted_mse_wspd_rad(pred_valid, sar_valid, mask, wmap)
             
             if sar_valid.ndim == 3:
                 sar_valid = sar_valid.unsqueeze(1)
@@ -204,7 +223,7 @@ def validate(fabric, model, dataloader, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.
             total_loss += loss.item()
             metrics.update(pred_valid*mask, sar_valid*mask)
 
-    return total_loss / len(dataloader), metrics.compute(), l_pix.cpu(), l_grad.cpu(),l_radial.cpu()
+    return total_loss / len(dataloader), metrics.compute(), l_pix, l_grad,l_radial
 
 
 # =============================
@@ -367,6 +386,12 @@ def main(cfg: IR_SAR_Config,test=False):
     pix2pix_loss_history = []
     gradient_loss_history = []
     radial_loss_history = []
+
+    VMAX_TRAIN, RMIN_TRAIN = compute_vmax_rmax_constants_from_loader(
+                                                                    train_loader=train_loader,
+                                                                    device=fabric.device,
+                                                                    max_batches=None 
+                                                                )
     for epoch in range(cfg.num_epochs):
         logger.info(f"===== Epoch {epoch+1}/{cfg.num_epochs} =====")
         
@@ -375,12 +400,16 @@ def main(cfg: IR_SAR_Config,test=False):
                                                     w_grad=cfg.w_grad,
                                                     w_radial=cfg.w_radial,
                                                     scheduler=scheduler,
-                                                    scheduler_name=cfg.scheduler)
+                                                    scheduler_name=cfg.scheduler,
+                                                    vmax_train=VMAX_TRAIN,
+                                                    rmin_train=RMIN_TRAIN)
         
         val_loss, val_metrics, l_pix_val,l_grad_val, l_radial_val = validate(fabric, model, val_loader, metrics,
                                          w_pix=cfg.w_pix,
                                          w_grad=cfg.w_grad,
-                                         w_radial=cfg.w_radial)
+                                         w_radial=cfg.w_radial
+                                         ,vmax_train=VMAX_TRAIN,
+                                         rmin_train=RMIN_TRAIN)
 
         # torch.cuda.empty_cache()
         # gc.collect()
