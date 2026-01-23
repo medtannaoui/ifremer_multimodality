@@ -359,22 +359,22 @@ def plot_sar(tensor, ax=None,cmap=cmap_sar,title=None,x_lim=300):
     ax.set_aspect('equal')
 
 
-def plot_ir(tensor,x=None, y=None, ax=None,x_lim=300,cmap=cmap_ir):
-    if ax is None : 
-        ax=plt.gca()
-    
-    
-    if x is None:
-       
-        x_ir, y_ir = np.linspace(-1000,1000,tensor.shape[0]) , np.linspace(-1000,1000,tensor.shape[1])
-        ax.pcolormesh(x_ir, y_ir , tensor, cmap=cmap_ir, shading="auto")
-        
-    else :
-        ax.pcolormesh(x, y , tensor, cmap=cmap_ir, shading="auto")
-    ax.set_xlim(-x_lim,x_lim)
-    ax.set_ylim(-x_lim,x_lim)
-       
-    ax.set_aspect('equal')
+def plot_ir(tensor, x=None, y=None, ax=None, x_lim=300, cmap=cmap_ir):
+    if ax is None:
+        ax = plt.gca()
+
+    tensor = np.squeeze(tensor)
+    ny, nx = tensor.shape  # (rows, cols)
+
+    if x is None or y is None:
+        x = np.linspace(-nx, nx, nx)
+        y = np.linspace(-ny, ny, ny)
+
+    ax.pcolormesh(x, y, tensor, cmap=cmap, shading="auto")
+    ax.set_xlim(-x_lim, x_lim)
+    ax.set_ylim(-x_lim, x_lim)
+    ax.set_aspect("equal")
+
 
 def plot_mw(tensor, cmap="cividis",x=None, y=None, ax=None, x_lim=300):
   
@@ -490,7 +490,7 @@ def compare_sar_distribution(sar_knots, pred_knots, output_dir, set, epoch):
         plt.hist(pred_knots, bins=60, alpha=0.5, density=False, label="Predicted SAR", color="orange")
         plt.legend()
         plt.xlabel("Wind Speed (knots)")
-        plt.ylabel("Density")
+        plt.ylabel("Count")
         plt.title(f"Global Wind Speed Distribution —_{set}")
         os.makedirs(os.path.join(output_dir, "compare_sar_distribution",set),exist_ok=True)
         out_path = os.path.join(output_dir, "compare_sar_distribution",set,f"wind_distribution.png")

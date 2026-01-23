@@ -44,12 +44,14 @@ class PrepareDataSet():
         
 
         print("🔹 Loading data from csv ...")
-        data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/TCVA_matched_with_SARGEO_v3_split_by_cyclone_name.csv")
+        data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_v3_split_by_year.csv")
+        anggrek_csv = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/anggrek_coloc_sar_ir.csv")
         print("data before filtering", len(data))
 
 
         data = data[~data["split"].isna()]
         print("data after filtering",len(data))
+        data = data.reset_index(drop=True)
 
         # ---- Keep only rows that open well ----
         
@@ -58,6 +60,7 @@ class PrepareDataSet():
                 "analysis_vmax", "analysis_rmax",
                 "analysis_center_quality_flag"]
             good_rows, bad_rows = [], []
+            good_rows_anggrek, bad_rows_anggrek = [], []
             irwin_train, irwin_val, irwin_test, irwin_anggrek= [], [], [], []
             sar_train, sar_val, sar_test, sar_anggrek = [], [], [], []
             infos_train, infos_val, infos_test, infos_anggrek = [], [], [], []
@@ -69,12 +72,14 @@ class PrepareDataSet():
                     with xr.open_dataset(row["sargeo_path"]) as sargeo:
                         if "IRWIN" not in sargeo:
                             raise KeyError("Missing IRWIN")
-                        irwin_train.append(sargeo["IRWIN"].values)
+                            
+                        
 
                     with xr.open_dataset(row["sar_aeqd_path"]) as ds_aeqd:
                         if "owiWindSpeed" not in ds_aeqd:
                             raise KeyError("Missing owiWindSpeed")
-                        sar_train.append(ds_aeqd["owiWindSpeed"].values)
+                    sar_train.append(ds_aeqd["owiWindSpeed"].values)
+                    irwin_train.append(sargeo["IRWIN"].values)
                     infos_train.append({k: row[k] for k in keys})
 
                     good_rows.append(i)
@@ -95,12 +100,12 @@ class PrepareDataSet():
                     with xr.open_dataset(row["sargeo_path"]) as sargeo:
                         if "IRWIN" not in sargeo:
                             raise KeyError("Missing IRWIN")
-                        irwin_val.append(sargeo["IRWIN"].values)
 
                     with xr.open_dataset(row["sar_aeqd_path"]) as ds_aeqd:
                         if "owiWindSpeed" not in ds_aeqd:
                             raise KeyError("Missing owiWindSpeed")
-                        sar_val.append(ds_aeqd["owiWindSpeed"].values)
+                    sar_val.append(ds_aeqd["owiWindSpeed"].values)
+                    irwin_val.append(sargeo["IRWIN"].values)
                     infos_val.append({k: row[k] for k in keys})
 
                     good_rows.append(i)
@@ -120,12 +125,13 @@ class PrepareDataSet():
                     with xr.open_dataset(row["sargeo_path"]) as sargeo:
                         if "IRWIN" not in sargeo:
                             raise KeyError("Missing IRWIN")
-                        irwin_test.append(sargeo["IRWIN"].values)
+                        
 
                     with xr.open_dataset(row["sar_aeqd_path"]) as ds_aeqd:
                         if "owiWindSpeed" not in ds_aeqd:
                             raise KeyError("Missing owiWindSpeed")
-                        sar_test.append(ds_aeqd["owiWindSpeed"].values)
+                    sar_test.append(ds_aeqd["owiWindSpeed"].values)
+                    irwin_test.append(sargeo["IRWIN"].values)
                     infos_test.append({k: row[k] for k in keys})
 
                     good_rows.append(i)
@@ -136,50 +142,47 @@ class PrepareDataSet():
                 pbar.set_postfix(good=len(good_rows), bad=len(bad_rows))
                 pbar.update(1)
             pbar.close()
-            self.infos_train = infos_train
-            self.infos_val = infos_val
-            self.infos_test = infos_test
-            self.infos_anggrek = infos_anggrek
+            
 
 
             #anggrek cyclone
-            N = len(data[data["split"]=="test2"])
+            N = len(anggrek_csv)
             pbar = tqdm(total=N, desc="Checking ANGGREK files", unit="row")
-            for i, row in data[data["split"]=="test2"].iterrows():
+            for i, row in anggrek_csv.iterrows():
                 try:
-                    with xr.open_dataset(row["sargeo_path"]) as sargeo:
-                        if "IRWIN" not in sargeo:
-                            raise KeyError("Missing IRWIN")
-                        irwin_anggrek.append(sargeo["IRWIN"].values)
+                    with xr.open_dataset(row["ir_path"]) as ir_ds:
+                        if "IR" not in ir_ds:
+                            raise KeyError("Missing IR")
+                        irwin_anggrek.append(ir_ds["IR"].values)
+                        
+                    infos_anggrek.append({"sid":row["sid"],"date":row["date"],"vmax":row["wind_speed (m/s)"],"lat":row["lat"],"lon":row["lon"]})
 
-                    with xr.open_dataset(row["sar_aeqd_path"]) as ds_aeqd:
-                        if "owiWindSpeed" not in ds_aeqd:
-                            raise KeyError("Missing owiWindSpeed")
-                        sar_anggrek.append(ds_aeqd["owiWindSpeed"].values)
-                    infos_anggrek.append({k: row[k] for k in keys})
-
-                    good_rows.append(i)
+                    good_rows_anggrek.append(i)
 
                 except Exception as e:
-                    bad_rows.append(i)
+                    bad_rows_anggrek.append(i)
 
                 pbar.set_postfix(good=len(good_rows), bad=len(bad_rows))
                 pbar.update(1)
             pbar.close()
                          
-            # Filter dataframe to only good indices
+            #Filter dataframe to only good indices
             data = data.loc[good_rows].reset_index(drop=True)
 
             print(f"✅ Kept rows that open correctly: {len(data)}")
             print(f"❌ Dropped rows that failed: {len(bad_rows)}")
 
+        self.infos_train = infos_train
+        self.infos_val = infos_val
+        self.infos_test = infos_test
+        self.infos_anggrek = infos_anggrek
 
         image_channels_train, image_channels_val, image_channels_test, image_channels_anggrek = [], [], [], []
     
         # all irwins (9)
         irwin_train = np.array(irwin_train)    # (N, 9, H, W) par ex.
         irwin_val,irwin_test, irwin_anggrek = np.array(irwin_val), np.array(irwin_test), np.array(irwin_anggrek)
-        self.sar_train, self.sar_val, self.sar_test, self.sar_anggrek = np.array(sar_train), np.array(sar_val), np.array(sar_test), np.array(sar_anggrek)
+        self.sar_train, self.sar_val, self.sar_test = np.array(sar_train), np.array(sar_val), np.array(sar_test)
         print("train size :",len(sar_train))
         print("val_size : ",len(sar_val))
         print("Test size: ",len(sar_test))
@@ -198,7 +201,7 @@ class PrepareDataSet():
             image_channels_train.append(irwin_train[:,4,:,:])  
             image_channels_val.append(irwin_val[:,4,:,:])  
             image_channels_test.append(irwin_test[:,4,:,:])  
-            image_channels_anggrek.append(irwin_anggrek[:,4,:,:])  
+            image_channels_anggrek.append(irwin_anggrek)  
 
         elif self.input_data == "normal+gradients":
             image_channels_train.append(np.gradient(irwin_train[:,4,:,:])[0])
@@ -210,8 +213,8 @@ class PrepareDataSet():
             image_channels_test.append(np.gradient(irwin_test[:,4,:,:])[0])
             image_channels_test.append(np.gradient(irwin_test[:,4,:,:])[1])
 
-            image_channels_anggrek.append(np.gradient(irwin_anggrek[:,4,:,:])[0])
-            image_channels_anggrek.append(np.gradient(irwin_anggrek[:,4,:,:])[1])
+            image_channels_anggrek.append(np.gradient(irwin_anggrek)[0])
+            image_channels_anggrek.append(np.gradient(irwin_anggrek)[1])
 
         elif self.input_data == "normal mean":
             image_channels_train.append(np.nanmean(irwin_train,axis=1)) 
@@ -228,20 +231,28 @@ class PrepareDataSet():
 
         print("Start Reshaping Data ........")
         N, C, H, W = self.X_train.shape
+        self.X_anggrek = self.X_anggrek.squeeze(2)
+        print(self.X_anggrek.shape)
+        N,C,h_anggrek,W_anggrek= self.X_anggrek.shape
         N,H_sar,W_sar = self.sar_train.shape
         self.X_train = self.X_train[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2]
         self.X_val = self.X_val[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2]
         self.X_test = self.X_test[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2]
-        self.X_anggrek = self.X_anggrek[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2]
+        self.X_anggrek = self.X_anggrek[:, :, h_anggrek//2-size//2:h_anggrek//2+size//2, W_anggrek//2-size//2:W_anggrek//2+size//2]
 
 
         self.sar_train = self.sar_train[:, H_sar//2-size//2:H_sar//2+size//2, W_sar//2-size//2:W_sar//2+size//2]
         self.sar_val = self.sar_val[:, H_sar//2-size//2:H_sar//2+size//2, W_sar//2-size//2:W_sar//2+size//2]
         self.sar_test = self.sar_test[:, H_sar//2-size//2:H_sar//2+size//2, W_sar//2-size//2:W_sar//2+size//2]
-        self.sar_anggrek = self.sar_anggrek[:, H_sar//2-size//2:H_sar//2+size//2, W_sar//2-size//2:W_sar//2+size//2]
+        # self.sar_anggrek = self.sar_anggrek[:, H_sar//2-size//2:H_sar//2+size//2, W_sar//2-size//2:W_sar//2+size//2]
 
         print("Final Shape of train Input is ",self.X_train.shape)
         print("Final Shape of train Output is ",self.sar_train.shape)
+        print("Final Shape of Validation Input is ",self.X_val.shape)
+        print("Final Shape of Validation Output is ",self.sar_val.shape)
+        print("Final Shape of Test Input is ",self.X_test.shape)
+        print("Final Shape of Test Output is ",self.sar_test.shape)
+
 
 
 
@@ -257,7 +268,7 @@ class PrepareDataSet():
         self.mask_train = np.isfinite(self.sar_train).astype(np.float32)
         self.mask_val = np.isfinite(self.sar_val).astype(np.float32)
         self.mask_test = np.isfinite(self.sar_test).astype(np.float32)
-        self.mask_anggrek = np.isfinite(self.sar_anggrek).astype(np.float32)
+        # self.mask_anggrek = np.isfinite(self.sar_anggrek).astype(np.float32)
 
 
         # Replace NaN & Inf by 0 ===
@@ -270,13 +281,13 @@ class PrepareDataSet():
         self.sar_train = np.nan_to_num(self.sar_train, nan=0.0, posinf=0.0, neginf=0.0)
         self.sar_val = np.nan_to_num(self.sar_val, nan=0.0, posinf=0.0, neginf=0.0)
         self.sar_test = np.nan_to_num(self.sar_test, nan=0.0, posinf=0.0, neginf=0.0)
-        self.sar_anggrek = np.nan_to_num(self.sar_anggrek, nan=0.0, posinf=0.0, neginf=0.0)
+        # self.sar_anggrek = np.nan_to_num(self.sar_anggrek, nan=0.0, posinf=0.0, neginf=0.0)
 
         if self.output_data == "aam":
             self.sar_train = dataprep.create_moment_sar(self.sar_train)
             self.sar_val = dataprep.create_moment_sar(self.sar_val)
             self.sar_test = dataprep.create_moment_sar(self.sar_test)
-            self.sar_anggrek = dataprep.create_moment_sar(self.sar_anggrek)
+            # self.sar_anggrek = dataprep.create_moment_sar(self.sar_anggrek)
 
 
         if self.augmentation:
@@ -342,14 +353,14 @@ class PrepareDataSet():
             self.sar_train, self.mean_sar, self.std_sar = dataprep.z_score(self.sar_train)
             self.sar_val,_,_  = dataprep.z_score(self.sar_val,mean_value=self.mean_sar,std_value=self.std_sar)
             self.sar_test,_,_  = dataprep.z_score(self.sar_test,mean_value=self.mean_sar,std_value=self.std_sar)
-            self.sar_anggrek,_,_  = dataprep.z_score(self.sar_anggrek,mean_value=self.mean_sar,std_value=self.std_sar)
+            # self.sar_anggrek,_,_  = dataprep.z_score(self.sar_anggrek,mean_value=self.mean_sar,std_value=self.std_sar)
         elif norm == "annular":
             self.sar_train,stats = dataprep.annular_normalization(self.sar_train,bin_size=1,mask=None)
             self.mean_sar = stats["mean"]
             self.std_sar = stats["std"]
             self.sar_val,_ = dataprep.annular_normalization(self.sar_val,bin_size=1,mask=None,stats=stats)
             self.sar_test,_ = dataprep.annular_normalization(self.sar_test,mask=None,stats=stats)
-            self.sar_anggrek,_ = dataprep.annular_normalization(self.sar_anggrek,mask=None,stats=stats)
+            # self.sar_anggrek,_ = dataprep.annular_normalization(self.sar_anggrek,mask=None,stats=stats)
 
         out_stats_dir = os.path.join(self.target_dir, "stats_normalisation", "OUTPUT")
         os.makedirs(out_stats_dir, exist_ok=True)
@@ -376,7 +387,7 @@ class PrepareDataSet():
             pkl.dump(
                 {
                     "IR_anggrek": self.X_anggrek,
-                    "sar_anggrek": self.sar_anggrek,
+                    "infos_anggrek": self.infos_anggrek,
                 },
                 f
     )
