@@ -38,6 +38,10 @@ excels/
 *metrics*
 src_new
 *tests*
+*csv_data*
+*compare_*
+gpm_sar
+
 # ==========================
 #   TEMPORARY & LOG FILES
 # ==========================
@@ -58,3 +62,5 @@ cyclone_not_in_tcprimed.csv
 without_owiWindSpeed/without_owiWindSpeed.csv
 .github/copilot-instructions.md
 radial_weights.png
+IBTrACS.since1980.v04r01.nc
+experiments_results.csv

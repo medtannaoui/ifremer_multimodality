@@ -4,6 +4,7 @@ import pickle as pkl
 import pandas as pd
 import torch
 import matplotlib.pyplot as plt
+import torch.nn.functional as F
 import numpy as np
 import importlib
 from matplotlib.patches import Circle
@@ -758,6 +759,8 @@ class LogValidationSamples:
         infos_ord = [infos[i] for i in order]
         time_parsed = time_parsed[order]
 
+        
+
         # -------------------------
         # Output dirs
         # -------------------------
@@ -800,6 +803,32 @@ class LogValidationSamples:
             fig.savefig(sub / fname, dpi=150)
             plt.close(fig)
 
+        #Resample SAr from 2km to 3km
+        @torch.no_grad()
+        def resample_2km_to_3km_torch(xs):
+            resamples = []
+
+            for x in xs:
+                # numpy -> torch (CPU)
+                x = torch.as_tensor(x, dtype=torch.float32, device="cpu")
+
+                # HxW -> 1x1xHxW
+                if x.dim() == 2:
+                    x = x.unsqueeze(0).unsqueeze(0)
+
+                H, W = x.shape[-2:]
+                new_H = int(H * 2 / 3)
+                new_W = int(W * 2 / 3)
+
+                # CPU interpolation
+                x3 = F.interpolate(x, size=(new_H, new_W), mode="bilinear", align_corners=False)
+
+                # back to numpy (HxW)
+                resamples.append(x3.squeeze(0).squeeze(0).cpu().numpy())
+
+            return np.stack(resamples, axis=0)
+        
+        pred_denorm_3m = resample_2km_to_3km_torch(pred_den)
         # -------------------------
         # (2) Vmax comparison plot
         # -------------------------
@@ -807,7 +836,7 @@ class LogValidationSamples:
         vmax = np.array([d.get("vmax", np.nan) for d in infos_ord], dtype=float)
 
         # predicted vmax from pred field (m/s)
-        pred_vmax = np.nanmax(pred_den.reshape(B, -1), axis=1)
+        pred_vmax = np.nanmax(pred_denorm_3m.reshape(B, -1), axis=1)
 
         ok = np.isfinite(vmax) & np.isfinite(pred_vmax)
         rmse = float(np.sqrt(np.mean((pred_vmax[ok] - vmax[ok]) ** 2))) if np.any(ok) else np.nan

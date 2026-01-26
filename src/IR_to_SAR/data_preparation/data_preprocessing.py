@@ -846,20 +846,20 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
         rmax = np.nanmax(rmax) if np.ndim(rmax) > 0 else float(rmax)
 
         # flips
-        if np.isfinite(rmax) and (50000 < rmax < 110000):
+        if np.isfinite(rmax) and (50000 < rmax < 180000):
             for flip in ["h", "v"]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
                 out_ir.append(ir_r); out_sar.append(sar_r); out_mask.append(mask_r); out_infos.append(inf)
 
-        if np.isfinite(rmax) and (rmax > 110000):
-            for flip in ["h", "v"]:
+        if np.isfinite(rmax) and (rmax > 180000):
+            for flip in ["h"]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
                 out_ir.append(ir_r); out_sar.append(sar_r); out_mask.append(mask_r); out_infos.append(inf)
 
             for angle in [270, 90, 180]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
                 out_ir.append(ir_r); out_sar.append(sar_r); out_mask.append(mask_r); out_infos.append(inf)
-            for sigma in [0.03,0.05]:
+            for sigma in [0.03]:
                 ir_r,sar_r = add_white_noise(ir,sigma), add_white_noise(sar,sigma)
                 out_ir.append(ir_r); out_sar.append(sar_r); out_mask.append(mask); out_infos.append(inf)
 

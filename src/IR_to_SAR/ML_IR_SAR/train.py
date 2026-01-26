@@ -190,6 +190,10 @@ def validate(fabric, model, dataloader, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.
     model.eval()
     total_loss = 0
     metrics.reset()
+    BIN_EDGES = compute_bin_edges_quantiles(dataloader, device=fabric.device, num_bins=5)
+    BIN_WEIGHTS, BIN_PROBS, BIN_COUNTS = compute_bin_weights_from_loader(
+        train_loader=dataloader, bin_edges=BIN_EDGES, device=fabric.device, alpha=0.5
+    )
 
     with torch.no_grad():
         for x, sar, mask, _ in tqdm(dataloader, desc="Validating"):
@@ -204,7 +208,9 @@ def validate(fabric, model, dataloader, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.
             loss,l_pix,l_grad,l_radial = combined_sar_loss(sar_valid,pred_valid,mask,
                                      w_pix=w_pix,
                                      w_grad=w_grad,
-                                     w_radial=w_radial)
+                                     w_radial=w_radial,
+                                     bin_edges=BIN_EDGES, bin_weights=BIN_WEIGHTS,
+                                                            use_weighted_pix=True)
             wmap = make_weight_map_wspd_rad(
                 target=sar_valid,
                 mask=mask,
