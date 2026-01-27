@@ -5,6 +5,8 @@ import xarray as xr
 import numpy as np
 from loguru import logger
 import pickle as pkl
+
+from pathlib import Path
 import os
 from importlib import reload
 import matplotlib.pyplot as plt
@@ -196,7 +198,7 @@ class PrepareDataSet():
                 image_channels_train.append(irwin_train[:, i, :, :]  )
                 image_channels_val.append(irwin_val[:,i,:,:])
                 image_channels_test.append(irwin_test[:,i,:,:])
-                image_channels_anggrek.append(irwin_anggrek[:,i,:,:])
+                image_channels_anggrek.append(irwin_anggrek)
 
         elif self.input_data == "normal":
             image_channels_train.append(irwin_train[:,4,:,:])  
@@ -205,6 +207,11 @@ class PrepareDataSet():
             image_channels_anggrek.append(irwin_anggrek)  
 
         elif self.input_data == "normal+gradients":
+            image_channels_train.append(irwin_train[:,4,:,:])
+            image_channels_val.append(irwin_val[:,4,:,:])
+            image_channels_test.append(irwin_test[:,4,:,:])
+            image_channels_anggrek.append(irwin_anggrek)
+
             image_channels_train.append(np.gradient(irwin_train[:,4,:,:])[0])
             image_channels_train.append(np.gradient(irwin_train[:,4,:,:])[1])
 
@@ -221,7 +228,7 @@ class PrepareDataSet():
             image_channels_train.append(np.nanmean(irwin_train,axis=1)) 
             image_channels_val.append(np.nanmean(irwin_val,axis=1)) 
             image_channels_test.append(np.nanmean(irwin_test,axis=1)) 
-            image_channels_anggrek.append(np.nanmean(irwin_anggrek,axis=1)) 
+            image_channels_anggrek.append(irwin_anggrek) 
 
         #stack the pictures list
         self.X_train = np.stack(image_channels_train, axis=1)  
