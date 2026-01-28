@@ -405,7 +405,7 @@ def compute_vmax_rmax_constants_from_loader(train_loader, device, max_batches=No
     rmax_all = torch.stack(rmax_list)  # (N,)
 
     VMAX_TRAIN = float(vmax_all.max().item())
-    RMIN_TRAIN = float(rmax_all.mean().item())
+    RMIN_TRAIN = float(rmax_all.min().item())
 
     return VMAX_TRAIN, RMIN_TRAIN
 
