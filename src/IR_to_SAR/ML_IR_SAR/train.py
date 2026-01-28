@@ -168,8 +168,8 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_gr
             r_map=None  # ou ta r_map pré-calculée
         )
 
-        loss += 40*weighted_mse_wspd_rad(pred_valid, sar_valid, mask, wmap)
-        loss /= 41  # normalisation
+        loss = 1*weighted_mse_wspd_rad(pred_valid, sar_valid, mask, wmap)
+        # loss /= 41  # normalisation
         if sar_valid.ndim == 3:
             sar_valid = sar_valid.unsqueeze(1)
         if mask.ndim == 3:
@@ -220,8 +220,8 @@ def validate(fabric, model, dataloader, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.
                 r_map=None  # ou ta r_map pré-calculée
             )
 
-            loss += 40*weighted_mse_wspd_rad(pred_valid, sar_valid, mask, wmap)
-            loss /= 41  # normalisation
+            loss = 1*weighted_mse_wspd_rad(pred_valid, sar_valid, mask, wmap)
+            #   loss /= 41  # normalisation
 
             if sar_valid.ndim == 3:
                 sar_valid = sar_valid.unsqueeze(1)
