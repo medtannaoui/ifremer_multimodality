@@ -595,12 +595,18 @@ class LogValidationSamples:
                 infos_val.append(inf)
             # train
             for ir, sar, mask, inf in dataloader[0]:
-                if inf["augmentation"]==1:
+                    # inf = list of dicts, one per sample
+                keep = [d.get("augmentation", 0) == 0 for d in inf]
+
+                if not any(keep):
                     continue
-                all_ir_train.append(ir)
-                all_sar_train.append(sar)
-                mask_train.append(mask)
-                infos_train.append(inf)
+
+                keep_idx = torch.tensor(keep, device=ir.device)
+
+                all_ir_train.append(ir[keep_idx])
+                all_sar_train.append(sar[keep_idx])
+                mask_train.append(mask[keep_idx])
+                infos_train.append([d for d, k in zip(inf, keep) if k])
             
             for ir, sar, mask, inf in dataloader[2]:
                 all_ir_test.append(ir)

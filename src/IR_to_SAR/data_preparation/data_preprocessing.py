@@ -880,7 +880,7 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
         vmax = np.nanmax(vmax) if np.ndim(vmax) > 0 else float(vmax)
 
         # ---------- Geometric augmentations (rmax-based)
-        if np.isfinite(rmax) and (rmax > 1):
+        if np.isfinite(rmax) and (rmax > 45000):
             for flip in ["h", "v"]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
 
@@ -893,7 +893,7 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
                 out_mask.append(mask_r)
                 out_infos.append(inf_aug)
 
-            for angle in [90, 180]:
+            for angle in [90, 180, 270]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
 
                 inf_aug = copy.deepcopy(inf)
@@ -905,8 +905,8 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
                 out_mask.append(mask_r)
                 out_infos.append(inf_aug)
 
-        if np.isfinite(vmax) and (vmax > 0):
-            for sigma in [0.05]:
+        if np.isfinite(vmax) and (vmax > 40):
+            for sigma in [0.05,0.03]:
                 ir_r = add_white_noise(ir, sigma)
 
                 inf_aug = copy.deepcopy(inf)
@@ -918,7 +918,7 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
                 out_mask.append(mask)
                 out_infos.append(inf_aug)
 
-            for amount in [0.02]:
+            for amount in [0.02,0.04]:
                 ir_r = add_salt_pepper_noise(ir, amount)
 
                 inf_aug = copy.deepcopy(inf)
