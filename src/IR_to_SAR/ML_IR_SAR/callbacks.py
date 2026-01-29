@@ -595,6 +595,8 @@ class LogValidationSamples:
                 infos_val.append(inf)
             # train
             for ir, sar, mask, inf in dataloader[0]:
+                if inf["augmentation"]==1:
+                    continue
                 all_ir_train.append(ir)
                 all_sar_train.append(sar)
                 mask_train.append(mask)
@@ -644,7 +646,7 @@ class LogValidationSamples:
             batch_full_anggrek = (ir_full_anggrek, sar_full_anggrek, mask_anggrek, infos_anggrek)
 
             self.log_batch(model, batch_full_val, epoch, device)
-            #self.log_batch(model, batch_full_train, epoch, device, set="train")
+            self.log_batch(model, batch_full_train, epoch, device, set="train")
             self.log_batch(model, batch_full_test, epoch, device, set="test")
             self.anggrek_plots(model, batch_full_anggrek, epoch, device)
 

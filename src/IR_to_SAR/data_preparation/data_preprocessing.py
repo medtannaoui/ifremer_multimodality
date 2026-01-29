@@ -855,20 +855,23 @@ def add_salt_pepper_noise(img, amount=0.01, salt_vs_pepper=0.5):
 
     return noisy
 
+import copy
+import numpy as np
 
 def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
     
     out_ir, out_sar, out_mask, out_infos = [], [], [], []
 
-
     for ir, sar, mask, inf in zip(ir_tensor, sar_tensor, mask_tensor, infos):
+
+        # ---------- Original sample (augmentation = 0)
+        inf0 = copy.deepcopy(inf)
+        inf0["augmentation"] = 0
+
         out_ir.append(ir)
         out_sar.append(sar)
         out_mask.append(mask)
-        out_infos.append(inf)
-
-        rmax = inf.get("analysis_rmax", np.nan)
-        rmax = np.nanmax(rmax) if np.ndim(rmax) > 0 else float(rmax)
+        out_infos.append(inf0)
 
         rmax = inf.get("analysis_rmax", np.nan)
         rmax = np.nanmax(rmax) if np.ndim(rmax) > 0 else float(rmax)
@@ -876,31 +879,64 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
         vmax = inf.get("analysis_vmax", np.nan)
         vmax = np.nanmax(vmax) if np.ndim(vmax) > 0 else float(vmax)
 
+        # ---------- Geometric augmentations (rmax-based)
         if np.isfinite(rmax) and (rmax > 1):
-            for flip in ["h","v"]:
+            for flip in ["h", "v"]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
-                out_ir.append(ir_r); out_sar.append(sar_r); out_mask.append(mask_r); out_infos.append(inf)
+
+                inf_aug = copy.deepcopy(inf)
+                inf_aug["augmentation"] = 1
+                inf_aug["aug_type"] = f"flip_{flip}"
+
+                out_ir.append(ir_r)
+                out_sar.append(sar_r)
+                out_mask.append(mask_r)
+                out_infos.append(inf_aug)
 
             for angle in [90, 180]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
-                out_ir.append(ir_r); out_sar.append(sar_r); out_mask.append(mask_r); out_infos.append(inf)
+
+                inf_aug = copy.deepcopy(inf)
+                inf_aug["augmentation"] = 1
+                inf_aug["aug_type"] = f"rot_{angle}"
+
+                out_ir.append(ir_r)
+                out_sar.append(sar_r)
+                out_mask.append(mask_r)
+                out_infos.append(inf_aug)
 
         if np.isfinite(vmax) and (vmax > 0):
             for sigma in [0.05]:
-                ir_r = add_white_noise(ir,sigma)
-                out_ir.append(ir_r); out_sar.append(sar); out_mask.append(mask); out_infos.append(inf)
-            
-            for amount in [0.02]:
-                ir_r = add_salt_pepper_noise(ir,amount)
-                out_ir.append(ir_r); out_sar.append(sar); out_mask.append(mask); out_infos.append(inf)
+                ir_r = add_white_noise(ir, sigma)
 
-    
+                inf_aug = copy.deepcopy(inf)
+                inf_aug["augmentation"] = 1
+                inf_aug["aug_type"] = f"white_noise_{sigma}"
+
+                out_ir.append(ir_r)
+                out_sar.append(sar)      # unchanged
+                out_mask.append(mask)
+                out_infos.append(inf_aug)
+
+            for amount in [0.02]:
+                ir_r = add_salt_pepper_noise(ir, amount)
+
+                inf_aug = copy.deepcopy(inf)
+                inf_aug["augmentation"] = 1
+                inf_aug["aug_type"] = f"saltpepper_{amount}"
+
+                out_ir.append(ir_r)
+                out_sar.append(sar)      # unchanged
+                out_mask.append(mask)
+                out_infos.append(inf_aug)
+
     return (
         np.stack(out_ir, axis=0),
         np.stack(out_sar, axis=0),
         np.stack(out_mask, axis=0),
         out_infos
     )
+
 
 
 def visualize_dataset_statistics(dictio, target_dir, mask=None):
