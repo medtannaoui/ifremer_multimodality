@@ -6,25 +6,13 @@ from diffusers import UNet2DModel, UNet2DConditionModel
 
 
 def create_model(
-    image_size=(128, 128),   # patch final utile
+    image_size=None,   # patch final utile
     in_channels=1,           # IR 
     out_channels=1,          # SAR output (wind speed map)
-    block_out_channels=(16,32,64,64),
+    block_out_channels=None,
     dropout= 0.0,
-    down_block_types=(
-        "DownBlock2D",
-        # "DownBlock2D",
-        "DownBlock2D",
-        "AttnDownBlock2D",   # block with attention
-        "DownBlock2D",
-    ),
-    up_block_types=(
-        "UpBlock2D",
-        "UpBlock2D",
-        "UpBlock2D",
-        "UpBlock2D",
-        # "UpBlock2D",
-    ),
+    down_block_types=None,
+    up_block_types=None,
 ):
     """
     Creates a UNet2DModel with the specified configuration.

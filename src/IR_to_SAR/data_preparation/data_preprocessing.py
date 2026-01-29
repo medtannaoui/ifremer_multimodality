@@ -876,21 +876,21 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
         vmax = inf.get("analysis_vmax", np.nan)
         vmax = np.nanmax(vmax) if np.ndim(vmax) > 0 else float(vmax)
 
-        if np.isfinite(rmax) and (rmax > 100000):
+        if np.isfinite(rmax) and (rmax > 1):
             for flip in ["h","v"]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
                 out_ir.append(ir_r); out_sar.append(sar_r); out_mask.append(mask_r); out_infos.append(inf)
 
-            for angle in [270, 90, 180]:
+            for angle in [90, 180]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
                 out_ir.append(ir_r); out_sar.append(sar_r); out_mask.append(mask_r); out_infos.append(inf)
 
-        if np.isfinite(vmax) and (vmax > 50):
-            for sigma in [0.3,0.5]:
+        if np.isfinite(vmax) and (vmax > 0):
+            for sigma in [0.05]:
                 ir_r = add_white_noise(ir,sigma)
                 out_ir.append(ir_r); out_sar.append(sar); out_mask.append(mask); out_infos.append(inf)
             
-            for amount in [0.05, 0.1]:
+            for amount in [0.02]:
                 ir_r = add_salt_pepper_noise(ir,amount)
                 out_ir.append(ir_r); out_sar.append(sar); out_mask.append(mask); out_infos.append(inf)
 

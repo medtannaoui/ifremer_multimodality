@@ -565,6 +565,90 @@ class LogValidationSamples:
             plt.close(fig)
 
         print(f"💾 Saved {num} sample images.")
+    
+    def on_validation_plots(self, model, epoch, dataloader, device):
+            print(f"📸 Logging validation samples at epoch {epoch +1}")
+            print("size of dataloader",len(dataloader))
+
+            all_ir_val = []
+            all_sar_val = []
+            all_sar_test = []
+            all_ir_test = []
+            all_ir_train = []
+            all_sar_train = []
+            ir_anggrek, sar_anggrek = [], []
+
+
+            mask_train = []
+            mask_val = []
+            mask_test = []
+            mask_anggrek  = []
+            infos_val = []
+            infos_train = []
+            infos_test = []
+            infos_anggrek = []
+
+            for ir, sar, mask, inf in dataloader[1]:
+                all_ir_val.append(ir)
+                all_sar_val.append(sar)
+                mask_val.append(mask)
+                infos_val.append(inf)
+            # train
+            for ir, sar, mask, inf in dataloader[0]:
+                all_ir_train.append(ir)
+                all_sar_train.append(sar)
+                mask_train.append(mask)
+                infos_train.append(inf)
+            
+            for ir, sar, mask, inf in dataloader[2]:
+                all_ir_test.append(ir)
+                all_sar_test.append(sar)
+                mask_test.append(mask)
+                infos_test.append(inf)
+            
+            #anggrek data
+            for ir, sar, mask, inf in dataloader[3]:
+                ir_anggrek.append(ir)
+                sar_anggrek.append(sar)
+                mask_anggrek.append(mask)
+                infos_anggrek.append(inf)
+
+        
+
+            # Concaténer sur la dimension batch (dim=0)
+            ir_full_val = torch.cat(all_ir_val, dim=0)   # → (Total, 1, H, W)
+            sar_full_val = torch.cat(all_sar_val, dim=0) # → (Total, 1, H, W)
+            mask_val = torch.cat(mask_val, dim=0)
+            infos_val = [d for batch in infos_val for d in batch]   # concat lists
+            
+
+            ir_full_train = torch.cat(all_ir_train, dim=0)   # → (Total, 1, H, W)
+            sar_full_train = torch.cat(all_sar_train, dim=0) # → (Total, 1, H, W)
+            mask_train = torch.cat(mask_train, dim=0)
+            infos_train = [d for batch in infos_train for d in batch]  # concat lists
+            
+            ir_full_test = torch.cat(all_ir_test, dim=0)   # → (Total, 1, H, W)
+            sar_full_test = torch.cat(all_sar_test, dim=0) # → (Total, 1, H, W)
+            mask_test = torch.cat(mask_test, dim=0)
+            infos_test = [d for batch in infos_test for d in batch]  
+
+            ir_full_anggrek = torch.cat(ir_anggrek, dim=0)
+            sar_full_anggrek = torch.cat(sar_anggrek, dim=0)
+            mask_anggrek = torch.cat(mask_anggrek, dim=0)
+            infos_anggrek = [d for batch in infos_anggrek for d in batch]
+
+            # Créer un tuple exactement comme un batch
+            batch_full_val = (ir_full_val, sar_full_val, mask_val, infos_val)
+            batch_full_train = (ir_full_train, sar_full_train, mask_train, infos_train)
+            batch_full_test = (ir_full_test, sar_full_test, mask_test, infos_test)
+            batch_full_anggrek = (ir_full_anggrek, sar_full_anggrek, mask_anggrek, infos_anggrek)
+
+            self.log_batch(model, batch_full_val, epoch, device)
+            #self.log_batch(model, batch_full_train, epoch, device, set="train")
+            self.log_batch(model, batch_full_test, epoch, device, set="test")
+            self.anggrek_plots(model, batch_full_anggrek, epoch, device)
+
+
 
         
         
@@ -573,87 +657,7 @@ class LogValidationSamples:
         # save distribution of wind speed of pred and true val to compare it
         #just in the lkast epoch
 
-    def on_validation_plots(self, model, epoch, dataloader, device):
-        print(f"📸 Logging validation samples at epoch {epoch +1}")
-        print("size of dataloader",len(dataloader))
-
-        all_ir_val = []
-        all_sar_val = []
-        all_sar_test = []
-        all_ir_test = []
-        all_ir_train = []
-        all_sar_train = []
-        ir_anggrek, sar_anggrek = [], []
-
-
-        mask_train = []
-        mask_val = []
-        mask_test = []
-        mask_anggrek  = []
-        infos_val = []
-        infos_train = []
-        infos_test = []
-        infos_anggrek = []
-
-        for ir, sar, mask, inf in dataloader[1]:
-            all_ir_val.append(ir)
-            all_sar_val.append(sar)
-            mask_val.append(mask)
-            infos_val.append(inf)
-        # train
-        for ir, sar, mask, inf in dataloader[0]:
-            all_ir_train.append(ir)
-            all_sar_train.append(sar)
-            mask_train.append(mask)
-            infos_train.append(inf)
-        
-        for ir, sar, mask, inf in dataloader[2]:
-            all_ir_test.append(ir)
-            all_sar_test.append(sar)
-            mask_test.append(mask)
-            infos_test.append(inf)
-        
-        #anggrek data
-        for ir, sar, mask, inf in dataloader[3]:
-            ir_anggrek.append(ir)
-            sar_anggrek.append(sar)
-            mask_anggrek.append(mask)
-            infos_anggrek.append(inf)
-
-      
-
-        # Concaténer sur la dimension batch (dim=0)
-        ir_full_val = torch.cat(all_ir_val, dim=0)   # → (Total, 1, H, W)
-        sar_full_val = torch.cat(all_sar_val, dim=0) # → (Total, 1, H, W)
-        mask_val = torch.cat(mask_val, dim=0)
-        infos_val = [d for batch in infos_val for d in batch]   # concat lists
-        
-
-        ir_full_train = torch.cat(all_ir_train, dim=0)   # → (Total, 1, H, W)
-        sar_full_train = torch.cat(all_sar_train, dim=0) # → (Total, 1, H, W)
-        mask_train = torch.cat(mask_train, dim=0)
-        infos_train = [d for batch in infos_train for d in batch]  # concat lists
-        
-        ir_full_test = torch.cat(all_ir_test, dim=0)   # → (Total, 1, H, W)
-        sar_full_test = torch.cat(all_sar_test, dim=0) # → (Total, 1, H, W)
-        mask_test = torch.cat(mask_test, dim=0)
-        infos_test = [d for batch in infos_test for d in batch]  
-
-        ir_full_anggrek = torch.cat(ir_anggrek, dim=0)
-        sar_full_anggrek = torch.cat(sar_anggrek, dim=0)
-        mask_anggrek = torch.cat(mask_anggrek, dim=0)
-        infos_anggrek = [d for batch in infos_anggrek for d in batch]
-
-        # Créer un tuple exactement comme un batch
-        batch_full_val = (ir_full_val, sar_full_val, mask_val, infos_val)
-        batch_full_train = (ir_full_train, sar_full_train, mask_train, infos_train)
-        batch_full_test = (ir_full_test, sar_full_test, mask_test, infos_test)
-        batch_full_anggrek = (ir_full_anggrek, sar_full_anggrek, mask_anggrek, infos_anggrek)
-
-        self.log_batch(model, batch_full_val, epoch, device)
-        self.log_batch(model, batch_full_train, epoch, device, set="train")
-        self.log_batch(model, batch_full_test, epoch, device, set="test")
-        self.anggrek_plots(model, batch_full_anggrek, epoch, device)
+    
 
     def anggrek_plots(self, model, batch, epoch, device):
         """
@@ -860,3 +864,8 @@ class LogValidationSamples:
         fig.savefig(out_root / "vmax_comparison.png", dpi=150)
         plt.close(fig)
 
+
+
+
+
+        
