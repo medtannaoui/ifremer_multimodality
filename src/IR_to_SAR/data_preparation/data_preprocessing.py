@@ -831,8 +831,33 @@ def add_white_noise(img, sigma):
     noise = np.random.normal(0, sigma, img.shape)
     return img + noise
 
+def add_salt_pepper_noise(img, amount=0.01, salt_vs_pepper=0.5):
+    noisy = img.copy()
+
+    # Number of pixels to corrupt
+    num_pixels = int(amount * img.size)
+
+    # Salt (white pixels)
+    num_salt = int(num_pixels * salt_vs_pepper)
+    coords = tuple(
+        np.random.randint(0, i, num_salt)
+        for i in img.shape
+    )
+    noisy[coords] = np.max(img)
+
+    # Pepper (black pixels)
+    num_pepper = int(num_pixels * (1.0 - salt_vs_pepper))
+    coords = tuple(
+        np.random.randint(0, i, num_pepper)
+        for i in img.shape
+    )
+    noisy[coords] = np.min(img)
+
+    return noisy
+
+
 def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
-    # ---------- PASS 1: filter + white noise ----------
+    
     out_ir, out_sar, out_mask, out_infos = [], [], [], []
 
 
@@ -845,11 +870,11 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
         rmax = inf.get("analysis_rmax", np.nan)
         rmax = np.nanmax(rmax) if np.ndim(rmax) > 0 else float(rmax)
 
-        # flips
-        # if np.isfinite(rmax) and (50000 < rmax < 100000):
-        #     for flip in ["h", "v"]:
-        #         ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
-        #         out_ir.append(ir_r); out_sar.append(sar_r); out_mask.append(mask_r); out_infos.append(inf)
+        rmax = inf.get("analysis_rmax", np.nan)
+        rmax = np.nanmax(rmax) if np.ndim(rmax) > 0 else float(rmax)
+
+        vmax = inf.get("analysis_vmax", np.nan)
+        vmax = np.nanmax(vmax) if np.ndim(vmax) > 0 else float(vmax)
 
         if np.isfinite(rmax) and (rmax > 100000):
             for flip in ["h","v"]:
@@ -859,9 +884,15 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
             for angle in [270, 90, 180]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
                 out_ir.append(ir_r); out_sar.append(sar_r); out_mask.append(mask_r); out_infos.append(inf)
-            for sigma in [0.03]:
-                ir_r,sar_r = add_white_noise(ir,sigma), add_white_noise(sar,sigma)
-                out_ir.append(ir_r); out_sar.append(sar_r); out_mask.append(mask); out_infos.append(inf)
+
+        if np.isfinite(vmax) and (vmax > 50):
+            for sigma in [0.3,0.5]:
+                ir_r = add_white_noise(ir,sigma)
+                out_ir.append(ir_r); out_sar.append(sar); out_mask.append(mask); out_infos.append(inf)
+            
+            for amount in [0.05, 0.1]:
+                ir_r = add_salt_pepper_noise(ir,amount)
+                out_ir.append(ir_r); out_sar.append(sar); out_mask.append(mask); out_infos.append(inf)
 
     
     return (
