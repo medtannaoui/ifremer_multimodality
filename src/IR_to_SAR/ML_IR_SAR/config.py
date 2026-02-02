@@ -42,6 +42,7 @@ class IR_SAR_Config:
     conditional_model : bool
     anggrek_test:bool
     cross_attention_dim:int
+    combined_loss : bool
     @staticmethod
     def from_yaml(path: str):
         with open(path, "r") as file:
