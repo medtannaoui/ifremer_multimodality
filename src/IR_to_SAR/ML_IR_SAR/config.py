@@ -39,6 +39,9 @@ class IR_SAR_Config:
     down_block_types : list[str]
     up_block_types : list[str]
     scheduler : str
+    conditional_model : bool
+    anggrek_test:bool
+    cross_attention_dim:int
     @staticmethod
     def from_yaml(path: str):
         with open(path, "r") as file:

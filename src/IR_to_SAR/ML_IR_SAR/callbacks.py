@@ -72,7 +72,7 @@ class LogValidationSamples:
              num_samples=4, start_epoch=20, every_n_epochs=1,
              cmap_ir="gray", cmap_sar="viridis", num_epochs=0, infos_train=None, infos_val=None, infos_test=None, 
              mask_train=None, mask_val = None,mask_test=None,
-             target_dir = None,input_data="normal", output_data="sar"
+             target_dir = None,input_data="normal", output_data="sar",anggrek_test=False,conditional_model=False
              ):
 
         self.base_dir = Path(base_dir)
@@ -103,6 +103,9 @@ class LogValidationSamples:
 
         self.input_data = input_data
         self.output_data=output_data
+
+        self.anggrek_test = anggrek_test
+        self.conditional_model = conditional_model
 
         
         
@@ -166,7 +169,14 @@ class LogValidationSamples:
         mask = mask.to(device)
         
         with torch.no_grad():
-            pred = model(x, timestep=0).sample  # (B,1,H,W)
+            if not self.conditional_model:
+                pred = model(x, timestep=0).sample  # (B,1,H,W)
+            else :
+                shear = torch.stack([
+                                        torch.as_tensor(d["shear"], dtype=torch.float32)
+                                        for d in infos
+                                    ]).to(device) 
+                pred = model(x, timestep=0, cond=shear).sample
             
 
         def denorm(t, mean, std):
@@ -615,11 +625,7 @@ class LogValidationSamples:
                 infos_test.append(inf)
             
             #anggrek data
-            for ir, sar, mask, inf in dataloader[3]:
-                ir_anggrek.append(ir)
-                sar_anggrek.append(sar)
-                mask_anggrek.append(mask)
-                infos_anggrek.append(inf)
+            
 
         
 
@@ -640,21 +646,32 @@ class LogValidationSamples:
             mask_test = torch.cat(mask_test, dim=0)
             infos_test = [d for batch in infos_test for d in batch]  
 
-            ir_full_anggrek = torch.cat(ir_anggrek, dim=0)
-            sar_full_anggrek = torch.cat(sar_anggrek, dim=0)
-            mask_anggrek = torch.cat(mask_anggrek, dim=0)
-            infos_anggrek = [d for batch in infos_anggrek for d in batch]
 
             # Créer un tuple exactement comme un batch
             batch_full_val = (ir_full_val, sar_full_val, mask_val, infos_val)
             batch_full_train = (ir_full_train, sar_full_train, mask_train, infos_train)
             batch_full_test = (ir_full_test, sar_full_test, mask_test, infos_test)
-            batch_full_anggrek = (ir_full_anggrek, sar_full_anggrek, mask_anggrek, infos_anggrek)
+            
 
             self.log_batch(model, batch_full_val, epoch, device)
             self.log_batch(model, batch_full_train, epoch, device, set="train")
             self.log_batch(model, batch_full_test, epoch, device, set="test")
-            self.anggrek_plots(model, batch_full_anggrek, epoch, device)
+            if self.anggrek_test : 
+
+                for ir, sar, mask, inf in dataloader[3]:
+                    ir_anggrek.append(ir)
+                    sar_anggrek.append(sar)
+                    mask_anggrek.append(mask)
+                    infos_anggrek.append(inf)
+                
+                ir_full_anggrek = torch.cat(ir_anggrek, dim=0)
+                sar_full_anggrek = torch.cat(sar_anggrek, dim=0)
+                mask_anggrek = torch.cat(mask_anggrek, dim=0)
+                infos_anggrek = [d for batch in infos_anggrek for d in batch]
+                batch_full_anggrek = (ir_full_anggrek, sar_full_anggrek, mask_anggrek, infos_anggrek)
+                
+
+                self.anggrek_plots(model, batch_full_anggrek, epoch, device)
 
 
 

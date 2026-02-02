@@ -82,12 +82,14 @@ class IRSARDataset(Dataset):
     SAR shape: (N, H_ir, W_ir)
     """
     def __init__(self,test=False,size=256, norm = "z_score", barycenter = "no" ,augmentation = False, drop_nan_100 = True,input_channels=None,
-                 data_path=None,train_split=None,val_split=None,test_split=None,target_dir = None, input_data="norm", output_data="sar"):
+                 data_path=None,train_split=None,val_split=None,test_split=None,target_dir = None, input_data="norm", output_data="sar",
+                 conditional_model=None,anggrek_test = False):
         self.norm = norm
         
         dataset = prep_dataset.PrepareDataSet(size=size, norm= norm, barycenter= barycenter, drop_nan_100=drop_nan_100,input_channels=input_channels,
                                               pkl_file=data_path,train_split=train_split,val_split=val_split,test_split=test_split,
-                                              augmentation=augmentation,target_dir = target_dir, input_data=input_data, output_data=output_data)
+                                              augmentation=augmentation,target_dir = target_dir, input_data=input_data, output_data=output_data,
+                                              conditional_model=conditional_model,anggrek_test=anggrek_test)
          
         self.dataset = dataset     
         print("Data preparation finished")
@@ -132,7 +134,7 @@ class PairedDataset(Dataset):
 # 🧠 2) Train / Validate functions
 # =============================
 def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.0,scheduler=None,
-                    scheduler_name=None,vmax_train=None,rmin_train=None):
+                    scheduler_name=None,vmax_train=None,rmin_train=None, conditional_model=False):
     model.train()
     total_loss = 0
     metrics.reset()
@@ -144,13 +146,23 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_gr
 
     print("BIN_WEIGHTS:", BIN_WEIGHTS)
 
-    for x, sar, mask, _ in tqdm(dataloader, desc="Training"):
+    for x, sar, mask, infos in tqdm(dataloader, desc="Training"):  #infos is a dictionanry
         x, sar, mask= x.to(fabric.device), sar.to(fabric.device), mask.to(fabric.device)
+        if conditional_model:
+            
+            shear_infos = torch.stack([
+            torch.as_tensor(d["shear"], dtype=torch.float32)
+                                for d in infos
+                            ]).to(fabric.device)
+
         optimizer.zero_grad()
 
         
         # Forward pass
-        pred = model(x, timestep=0).sample  # (B,1,H,W)
+        if not conditional_model:
+            pred = model(x, timestep=0).sample  # (B,1,H,W)
+        else:
+            pred = model.forward(x, timestep=0, cond=shear_infos).sample
         sar_valid = sar.nan_to_num()
         pred_valid = pred
         # compute weights
@@ -187,7 +199,8 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_gr
     return total_loss / len(dataloader), metrics.compute(), l_pix, l_grad, l_radial
 
 
-def validate(fabric, model, dataloader, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.0,vmax_train=None,rmin_train=None):
+def validate(fabric, model, dataloader, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.0,vmax_train=None,rmin_train=None,
+             conditional_model=False):
     model.eval()
     total_loss = 0
     metrics.reset()
@@ -197,10 +210,17 @@ def validate(fabric, model, dataloader, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.
     )
 
     with torch.no_grad():
-        for x, sar, mask, _ in tqdm(dataloader, desc="Validating"):
+        for x, sar, mask, infos in tqdm(dataloader, desc="Validating"):
             x, sar, mask = x.to(fabric.device), sar.to(fabric.device), mask.to(fabric.device)
 
-            pred = model(x, timestep=0).sample
+            if not conditional_model:
+                pred = model(x, timestep=0).sample  # (B,1,H,W)
+            else:
+                shear_infos = torch.stack([
+                torch.as_tensor(d["shear"], dtype=torch.float32)
+                                for d in infos
+                            ]).to(fabric.device)
+                pred = model.forward(x, timestep=0, cond=shear_infos).sample
 
             # mask = torch.isfinite(sar)
             sar_valid = sar.nan_to_num()
@@ -275,19 +295,21 @@ def main(cfg: IR_SAR_Config,test=False):
                              input_channels=cfg.input_channels,
                              data_path = cfg.data_path,
                              train_split=cfg.train_split,val_split=cfg.val_split,test_split=cfg.test_split,
-                             target_dir = target_dir,augmentation=cfg.augmentation,input_data=cfg.input_data,output_data=cfg.output_data)
+                             target_dir = target_dir,augmentation=cfg.augmentation,input_data=cfg.input_data,output_data=cfg.output_data,
+                             conditional_model = cfg.conditional_model,anggrek_test=cfg.anggrek_test)
     # X_all, sar_all = full_data.dataset.X, full_data.dataset.sar
 
     
     train_ds = PairedDataset(*(full_data.dataset.X_train,full_data.dataset.sar_train),full_data.dataset.mask_train, full_data.dataset.infos_train)  #X (multi-channel input), SAR target
     val_ds   = PairedDataset(*(full_data.dataset.X_val,full_data.dataset.sar_val),full_data.dataset.mask_val, full_data.dataset.infos_val)
     test_ds   = PairedDataset(*(full_data.dataset.X_test,full_data.dataset.sar_test),full_data.dataset.mask_test, full_data.dataset.infos_test)
-    anggrek_ds   = PairedDataset(*(full_data.dataset.X_anggrek,full_data.dataset.X_anggrek),full_data.dataset.X_anggrek, full_data.dataset.infos_anggrek)
-
-    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, collate_fn=custom_collate)
+    
     val_loader   = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=custom_collate)
     test_loader = DataLoader(test_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=custom_collate)
-    anggrek_loader = DataLoader(anggrek_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=custom_collate)
+    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, collate_fn=custom_collate)
+    if cfg.anggrek_test:
+        anggrek_ds   = PairedDataset(*(full_data.dataset.X_anggrek,full_data.dataset.X_anggrek),full_data.dataset.X_anggrek, full_data.dataset.infos_anggrek)
+        anggrek_loader = DataLoader(anggrek_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn=custom_collate)
 
     # --- Fabric init with callbacks ---   #QUentin
     
@@ -319,6 +341,7 @@ def main(cfg: IR_SAR_Config,test=False):
                 target_dir = target_dir,
                 input_data= cfg.input_data,
                 output_data=cfg.output_data,
+                conditional_model=cfg.conditional_model
             
                 
             )
@@ -342,7 +365,10 @@ def main(cfg: IR_SAR_Config,test=False):
         out_channels=cfg.out_channels,
         block_out_channels = cfg.block_out_channels,
         down_block_types = cfg.down_block_types,
-        up_block_types= cfg.up_block_types
+        up_block_types= cfg.up_block_types,
+        conditional_model = cfg.conditional_model,
+        batch_size=cfg.batch_size,
+        cross_attention_dim= cfg.cross_attention_dim
     ).to(fabric.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate, weight_decay=1e-3)   #add regularisation
 
@@ -383,9 +409,14 @@ def main(cfg: IR_SAR_Config,test=False):
 
     # Prepare for Fabric
     model, optimizer = fabric.setup(model, optimizer)
-    train_loader, val_loader, test_loader, anggrek_loader = fabric.setup_dataloaders(
+    if cfg.anggrek_test:
+        train_loader, val_loader, test_loader, anggrek_loader = fabric.setup_dataloaders(
                                                                                         train_loader, val_loader, test_loader, anggrek_loader
                                                                                     )
+    else : 
+        train_loader, val_loader, test_loader = fabric.setup_dataloaders(
+                                                                         train_loader, val_loader, test_loader
+                                                                     )
 
 
     # --- Training Loop ---
@@ -410,14 +441,16 @@ def main(cfg: IR_SAR_Config,test=False):
                                                     scheduler=scheduler,
                                                     scheduler_name=cfg.scheduler,
                                                     vmax_train=VMAX_TRAIN,
-                                                    rmin_train=RMIN_TRAIN)
+                                                    rmin_train=RMIN_TRAIN,
+                                                    conditional_model = cfg.conditional_model)
         
         val_loss, val_metrics, l_pix_val,l_grad_val, l_radial_val = validate(fabric, model, val_loader, metrics,
                                          w_pix=cfg.w_pix,
                                          w_grad=cfg.w_grad,
                                          w_radial=cfg.w_radial
                                          ,vmax_train=VMAX_TRAIN,
-                                         rmin_train=RMIN_TRAIN)
+                                         rmin_train=RMIN_TRAIN,
+                                         conditional_model=cfg.conditional_model)
 
         # torch.cuda.empty_cache()
         # gc.collect()
@@ -450,7 +483,7 @@ def main(cfg: IR_SAR_Config,test=False):
                 "on_validation_plots",
                 model=model,
                 epoch=epoch,
-                dataloader=[train_loader, val_loader, test_loader, anggrek_loader],
+                dataloader= [train_loader, val_loader, test_loader] if not cfg.anggrek_test else   [train_loader, val_loader, test_loader, anggrek_loader],
                 device=fabric.device
             )
             print("----- plots saved")
@@ -490,7 +523,7 @@ def main(cfg: IR_SAR_Config,test=False):
                 "on_validation_plots",
                 model=model,
                 epoch=epoch,   # dernier epoch
-                dataloader=[train_loader, val_loader, test_loader, anggrek_loader],
+                dataloader=[train_loader, val_loader, test_loader, anggrek_loader] if cfg.anggrek_test else [train_loader, val_loader, test_loader],
                 device=fabric.device
             )
             break
