@@ -54,9 +54,9 @@ class ConditionalUNet(nn.Module):
 
         self.unet = unet
         self.mlp = nn.Sequential(
-            nn.Linear(cond_dim, 32),
+            nn.Linear(cond_dim, cross_attention_dim*2),
             nn.SiLU(),
-            nn.Linear(32, cross_attention_dim),
+            nn.Linear(cross_attention_dim*2, cross_attention_dim),
         )
 
     def forward(self, x, timestep, cond):
