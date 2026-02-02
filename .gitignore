@@ -41,6 +41,8 @@ src_new
 *csv_data*
 *compare_*
 gpm_sar
+results_with_shear
+old_experiments
 
 # ==========================
 #   TEMPORARY & LOG FILES
