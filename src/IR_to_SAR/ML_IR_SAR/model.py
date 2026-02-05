@@ -15,7 +15,8 @@ def create_model(
     up_block_types=None,
     conditional_model = False,
     cross_attention_dim=0,
-    batch_size=None
+    batch_size=None,
+    cond_dim=16
 ):
     """
     Creates a UNet2DModel with the specified configuration.
@@ -43,7 +44,7 @@ def create_model(
             norm_num_groups=16,
             cross_attention_dim=cross_attention_dim   #features diemnsion
         )
-        model = ConditionalUNet(unet=unet, cond_dim=16,cross_attention_dim=cross_attention_dim)
+        model = ConditionalUNet(unet=unet, cond_dim=cond_dim,cross_attention_dim=cross_attention_dim)
 
     return model
 

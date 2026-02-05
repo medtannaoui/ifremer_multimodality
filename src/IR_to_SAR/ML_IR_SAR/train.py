@@ -345,7 +345,8 @@ def main(cfg: IR_SAR_Config,test=False):
                 target_dir = target_dir,
                 input_data= cfg.input_data,
                 output_data=cfg.output_data,
-                conditional_model=cfg.conditional_model
+                conditional_model=cfg.conditional_model,
+                anggrek_test=cfg.anggrek_test
             
                 
             )
@@ -372,7 +373,8 @@ def main(cfg: IR_SAR_Config,test=False):
         up_block_types= cfg.up_block_types,
         conditional_model = cfg.conditional_model,
         batch_size=cfg.batch_size,
-        cross_attention_dim= cfg.cross_attention_dim
+        cross_attention_dim= cfg.cross_attention_dim,
+        cond_dim=cfg.cond_dim
     ).to(fabric.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate, weight_decay=1e-3)   #add regularisation
 

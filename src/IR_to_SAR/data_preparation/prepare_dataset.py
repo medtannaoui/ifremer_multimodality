@@ -67,14 +67,16 @@ class PrepareDataSet():
         # ---- Keep only rows that open well ----
         
         if True  : 
-            mag_cols = [f"shear_magnitude_{i}" for i in range(1, 9)]
-            dir_cols = [f"shear_direction_{i}" for i in range(1, 9)]
-            shear_cols = mag_cols + dir_cols
-            train_shear = data[data["split"]=="train"][shear_cols].to_numpy(dtype=np.float32)
-            train_shear = np.nan_to_num(train_shear, nan=0.0)
+            if conditional_model:
+                mag_cols = [f"shear_magnitude_{i}" for i in range(1, 9)]
+                dir_cols = [f"shear_direction_{i}" for i in range(1, 9)]
+                cyclone_phase_space_thermal_wind = [f"cyclone_phase_space_thermal_wind_{i}" for i in range(1,3)]
+                shear_cols = mag_cols + dir_cols + cyclone_phase_space_thermal_wind
+                train_shear = data[data["split"]=="train"][shear_cols].to_numpy(dtype=np.float32)
+                train_shear = np.nan_to_num(train_shear, nan=0.0)
 
-            shear_mean = train_shear.mean(axis=0)   # (16,)
-            shear_std  = train_shear.std(axis=0)    # (16,)
+                shear_mean = train_shear.mean(axis=0)   # (16,)
+                shear_std  = train_shear.std(axis=0)    # (16,)
             keys = ["cyclone_name","cyclone_id", "sar_time", "vmax",
                 "analysis_vmax", "analysis_rmax",
                 "analysis_center_quality_flag"]

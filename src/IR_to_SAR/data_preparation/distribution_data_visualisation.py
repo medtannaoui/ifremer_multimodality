@@ -346,20 +346,34 @@ def plot_quadrant_distribution(sar_tensors, ax=None, title = ""):
         )
 
 
-def plot_sar(tensor, ax=None,cmap=cmap_sar,title=None,x_lim=300):
+def plot_sar(tensor, fig=None, ax=None,cmap=cmap_sar,title=None,x_lim=300):
     if ax is None:
         ax = plt.gca()
     
-    x_sar,y_sar = np.linspace(-300,300,tensor.shape[0]) , np.linspace(-300,300,tensor.shape[1])
-    ax.pcolormesh(x_sar, y_sar, tensor, cmap=cmap)
+    x_sar,y_sar = np.linspace(-x_lim,x_lim,tensor.shape[0]) , np.linspace(-x_lim,x_lim,tensor.shape[1])
+    im = ax.pcolormesh(x_sar, y_sar, tensor, cmap=cmap,vmin=0,vmax=160/1.94384449)
     ax.set_xlim(-x_lim,x_lim)
     ax.set_ylim(-x_lim,x_lim)
     if title is not None:
         ax.set_title(title)
+    fig.colorbar(im,ax=ax,orientation="horizontal")
+    ax.set_aspect('equal')
+
+def plot_aam(tensor, fig=None, ax=None,title=None,x_lim=300):
+    if ax is None:
+        ax = plt.gca()
+    
+    x_sar,y_sar = np.linspace(-x_lim,x_lim,tensor.shape[0]) , np.linspace(-x_lim,x_lim,tensor.shape[1])
+    im = ax.pcolormesh(x_sar, y_sar, tensor,vmin=-1000,vmax=1000)
+    ax.set_xlim(-x_lim,x_lim)
+    ax.set_ylim(-x_lim,x_lim)
+    if title is not None:
+        ax.set_title(title)
+    fig.colorbar(im,ax=ax,orientation="horizontal")
     ax.set_aspect('equal')
 
 
-def plot_ir(tensor, x=None, y=None, ax=None, x_lim=300, cmap=cmap_ir):
+def plot_ir(tensor, fig=None,x=None, y=None, ax=None, x_lim=300, cmap=cmap_ir):
     if ax is None:
         ax = plt.gca()
 
@@ -367,12 +381,13 @@ def plot_ir(tensor, x=None, y=None, ax=None, x_lim=300, cmap=cmap_ir):
     ny, nx = tensor.shape  # (rows, cols)
 
     if x is None or y is None:
-        x = np.linspace(-nx, nx, nx)
-        y = np.linspace(-ny, ny, ny)
+        x = np.linspace(-x_lim,x_lim,tensor.shape[0])
+        y = np.linspace(-x_lim,x_lim,tensor.shape[1])
 
-    ax.pcolormesh(x, y, tensor, cmap=cmap, shading="auto")
+    im = ax.pcolormesh(x, y, tensor, cmap=cmap, shading="auto")
     ax.set_xlim(-x_lim, x_lim)
     ax.set_ylim(-x_lim, x_lim)
+    fig.colorbar(im,ax=ax,orientation="horizontal")
     ax.set_aspect("equal")
 
 

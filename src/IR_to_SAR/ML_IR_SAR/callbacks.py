@@ -117,13 +117,14 @@ class LogValidationSamples:
         # new_dir.mkdir(parents=True, exist_ok=True)
         return new_dir
         
-    def compute_vmax1d_rmax1d(self, sar_2d, cx, cy):
+    def compute_vmax1d_rmax1d(self, sar_2d):
         """
         Compute Vmax1D and Rmax1D from a 2D SAR field.
         - Vmax1D: maximum wind speed along radial profile
         - Rmax1D: radius at which Vmax1D occurs
         """
         H, W = sar_2d.shape
+        cx, cy = W//2, H//2
         Y, X = np.indices((H, W))
         R = np.sqrt((X - cx)**2 + (Y - cy)**2)
         Rmax = int(R.max())
@@ -286,6 +287,7 @@ class LogValidationSamples:
 
             # Panels 2-4: three categories from bins
             # categories: [bins[0], bins[1]), [bins[1], bins[2]), [bins[2], bins[3]]
+            bins = [0,63,95,np.max(cat_values)]
             for k in range(3):
                 lo, hi = bins[k], bins[k+1]
                 if k < 2:
@@ -293,7 +295,7 @@ class LogValidationSamples:
                 else:
                     sel = (cat_values >= lo) & (cat_values <= hi)
 
-                subtitle = f"{title_prefix}\nCat{k+1}: [{lo:.1f}, {hi:.1f}]"
+                subtitle = f"{title_prefix}\nCat{k+1}: [{lo:.1f}, {hi-1:.1f}]"
                 draw(axes[k+1], errors[sel], subtitle)
 
             plt.tight_layout()
@@ -345,7 +347,7 @@ class LogValidationSamples:
         pred_rmax_km    = np.full(B, np.nan, dtype=np.float32)
 
         for i in range(B):
-            vmax1d_pred_kt, rmax1d_pred_pix = self.compute_vmax1d_rmax1d(pred_np[i], cx, cy)
+            vmax1d_pred_kt, rmax1d_pred_pix = self.compute_vmax1d_rmax1d(pred_np[i])
             pred_vmax_knots[i] = vmax1d_pred_kt
             pred_rmax_km[i] = rmax1d_pred_pix * 2.0  # 2 km per pixel
 
@@ -521,7 +523,7 @@ class LogValidationSamples:
 
             # Compute radial metrics
             
-            vmax1d_pred, rmax1d_pred = self.compute_vmax1d_rmax1d(pred_np[i], cx, cy)
+            vmax1d_pred, rmax1d_pred = self.compute_vmax1d_rmax1d(pred_np[i])
 
             
             rmax = analysis_rmax[i] / 2000    #pixel
@@ -532,13 +534,13 @@ class LogValidationSamples:
                 rmax = 99999
 
             # IRWIN
-            axes[0].imshow(ir_np[i], cmap=self.cmap_ir)
+            distdata.plot_ir(ir_np[i], cmap=self.cmap_ir,ax=axes[0],fig=fig)
             axes[0].set_title("IRWIN (Channel 0)")
             axes[0].axis("off")
 
             # === TRUE SAR ===
             sar_vis = np.where(mask_np[i]==1, sar_np[i], np.nan)
-            axes[1].imshow(sar_vis, cmap=self.cmap_sar)
+            distdata.plot_sar(sar_vis, cmap=self.cmap_sar,ax=axes[1],fig=fig)
             axes[1].set_title("True SAR (knots)")
             axes[1].axhline(y=cy, color="black", linewidth=1)
             axes[1].axvline(x=cx, color="black", linewidth=1)
@@ -550,7 +552,7 @@ class LogValidationSamples:
 
             # === PREDICTED SAR ===
             # pred_vis = np.where(mask_np[i]==1, pred_np[i], np.nan)
-            axes[2].imshow(pred_np[i], cmap=self.cmap_sar)
+            distdata.plot_sar(pred_np[i], cmap=self.cmap_sar,ax=axes[2],fig=fig)
             axes[2].set_title("Predicted SAR (knots)")
             axes[2].axhline(y=cy, color="black", linewidth=1)
             axes[2].axvline(x=cx, color="black", linewidth=1)
@@ -575,6 +577,8 @@ class LogValidationSamples:
             plt.close(fig)
 
         print(f"💾 Saved {num} sample images.")
+
+        
     
     def on_validation_plots(self, model, epoch, dataloader, device):
             print(f"📸 Logging validation samples at epoch {epoch +1}")
@@ -799,10 +803,18 @@ class LogValidationSamples:
 
 
         # -------------------------
-        # (1) Save IR + Pred per date
-        # -------------------------
+        # (1) 
+
+        vmax = np.array([d.get("vmax", np.nan) for d in infos_ord], dtype=float)
+        pixel_km = 2.0
+
+
         for i in range(B):
             t = time_parsed[i]
+            H, W = pred_den[i].shape
+            cx, cy = W // 2, H // 2
+
+            vmax_pred, rmax_pred = self.compute_vmax1d_rmax1d(pred_den[i])
 
             if pd.isna(t):
                 date_key = f"unknown_{i:03d}"
@@ -811,22 +823,30 @@ class LogValidationSamples:
             else:
                 date_key = t.strftime("%Y%m%d%H%M%S")  
                 fname = f"{date_key}_fields.png"
-                supt = t.strftime("%Y-%m-%d %H:%M:%S")
+                supt = (
+                            f"{t.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                            f"Best Track Vmax: {vmax[i]:.2f} m/s | "
+                            f"Pred Vmax: {vmax_pred/1.94384:.2f} m/s | "
+                            f"Pred RMW: {rmax_pred:.1f} km"
+                        )
+
 
             sub = field_dir
             sub.mkdir(parents=True, exist_ok=True)
 
             fig, axs = plt.subplots(1, 2, figsize=(8, 4), constrained_layout=True)
 
-            im0 = axs[0].imshow(ir_den[i], cmap=self.cmap_ir)
+            distdata.plot_ir(ir_den[i], cmap=self.cmap_ir,ax=axs[0],fig=fig)
             axs[0].set_title("IRWIN")
             axs[0].axis("off")
-            
-
-            im1 = axs[1].imshow(pred_den[i], cmap=self.cmap_sar)
+            distdata.plot_sar(pred_den[i], cmap=self.cmap_sar,ax=axs[1],fig=fig)
             axs[1].set_title("Prediction")
-            axs[1].axis("off")
-            
+            # cercle RMW
+            axs[1].add_patch(
+                                Circle((cx, cy), radius=rmax_pred//2, fill=False, color="white", linewidth=2)
+                            )
+
+                                        
 
             fig.suptitle(supt)
             fig.savefig(sub / fname, dpi=150)
@@ -838,7 +858,7 @@ class LogValidationSamples:
             resamples = []
 
             for x in xs:
-                # numpy -> torch (CPU)
+                
                 x = torch.as_tensor(x, dtype=torch.float32, device="cpu")
 
                 # HxW -> 1x1xHxW
@@ -858,13 +878,7 @@ class LogValidationSamples:
             return np.stack(resamples, axis=0)
         
         pred_denorm_3m = resample_2km_to_3km_torch(pred_den)
-        # -------------------------
-        # (2) Vmax comparison plot
-        # -------------------------
-        # truth vmax from infos (m/s)
         vmax = np.array([d.get("vmax", np.nan) for d in infos_ord], dtype=float)
-
-        # predicted vmax from pred field (m/s)
         pred_vmax = np.nanmax(pred_denorm_3m.reshape(B, -1), axis=1)
 
         ok = np.isfinite(vmax) & np.isfinite(pred_vmax)

@@ -179,37 +179,39 @@ def annular_normalization(
             mask=None,
             stats=None
         ):
-            N, H, W = images.shape
-            cx,cy = H//2, W//2
-            y, x = np.indices((H, W))    # y : same line has the same value x : same column have the same value
-            radius = np.sqrt((y - cy)**2 + (x - cx)**2)
-            radial_bins = (radius // bin_size).astype(np.int32)
-            n_bins = radial_bins.max() + 1
-            if mask is None:
-                mask = np.isfinite(images)
-            
-            if stats is None:
-                mean = np.zeros(n_bins)
-                std = np.ones(n_bins)
-                for b in range(n_bins):
-                    pixels = images[:, radial_bins == b][mask[:, radial_bins == b]]
-                    if pixels.size > 0:
-                        mean[b] = pixels.mean()   #np.median(pixels) #
-                        std[b] =  pixels.std()    #np.percentile(pixels,75)-np.percentile(pixels,25) #
-            else:
-                mean = stats["mean"]
-                std = stats["std"]
-            images_norm = images.copy()
-            for b in range(n_bins):
-                m, s = mean[b], std[b]
-                images_norm[:, radial_bins == b] = (
-                    images_norm[:, radial_bins == b] - m
-                ) / s
-            stats = {
-                "mean": mean,
-                "std": std
-            }
-            return images_norm, stats
+    N, H, W = images.shape
+    cx,cy = H//2, W//2
+    y, x = np.indices((H, W))    # y : same line has the same value x : same column have the same value
+    radius = np.sqrt((y - cy)**2 + (x - cx)**2)
+    radial_bins = (radius // bin_size).astype(np.int32)
+    n_bins = radial_bins.max() + 1
+    if mask is None:
+        mask = np.isfinite(images)
+    
+    if stats is None:
+        mean = np.zeros(n_bins)
+        std = np.ones(n_bins)
+        for b in range(n_bins):
+            pixels = images[:, radial_bins == b][mask[:, radial_bins == b]]
+            if pixels.size > 0:
+                mean[b] = pixels.mean()   #np.median(pixels) #
+                std[b] =  pixels.std()    #np.percentile(pixels,75)-np.percentile(pixels,25) #
+    else:
+        mean = stats["mean"]
+        std = stats["std"]
+    images_norm = images.copy()
+    for b in range(n_bins):
+        m, s = mean[b], std[b]
+        images_norm[:, radial_bins == b] = (
+            images_norm[:, radial_bins == b] - m
+        ) / s
+    stats = {
+        "mean": mean,
+        "std": std
+    }
+    return images_norm, stats
+
+
 
 def annular_denormalization(
             images_norm,
@@ -827,6 +829,24 @@ def create_moment_sar(sar):
 
     return moment
 
+
+def moment_to_sar(moment):
+    assert moment.ndim == 3, "moment must be (N, H, W)"
+
+    N, H, W = moment.shape
+
+    y, x = np.indices((H, W))
+    cy, cx = H // 2, W // 2
+
+    r = np.sqrt((x - cx)**2 + (y - cy)**2)
+
+    r_safe = np.maximum(r, 1.0)
+
+    sar = moment / r_safe[None, :, :]
+
+    return sar
+
+
 def add_white_noise(img, sigma):
     noise = np.random.normal(0, sigma, img.shape)
     return img + noise
@@ -880,8 +900,8 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
         vmax = np.nanmax(vmax) if np.ndim(vmax) > 0 else float(vmax)
 
         # ---------- Geometric augmentations (rmax-based)
-        if np.isfinite(rmax) and (rmax > 45000):
-            for flip in ["h", "v"]:
+        if np.isfinite(rmax) and (rmax > 0):
+            for flip in ["h","v"]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
 
                 inf_aug = copy.deepcopy(inf)
@@ -893,7 +913,7 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
                 out_mask.append(mask_r)
                 out_infos.append(inf_aug)
 
-            for angle in [90, 180, 270]:
+            for angle in [90,270]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
 
                 inf_aug = copy.deepcopy(inf)
@@ -905,8 +925,8 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
                 out_mask.append(mask_r)
                 out_infos.append(inf_aug)
 
-        if np.isfinite(vmax) and (vmax > 40):
-            for sigma in [0.05,0.03]:
+        if np.isfinite(rmax) and (rmax > 0):
+            for sigma in [0.05]:
                 ir_r = add_white_noise(ir, sigma)
 
                 inf_aug = copy.deepcopy(inf)
@@ -918,7 +938,7 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
                 out_mask.append(mask)
                 out_infos.append(inf_aug)
 
-            for amount in [0.02,0.04]:
+            for amount in [0.04]:
                 ir_r = add_salt_pepper_noise(ir, amount)
 
                 inf_aug = copy.deepcopy(inf)
