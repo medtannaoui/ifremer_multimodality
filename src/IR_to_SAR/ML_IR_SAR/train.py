@@ -83,13 +83,13 @@ class IRSARDataset(Dataset):
     """
     def __init__(self,test=False,size=256, norm = "z_score", barycenter = "no" ,augmentation = False, drop_nan_100 = True,input_channels=None,
                  data_path=None,train_split=None,val_split=None,test_split=None,target_dir = None, input_data="norm", output_data="sar",
-                 conditional_model=None,anggrek_test = False):
+                 conditional_model=None,anggrek_test = False,log_wind=None):
         self.norm = norm
         
         dataset = prep_dataset.PrepareDataSet(size=size, norm= norm, barycenter= barycenter, drop_nan_100=drop_nan_100,input_channels=input_channels,
                                               pkl_file=data_path,train_split=train_split,val_split=val_split,test_split=test_split,
                                               augmentation=augmentation,target_dir = target_dir, input_data=input_data, output_data=output_data,
-                                              conditional_model=conditional_model,anggrek_test=anggrek_test)
+                                              conditional_model=conditional_model,anggrek_test=anggrek_test,log_wind=log_wind)
          
         self.dataset = dataset     
         print("Data preparation finished")
@@ -300,7 +300,7 @@ def main(cfg: IR_SAR_Config,test=False):
                              data_path = cfg.data_path,
                              train_split=cfg.train_split,val_split=cfg.val_split,test_split=cfg.test_split,
                              target_dir = target_dir,augmentation=cfg.augmentation,input_data=cfg.input_data,output_data=cfg.output_data,
-                             conditional_model = cfg.conditional_model,anggrek_test=cfg.anggrek_test)
+                             conditional_model = cfg.conditional_model,anggrek_test=cfg.anggrek_test,log_wind=cfg.log_wind)
     # X_all, sar_all = full_data.dataset.X, full_data.dataset.sar
 
     
@@ -346,7 +346,8 @@ def main(cfg: IR_SAR_Config,test=False):
                 input_data= cfg.input_data,
                 output_data=cfg.output_data,
                 conditional_model=cfg.conditional_model,
-                anggrek_test=cfg.anggrek_test
+                anggrek_test=cfg.anggrek_test,
+                log_wind=cfg.log_wind
             
                 
             )

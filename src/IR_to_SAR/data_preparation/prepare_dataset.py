@@ -36,7 +36,8 @@ class PrepareDataSet():
                   input_data = "normal",
                   output_data = "sar",
                   conditional_model = None,
-                  anggrek_test = False
+                  anggrek_test = False,
+                  log_wind=False
                  ):
         self.train_split = train_split
         self.val_split=val_split
@@ -45,6 +46,7 @@ class PrepareDataSet():
         self.target_dir=target_dir
         self.input_data = input_data
         self.output_data = output_data
+        self.log_wind = log_wind
         
 
         print("🔹 Loading data from csv ...")
@@ -55,16 +57,14 @@ class PrepareDataSet():
             data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_tcprimed.csv")
             data = data [~data["tcprimed_env_path"].isna()]
             
-
+        # Anggrek Data 
         anggrek_csv = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/anggrek_coloc_sar_ir.csv")
         print("data before filtering", len(data))
 
-
+        
         data = data[~data["split"].isna()]
         print("data after filtering",len(data))
         data = data.reset_index(drop=True)
-
-        # ---- Keep only rows that open well ----
         
         if True  : 
             if conditional_model:
@@ -94,14 +94,12 @@ class PrepareDataSet():
                         if "IRWIN" not in sargeo:
                             raise KeyError("Missing IRWIN")
                             
-                        
-
                     with xr.open_dataset(row["sar_aeqd_path"]) as ds_aeqd:
                         if "owiWindSpeed" not in ds_aeqd:
                             raise KeyError("Missing owiWindSpeed")
                         sar_train.append(ds_aeqd["owiWindSpeed"].values)
                         irwin_train.append(sargeo["IRWIN"].values)
-                    #add also shear features
+                    #add also environemental features
                     if conditional_model:
                         shear_vec = row[shear_cols].to_numpy(dtype=np.float32)
                         shear_vec = np.nan_to_num(shear_vec, nan=0.0)
@@ -165,7 +163,6 @@ class PrepareDataSet():
                     with xr.open_dataset(row["sargeo_path"]) as sargeo:
                         if "IRWIN" not in sargeo:
                             raise KeyError("Missing IRWIN")
-                        
 
                     with xr.open_dataset(row["sar_aeqd_path"]) as ds_aeqd:
                         if "owiWindSpeed" not in ds_aeqd:
@@ -191,8 +188,6 @@ class PrepareDataSet():
                 pbar.set_postfix(good=len(good_rows), bad=len(bad_rows))
                 pbar.update(1)
             pbar.close()
-            
-
 
             #anggrek cyclone
             if anggrek_test :
@@ -293,7 +288,7 @@ class PrepareDataSet():
         N, C, H, W = self.X_train.shape
         if anggrek_test:
             self.X_anggrek = self.X_anggrek.squeeze(2)
-            print(self.X_anggrek.shape)
+            
             N,C,h_anggrek,W_anggrek= self.X_anggrek.shape
         N,H_sar,W_sar = self.sar_train.shape
         self.X_train = self.X_train[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2]
@@ -413,8 +408,14 @@ class PrepareDataSet():
             if anggrek_test:
                 self.X_anggrek[:,c],_,_ = dataprep.z_score(self.X_anggrek[:,c], mean_value=mean_x[c], std_value=std_x[c])
 
-
+        
+        
+        if self.log_wind:
+            self.sar_train = np.log(self.sar_train + 1e-10)
+            self.sar_val = np.log(self.sar_val + 1e-10)
+            self.sar_test = np.log(self.sar_test + 1e-10)
         if norm == "z_score":
+            
             self.sar_train, self.mean_sar, self.std_sar = dataprep.z_score(self.sar_train)
             self.sar_val,_,_  = dataprep.z_score(self.sar_val,mean_value=self.mean_sar,std_value=self.std_sar)
             self.sar_test,_,_  = dataprep.z_score(self.sar_test,mean_value=self.mean_sar,std_value=self.std_sar)

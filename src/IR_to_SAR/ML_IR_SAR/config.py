@@ -44,6 +44,7 @@ class IR_SAR_Config:
     cross_attention_dim:int
     combined_loss : bool
     cond_dim : int
+    log_wind : True
     @staticmethod
     def from_yaml(path: str):
         with open(path, "r") as file:

@@ -72,7 +72,7 @@ class LogValidationSamples:
              num_samples=4, start_epoch=20, every_n_epochs=1,
              cmap_ir="gray", cmap_sar="viridis", num_epochs=0, infos_train=None, infos_val=None, infos_test=None, 
              mask_train=None, mask_val = None,mask_test=None,
-             target_dir = None,input_data="normal", output_data="sar",anggrek_test=False,conditional_model=False
+             target_dir = None,input_data="normal", output_data="sar",anggrek_test=False,conditional_model=False,log_wind=None
              ):
 
         self.base_dir = Path(base_dir)
@@ -106,6 +106,7 @@ class LogValidationSamples:
 
         self.anggrek_test = anggrek_test
         self.conditional_model = conditional_model
+        self.log_wind = log_wind
 
         
         
@@ -144,7 +145,7 @@ class LogValidationSamples:
         vmax1d = np.nanmax(vmax_profile)
         rmax1d = radii[np.nanargmax(vmax_profile)]
         vmax1d_knots = vmax1d * 1.94384   #kt
-        rmax1d_km = rmax1d
+        rmax1d_km = rmax1d * 2
         return vmax1d_knots, rmax1d_km
 
     def log_batch(self, model, batch, epoch, device, set="validation"):
@@ -322,6 +323,10 @@ class LogValidationSamples:
         elif self.norm == "annular" :
             sar_denorm = annular_denormalization(sar, stats={"mean": self.mean_sar,"std":  self.std_sar} )
             pred_denorm = annular_denormalization(pred, stats={"mean": self.mean_sar,"std":  self.std_sar})
+        
+        if self.log_wind:
+            sar_denorm = np.exp(sar_denorm) - 1e-10
+            pred_denorm = np.exp(pred_denorm) - 1e-10
 
         if self.output_data == "aam":
             sar_denorm = moment_to_sar(sar_denorm)
@@ -342,14 +347,15 @@ class LogValidationSamples:
         
         B, H, W = pred_np.shape
         cx, cy = W // 2, H // 2
+        
 
         pred_vmax_knots = np.full(B, np.nan, dtype=np.float32)
         pred_rmax_km    = np.full(B, np.nan, dtype=np.float32)
 
         for i in range(B):
-            vmax1d_pred_kt, rmax1d_pred_pix = self.compute_vmax1d_rmax1d(pred_np[i])
+            vmax1d_pred_kt, rmax1d_pred_km = self.compute_vmax1d_rmax1d(pred_np[i])
             pred_vmax_knots[i] = vmax1d_pred_kt
-            pred_rmax_km[i] = rmax1d_pred_pix * 2.0  # 2 km per pixel
+            pred_rmax_km[i] = rmax1d_pred_km # 2 km per pixel
 
         # ==========================
         # Analysis values in same units
@@ -370,9 +376,6 @@ class LogValidationSamples:
         err_rmax = (pred_rmax_km - analysis_rmax_km)[ok_rmax]
         cat_rmax = analysis_rmax_km[ok_rmax]     # categories based on analysis
 
-        # ==========================
-        # Build bins from TRAIN only (once), reuse for val/test
-        # ==========================
         if set == "train":
             self.vmax_bins_knots = _split_bins_from_train(values_train=cat_vmax, n_intervals=3)
             self.rmax_bins_km    = _split_bins_from_train(values_train=cat_rmax, n_intervals=3)
@@ -442,9 +445,6 @@ class LogValidationSamples:
             epoch=epoch
         )
 
-        # =================================================
-        # 2) Vmax & radial → PAS de flatten (2D + masque)
-        # =================================================
         sar_2d  = sar_denorm   # (B, H, W)
         pred_2d = pred_denorm # (B, H, W)
         mask_2d = mask_np 
@@ -455,7 +455,6 @@ class LogValidationSamples:
         # Conversion en knots
         sar_2d_knots  = sar_2d * 1.94384
         pred_2d_knots = pred_2d * 1.94384
-
 
 
         # → Vmax utilise les champs 2D
@@ -522,50 +521,49 @@ class LogValidationSamples:
             cx, cy = W // 2, H // 2
 
             # Compute radial metrics
-            
             vmax1d_pred, rmax1d_pred = self.compute_vmax1d_rmax1d(pred_np[i])
 
             
-            rmax = analysis_rmax[i] / 2000    #pixel
-            vmax = analysis_vmax[i] *1.94384  #m/s to kt
+            rmax = analysis_rmax[i] / 1000    # en km
+            vmax = analysis_vmax[i] * 1.94384  # m/s to kt
             if vmax is None or np.isnan(rmax):
                 vmax = 99999
             if rmax is None or np.isnan(rmax):
                 rmax = 99999
 
             # IRWIN
-            distdata.plot_ir(ir_np[i], cmap=self.cmap_ir,ax=axes[0],fig=fig)
+            distdata.plot_ir(ir_np[i], cmap=self.cmap_ir,ax=axes[0],fig=fig,x_lim=H)
             axes[0].set_title("IRWIN (Channel 0)")
             axes[0].axis("off")
 
             # === TRUE SAR ===
             sar_vis = np.where(mask_np[i]==1, sar_np[i], np.nan)
-            distdata.plot_sar(sar_vis, cmap=self.cmap_sar,ax=axes[1],fig=fig)
+            distdata.plot_sar(sar_vis, cmap=self.cmap_sar,ax=axes[1],fig=fig,x_lim=H)
             axes[1].set_title("True SAR (knots)")
-            axes[1].axhline(y=cy, color="black", linewidth=1)
-            axes[1].axvline(x=cx, color="black", linewidth=1)
+            axes[1].axhline(y=0, color="black", linewidth=1)
+            axes[1].axvline(x=0, color="black", linewidth=1)
 
             if rmax is not None:
-                axes[1].add_patch(Circle((cx, cy), radius=rmax, color="black", fill=False, linestyle="--"))
+                axes[1].add_patch(Circle((0, 0), radius=rmax, color="black", fill=False, linestyle="--"))
 
             axes[1].axis("off")
 
             # === PREDICTED SAR ===
             # pred_vis = np.where(mask_np[i]==1, pred_np[i], np.nan)
-            distdata.plot_sar(pred_np[i], cmap=self.cmap_sar,ax=axes[2],fig=fig)
+            distdata.plot_sar(pred_np[i], cmap=self.cmap_sar,ax=axes[2],fig=fig,x_lim=H)
             axes[2].set_title("Predicted SAR (knots)")
-            axes[2].axhline(y=cy, color="black", linewidth=1)
-            axes[2].axvline(x=cx, color="black", linewidth=1)
+            axes[2].axhline(y=0, color="black", linewidth=1)
+            axes[2].axvline(x=0, color="black", linewidth=1)
 
             if rmax is not None:
-                axes[2].add_patch(Circle((cx, cy), radius=rmax, color="black", fill=False, linestyle="--"))
+                axes[2].add_patch(Circle((0, 0), radius=rmax, color="black", fill=False, linestyle="--"))
 
             axes[2].axis("off")
 
             # === TITLE including Rmax1D and Vmax1D ===
             fig.suptitle(
                 f"Cyclone: {cyclone_id[i]} — SAR Time: {sar_time[i]} — Epoch {epoch+1}\n"
-                f"Analysis Rmax = {rmax*2:.1f} Km — Predicted Rmax1D = {rmax1d_pred:.1f} Km\n"
+                f"Analysis Rmax = {rmax:.1f} Km — Predicted Rmax1D = {rmax1d_pred:.1f} Km\n"
                 f"Anaysis Vmax = {vmax:.1f} kt — Predicted Vmax1D = {vmax1d_pred:.1f} kt",
                 fontsize=10
             )
@@ -657,9 +655,9 @@ class LogValidationSamples:
             batch_full_test = (ir_full_test, sar_full_test, mask_test, infos_test)
             
 
-            self.log_batch(model, batch_full_val, epoch, device)
+            # self.log_batch(model, batch_full_val, epoch, device)
             self.log_batch(model, batch_full_train, epoch, device, set="train")
-            self.log_batch(model, batch_full_test, epoch, device, set="test")
+            # self.log_batch(model, batch_full_test, epoch, device, set="test")
             if self.anggrek_test : 
 
                 for ir, sar, mask, inf in dataloader[3]:
@@ -705,19 +703,13 @@ class LogValidationSamples:
         model.eval()
 
         # -------------------------
-        # Unpack batch
-        # -------------------------
         x, _, _, infos = batch
         x = x.to(device)
 
-        # -------------------------
         # Predict
-        # -------------------------
         with torch.no_grad():
             pred = model(x, timestep=0).sample  # (B,1,H,W)
 
-        # -------------------------
-        # Helpers
         # -------------------------
         def denorm(t, mean, std):
             return t * (std + 1e-10) + mean
@@ -725,7 +717,7 @@ class LogValidationSamples:
         def annular_denormalization(images_norm, stats, bin_size=1):
             # images_norm: (B,H,W)
             N, H, W = images_norm.shape
-            cx, cy = (W - 1) / 2, (H - 1) / 2
+            cx, cy = W// 2, H // 2
             y, x_ = np.indices((H, W))
             radius = np.sqrt((y - cy) ** 2 + (x_ - cx) ** 2)
             radial_bins = (radius // bin_size).astype(np.int32)
@@ -746,15 +738,6 @@ class LogValidationSamples:
             r_safe = np.maximum(r, 1.0)
             return moment / r_safe[None, :, :]
 
-        def robust_limits(arr, qmin=1, qmax=99):
-            a = np.asarray(arr)
-            a = a[np.isfinite(a)]
-            if a.size == 0:
-                return None, None
-            return np.percentile(a, qmin), np.percentile(a, qmax)
-
-        # -------------------------
-        # To numpy + denorm
         # -------------------------
         x_np = x.detach().cpu().numpy()  # (B,C,H,W)
         pred_np = pred.detach().squeeze().cpu().numpy()  # (B,H,W) or (H,W) if B=1
@@ -776,8 +759,11 @@ class LogValidationSamples:
         else:
             # fallback: assume already denorm
             pred_den = pred1
+        
+        if self.log_wind:
+            pred_den = np.exp(pred_den) - 1e-10
 
-        if getattr(self, "output_data", "") == "aam":
+        if self.output_data == "aam":
             pred_den = moment_to_sar(pred_den)
 
         # -------------------------
@@ -792,22 +778,13 @@ class LogValidationSamples:
         infos_ord = [infos[i] for i in order]
         time_parsed = time_parsed[order]
 
-        
-
-        # -------------------------
-        # Output dirs
         # -------------------------
         out_root = Path(self.output_dir) / "anggrek_monitoring"
         field_dir = out_root / "field_plots"
         field_dir.mkdir(parents=True, exist_ok=True)
 
-
-        # -------------------------
-        # (1) 
-
         vmax = np.array([d.get("vmax", np.nan) for d in infos_ord], dtype=float)
         pixel_km = 2.0
-
 
         for i in range(B):
             t = time_parsed[i]
@@ -836,14 +813,16 @@ class LogValidationSamples:
 
             fig, axs = plt.subplots(1, 2, figsize=(8, 4), constrained_layout=True)
 
-            distdata.plot_ir(ir_den[i], cmap=self.cmap_ir,ax=axs[0],fig=fig)
+            distdata.plot_ir(ir_den[i], cmap=self.cmap_ir,ax=axs[0],fig=fig,x_lim=H)
             axs[0].set_title("IRWIN")
             axs[0].axis("off")
-            distdata.plot_sar(pred_den[i], cmap=self.cmap_sar,ax=axs[1],fig=fig)
+            distdata.plot_sar(pred_den[i], cmap=self.cmap_sar,ax=axs[1],fig=fig, x_lim=H)
             axs[1].set_title("Prediction")
+            axs[1].axhline(y=0, color="black", linewidth=1)
+            axs[1].axvline(x=0, color="black", linewidth=1)
             # cercle RMW
             axs[1].add_patch(
-                                Circle((cx, cy), radius=rmax_pred//2, fill=False, color="white", linewidth=2)
+                               Circle((0, 0), radius=rmax_pred, color="black", fill=False, linestyle="--")
                             )
 
                                         
