@@ -144,7 +144,7 @@ class LogValidationSamples:
         radii = radii[valid]
         vmax1d = np.nanmax(vmax_profile)
         rmax1d = radii[np.nanargmax(vmax_profile)]
-        vmax1d_knots = vmax1d * 1.94384   #kt
+        vmax1d_knots = vmax1d
         rmax1d_km = rmax1d * 2
         return vmax1d_knots, rmax1d_km
 
@@ -286,9 +286,7 @@ class LogValidationSamples:
             # Panel 1: all
             draw(axes[0], errors, f"{title_prefix}\nAll cases")
 
-            # Panels 2-4: three categories from bins
-            # categories: [bins[0], bins[1]), [bins[1], bins[2]), [bins[2], bins[3]]
-            bins = [0,63,95,np.max(cat_values)]
+            bins = [0,32,49,np.max(cat_values)]   # m/s
             for k in range(3):
                 lo, hi = bins[k], bins[k+1]
                 if k < 2:
@@ -349,30 +347,28 @@ class LogValidationSamples:
         cx, cy = W // 2, H // 2
         
 
-        pred_vmax_knots = np.full(B, np.nan, dtype=np.float32)
+        pred_vmax = np.full(B, np.nan, dtype=np.float32)
         pred_rmax_km    = np.full(B, np.nan, dtype=np.float32)
 
         for i in range(B):
-            vmax1d_pred_kt, rmax1d_pred_km = self.compute_vmax1d_rmax1d(pred_np[i])
-            pred_vmax_knots[i] = vmax1d_pred_kt
+            vmax1d_pred, rmax1d_pred_km = self.compute_vmax1d_rmax1d(pred_np[i])
+            pred_vmax[i] = vmax1d_pred
             pred_rmax_km[i] = rmax1d_pred_km # 2 km per pixel
 
         # ==========================
         # Analysis values in same units
         # ==========================
-        analysis_vmax = np.array(analysis_vmax, dtype=np.float32)  # m/s (often)
+        analysis_vmax = np.array(analysis_vmax, dtype=np.float32)  # m/s 
         analysis_rmax = np.array(analysis_rmax, dtype=np.float32)  # meters
-
-        analysis_vmax_knots = analysis_vmax * 1.94384
-        analysis_rmax_km = analysis_rmax / 1000.0
+        analysis_rmax_km = analysis_rmax / 1000.0 # to km
 
         # filter missing analysis
-        ok_vmax = np.isfinite(analysis_vmax_knots) & np.isfinite(pred_vmax_knots)
+        ok_vmax = np.isfinite(analysis_vmax) & np.isfinite(pred_vmax)
         ok_rmax = np.isfinite(analysis_rmax_km) & np.isfinite(pred_rmax_km)
 
         # Errors
-        err_vmax = (pred_vmax_knots - analysis_vmax_knots)[ok_vmax]
-        cat_vmax = analysis_vmax_knots[ok_vmax]  # categories based on analysis
+        err_vmax = (pred_vmax - analysis_vmax)[ok_vmax]
+        cat_vmax = analysis_vmax[ok_vmax]  # categories based on analysis on m/*s
         err_rmax = (pred_rmax_km - analysis_rmax_km)[ok_rmax]
         cat_rmax = analysis_rmax_km[ok_rmax]     # categories based on analysis
 
@@ -394,7 +390,7 @@ class LogValidationSamples:
                 cat_values=cat_vmax,
                 bins=self.vmax_bins_knots,
                 title_prefix="Vmax error",
-                unit="kt",
+                unit="m/s",
                 save_path=save_path_vmax,
                 xlim=None  # you can set e.g. (-80, 80)
             )
@@ -453,15 +449,15 @@ class LogValidationSamples:
             pkl.dump({f"{set}":[ir_np,sar_2d,pred_2d,mask_2d,infos_np]},f)
 
         # Conversion en knots
-        sar_2d_knots  = sar_2d * 1.94384
-        pred_2d_knots = pred_2d * 1.94384
+        sar_2d  = sar_2d #m/s
+        pred_2d= pred_2d #m/s
 
 
         # → Vmax utilise les champs 2D
         for min,max in zip([19,63,83,96,113],[63,83,96,113,200]):
             distdata.vmax_compare(
                 analysis_vmax,
-                pred_2d_knots,
+                pred_2d,
                 self.output_dir,
                 set=set,
                 epoch=epoch,
@@ -470,7 +466,7 @@ class LogValidationSamples:
             )
         distdata.vmax_compare(
                 analysis_vmax,
-                pred_2d_knots,
+                pred_2d,
                 self.output_dir,
                 set=set,
                 epoch=epoch
@@ -480,7 +476,7 @@ class LogValidationSamples:
         for min,max in zip([0,30,60],[30,60,100]):
             distdata.rmax_compare(
                 analysis_rmax,
-                pred_2d_knots,
+                pred_2d,
                 self.output_dir,
                 set=set,
                 epoch=epoch,
@@ -489,7 +485,7 @@ class LogValidationSamples:
             )
         distdata.rmax_compare(
                 analysis_rmax,
-                pred_2d_knots,
+                pred_2d,
                 self.output_dir,
                 set=set,
                 epoch=epoch
@@ -497,8 +493,8 @@ class LogValidationSamples:
 
         # → Radial Vmax utilise aussi les champs 2D
         distdata.compare_radial_vmax(
-            sar_2d_knots,
-            pred_2d_knots,
+            sar_2d,
+            pred_2d,
             output_dir=self.output_dir,
             set=set,
             epoch=epoch,
@@ -507,8 +503,8 @@ class LogValidationSamples:
 
         # mae 
         distdata.compute_mae_metric(
-            sar_2d_knots,
-            pred_2d_knots,
+            sar_2d,
+            pred_2d,
             output_dir=self.output_dir,
             set=set,
             epoch=epoch,
@@ -520,12 +516,11 @@ class LogValidationSamples:
             H, W = sar_np[i].shape
             cx, cy = W // 2, H // 2
 
-            # Compute radial metrics
-            vmax1d_pred, rmax1d_pred = self.compute_vmax1d_rmax1d(pred_np[i])
+            
 
             
             rmax = analysis_rmax[i] / 1000    # en km
-            vmax = analysis_vmax[i] * 1.94384  # m/s to kt
+            vmax = analysis_vmax[i]   # m/s 
             if vmax is None or np.isnan(rmax):
                 vmax = 99999
             if rmax is None or np.isnan(rmax):
@@ -533,13 +528,16 @@ class LogValidationSamples:
 
             # IRWIN
             distdata.plot_ir(ir_np[i], cmap=self.cmap_ir,ax=axes[0],fig=fig,x_lim=H)
-            axes[0].set_title("IRWIN (Channel 0)")
+            axes[0].set_title("IRWIN (°C)")
             axes[0].axis("off")
 
             # === TRUE SAR ===
             sar_vis = np.where(mask_np[i]==1, sar_np[i], np.nan)
+            # Compute radial metrics
+            vmax1d_pred, rmax1d_pred = self.compute_vmax1d_rmax1d(pred_np[i])
+            vmax_sar, rmax_sar = self.compute_vmax1d_rmax1d(sar_np[i])
             distdata.plot_sar(sar_vis, cmap=self.cmap_sar,ax=axes[1],fig=fig,x_lim=H)
-            axes[1].set_title("True SAR (knots)")
+            axes[1].set_title("True SAR (m/s)")
             axes[1].axhline(y=0, color="black", linewidth=1)
             axes[1].axvline(x=0, color="black", linewidth=1)
 
@@ -551,7 +549,7 @@ class LogValidationSamples:
             # === PREDICTED SAR ===
             # pred_vis = np.where(mask_np[i]==1, pred_np[i], np.nan)
             distdata.plot_sar(pred_np[i], cmap=self.cmap_sar,ax=axes[2],fig=fig,x_lim=H)
-            axes[2].set_title("Predicted SAR (knots)")
+            axes[2].set_title("Predicted SAR (m/s)")
             axes[2].axhline(y=0, color="black", linewidth=1)
             axes[2].axvline(x=0, color="black", linewidth=1)
 
@@ -563,8 +561,8 @@ class LogValidationSamples:
             # === TITLE including Rmax1D and Vmax1D ===
             fig.suptitle(
                 f"Cyclone: {cyclone_id[i]} — SAR Time: {sar_time[i]} — Epoch {epoch+1}\n"
-                f"Analysis Rmax = {rmax:.1f} Km — Predicted Rmax1D = {rmax1d_pred:.1f} Km\n"
-                f"Anaysis Vmax = {vmax:.1f} kt — Predicted Vmax1D = {vmax1d_pred:.1f} kt",
+                f"Analysis Rmax = {rmax:.1f} Km — Rmax SAR = {rmax_sar:.1f} km — Predicted Rmax1D = {rmax1d_pred:.1f} Km\n"
+                f"Anaysis Vmax = {vmax:.1f} m/s — Vmax SAR = {vmax_sar:.1f} m/s — Predicted Vmax1D = {vmax1d_pred:.1f} m/s",
                 fontsize=10
             )
 
@@ -655,9 +653,9 @@ class LogValidationSamples:
             batch_full_test = (ir_full_test, sar_full_test, mask_test, infos_test)
             
 
-            # self.log_batch(model, batch_full_val, epoch, device)
+            self.log_batch(model, batch_full_val, epoch, device)
             self.log_batch(model, batch_full_train, epoch, device, set="train")
-            # self.log_batch(model, batch_full_test, epoch, device, set="test")
+            self.log_batch(model, batch_full_test, epoch, device, set="test")
             if self.anggrek_test : 
 
                 for ir, sar, mask, inf in dataloader[3]:
@@ -792,6 +790,7 @@ class LogValidationSamples:
             cx, cy = W // 2, H // 2
 
             vmax_pred, rmax_pred = self.compute_vmax1d_rmax1d(pred_den[i])
+            
 
             if pd.isna(t):
                 date_key = f"unknown_{i:03d}"
@@ -803,7 +802,7 @@ class LogValidationSamples:
                 supt = (
                             f"{t.strftime('%Y-%m-%d %H:%M:%S')}\n"
                             f"Best Track Vmax: {vmax[i]:.2f} m/s | "
-                            f"Pred Vmax: {vmax_pred/1.94384:.2f} m/s | "
+                            f"Pred Vmax: {vmax_pred:.2f} m/s | "
                             f"Pred RMW: {rmax_pred:.1f} km"
                         )
 

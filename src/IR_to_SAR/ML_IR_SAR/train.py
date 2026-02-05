@@ -172,16 +172,6 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_gr
                                                             bin_edges=BIN_EDGES, bin_weights=BIN_WEIGHTS,
                                                             use_weighted_pix=True
                                                         )
-        
-        if not combined_loss:
-            wmap = make_weight_map_wspd_rad(
-            target=sar_valid,
-            mask=mask,
-            vmax_train_max=vmax_train,
-            rmw_train_min=rmin_train,
-            r_map=None  
-            )
-            loss = weighted_mse_wspd_rad(pred_valid, sar_valid, mask, wmap)
 
         if sar_valid.ndim == 3:
             sar_valid = sar_valid.unsqueeze(1)
@@ -234,17 +224,6 @@ def validate(fabric, model, dataloader, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.
                                      bin_edges=BIN_EDGES, bin_weights=BIN_WEIGHTS,
               
                                                             use_weighted_pix=True)
-            if not combined_loss:
-                
-                wmap = make_weight_map_wspd_rad(
-                    target=sar_valid,
-                    mask=mask,
-                    vmax_train_max=vmax_train,
-                    rmw_train_min=rmin_train,
-                    r_map=None  # ou ta r_map pré-calculée
-                )
-
-                loss = weighted_mse_wspd_rad(pred_valid, sar_valid, mask, wmap)
             
 
             if sar_valid.ndim == 3:
@@ -433,11 +412,6 @@ def main(cfg: IR_SAR_Config,test=False):
     gradient_loss_history = []
     radial_loss_history = []
 
-    VMAX_TRAIN, RMIN_TRAIN = compute_vmax_rmax_constants_from_loader(
-                                                                    train_loader=train_loader,
-                                                                    device=fabric.device,
-                                                                    max_batches=None 
-                                                                )
     for epoch in range(cfg.num_epochs):
         logger.info(f"===== Epoch {epoch+1}/{cfg.num_epochs} =====")
         
@@ -447,17 +421,13 @@ def main(cfg: IR_SAR_Config,test=False):
                                                     w_radial=cfg.w_radial,
                                                     scheduler=scheduler,
                                                     scheduler_name=cfg.scheduler,
-                                                    vmax_train=VMAX_TRAIN,
-                                                    rmin_train=RMIN_TRAIN,
                                                     conditional_model = cfg.conditional_model,
                                                     combined_loss = cfg.combined_loss)
         
         val_loss, val_metrics, l_pix_val,l_grad_val, l_radial_val = validate(fabric, model, val_loader, metrics,
                                          w_pix=cfg.w_pix,
                                          w_grad=cfg.w_grad,
-                                         w_radial=cfg.w_radial
-                                         ,vmax_train=VMAX_TRAIN,
-                                         rmin_train=RMIN_TRAIN,
+                                         w_radial=cfg.w_radial,
                                          conditional_model=cfg.conditional_model,
                                          combined_loss = cfg.combined_loss)
 

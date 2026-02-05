@@ -44,65 +44,55 @@ def build_radius_map(H, W, device):
     r = torch.sqrt((x - cx)**2 + (y - cy)**2)
     return r
 
-def radial_profile_batch(sar, r_map, r_bins):
-    """
-    sar: (B,1,H,W)
-    r_map: (H,W)
-    returns: (B, R)
-    """
-    B = sar.shape[0]
-    profiles = []
 
-    for i in range(B):
-        v = sar[i, 0]
-        prof = []
-        for r in r_bins:
-            mask = (r_map >= r) & (r_map < r + 1)
-            prof.append(v[mask].mean())
-        profiles.append(torch.stack(prof))
-
-    return torch.stack(profiles) 
-
-def radial_vmax_l1_loss(sar_valid, pred_valid, mask, r_bins=None):
+def radial_vmax_l1_loss(pred_valid, sar_valid, mask, r_bins=None, eps=1e-8):
     
-    if sar_valid.ndim == 3:
-        sar_valid = sar_valid.unsqueeze(1)
-
-    if mask.ndim == 3:
-        mask = mask.unsqueeze(1)
+    # pred_valid, sar_valid: (B,1,H,W) or (B,H,W)
+    if sar_valid.ndim == 3: sar_valid = sar_valid.unsqueeze(1)
+    if pred_valid.ndim == 3: pred_valid = pred_valid.unsqueeze(1)
+    if mask.ndim == 3: mask = mask.unsqueeze(1)
 
     B, _, H, W = sar_valid.shape
     device = sar_valid.device
+    dtype = sar_valid.dtype
 
-    r_map = build_radius_map(H, W, device)
+    # radius map -> integer bin per pixel
+    cy, cx = (H - 1) / 2.0, (W - 1) / 2.0
+    yy, xx = torch.meshgrid(
+        torch.arange(H, device=device, dtype=dtype),
+        torch.arange(W, device=device, dtype=dtype),
+        indexing="ij"
+    )
+    r = torch.sqrt((xx - cx)**2 + (yy - cy)**2)
+    r_int = torch.floor(r).long()  # (H,W)
 
     if r_bins is None:
         r_max = int(min(H, W) // 2)
-        r_bins = torch.arange(0, r_max, device=device)
+    else:
+        r_max = int(len(r_bins))
 
-    R = len(r_bins)
-    prof_true = torch.zeros((B, R), device=device)
-    prof_pred = torch.zeros((B, R), device=device)
+    r_int = torch.clamp(r_int, 0, r_max - 1)  # (H,W)
 
-    for b in range(B):
-        v_true = sar_valid[b, 0]
-        v_pred = pred_valid[b, 0]
-        m = mask[b, 0]
+    # flatten everything
+    idx = r_int.view(1, 1, -1).expand(B, 1, H*W)           # (B,1,HW)
+    m   = (mask > 0).view(B, 1, -1).to(dtype)             # (B,1,HW)
 
-        for i, r in enumerate(r_bins):
-            ring = (r_map >= r) & (r_map < r + 1) & (m > 0)
+    t_true = sar_valid.view(B, 1, -1) * m
+    t_pred = pred_valid.view(B, 1, -1) * m
 
-            if ring.sum() > 0:
-                prof_true[b, i] = v_true[ring].mean()
-                prof_pred[b, i] = v_pred[ring].mean()
-            else:
-                if i > 0:
-                    prof_true[b, i] = prof_true[b, i - 1]
-                    prof_pred[b, i] = prof_pred[b, i - 1]
-                else:
-                    prof_true[b, i] = 0
-                    prof_pred[b, i] = 0
+    # sums per radius
+    sum_true = torch.zeros((B, 1, r_max), device=device, dtype=dtype)
+    sum_pred = torch.zeros((B, 1, r_max), device=device, dtype=dtype)
+    cnt      = torch.zeros((B, 1, r_max), device=device, dtype=dtype)
 
+    sum_true.scatter_add_(2, idx, t_true)
+    sum_pred.scatter_add_(2, idx, t_pred)
+    cnt.scatter_add_(2, idx, m)
+
+    prof_true = sum_true / cnt.clamp_min(eps)
+    prof_pred = sum_pred / cnt.clamp_min(eps)
+
+    # L1 between profiles
     return F.l1_loss(prof_pred, prof_true)
 
     
@@ -260,152 +250,4 @@ def weighted_l1(pred, target, mask, wmap, eps=1e-8):
     return num / den
 
 
-
-
-
-######################
-#"Article Loss"
-########################
-def build_radius_map(H, W, device):
-    cy, cx = (H - 1) / 2.0, (W - 1) / 2.0
-    yy, xx = torch.meshgrid(
-        torch.arange(H, device=device),
-        torch.arange(W, device=device),
-        indexing="ij"
-    )
-    r = torch.sqrt((xx - cx)**2 + (yy - cy)**2)  # en pixels
-    return r
-
-
-def make_weight_map_wspd_rad(
-    target, mask,
-    vmax_train_max=1.0,
-    rmw_train_min=1.0,
-    r_map=None,
-    eps=1e-8
-):
-    """
-    Retourne wmap = Wwspd * Wrad * mask
-    target: (B,1,H,W) ou (B,H,W)
-    mask:   (B,1,H,W) ou (B,H,W)
-    r_map:  (H,W) rayon (pixels ou km) cohérent avec rmw_train_min
-    """
-    if target.ndim == 3: target = target.unsqueeze(1)
-    if mask.ndim == 3: mask = mask.unsqueeze(1)
-
-    B, _, H, W = target.shape
-    device = target.device
-
-    if r_map is None:
-        r_map = build_radius_map(H, W, device)  # pixels
-    r = r_map[None, None, :, :]  # (1,1,H,W)
-
-    vmax_train_max = torch.tensor(vmax_train_max, device=device, dtype=target.dtype)
-    rmw_train_min  = torch.tensor(rmw_train_min,  device=device, dtype=target.dtype).clamp_min(eps)
-
-    # Wwspd = 1 + (T - Vmax_train_max)^2 / 9
-    Wwspd = 1.0 + ((target - vmax_train_max) ** 2) / 9.0
-
-    # Wrad = (1 + r / (RMW_min^2))^-1
-    Wrad = 1.0 / (1.0 + (r / rmw_train_min ** 2))
-
-    wmap = Wwspd * Wrad * mask
-    return wmap
-
-
-def weighted_mse_wspd_rad(pred, target, mask, wmap, eps=1e-8):
-    """
-    Loss = mean(Wmse * Wwspd * Wrad) / mean(Wwspd * Wrad)
-         = sum((pred-target)^2 * wmap) / sum(wmap)
-    """
-    if pred.ndim == 3: pred = pred.unsqueeze(1)
-    if target.ndim == 3: target = target.unsqueeze(1)
-    if mask.ndim == 3: mask = mask.unsqueeze(1)
-
-    mse = (pred - target) ** 2
-    num = (mse * wmap).sum()
-    den = wmap.sum().clamp_min(eps)
-    return num / den
-
-import torch
-
-def build_radius_map(H, W, device):
-    cy, cx = (H - 1) / 2.0, (W - 1) / 2.0
-    yy, xx = torch.meshgrid(
-        torch.arange(H, device=device),
-        torch.arange(W, device=device),
-        indexing="ij"
-    )
-    return torch.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)  # (H,W) en pixels
-
-
-@torch.no_grad()
-def compute_vmax_rmax_constants_from_loader(train_loader, device, max_batches=None):
-    """
-    Calcule une seule fois :
-      VMAX_TRAIN = max over images (max pixel SAR normalisé)
-      RMIN_TRAIN = min over images (rmax en pixels via profil radial)
-    """
-    vmax_list = []
-    rmax_list = []
-
-    r_map = None
-    r_bins = None
-
-    for b, (x, sar, mask, infos) in enumerate(train_loader):
-        if max_batches is not None and b >= max_batches:
-            break
-
-        sar = sar.to(device)
-        mask = mask.to(device)
-
-        if sar.ndim == 3: sar = sar.unsqueeze(1)
-        if mask.ndim == 3: mask = mask.unsqueeze(1)
-
-        B, _, H, W = sar.shape
-
-        # init r_map / r_bins une seule fois
-        if r_map is None:
-            r_map = build_radius_map(H, W, device)           # (H,W)
-            r_max = int(min(H, W) // 2)
-            r_bins = torch.arange(0, r_max, device=device)   # (R,)
-
-        sar = torch.nan_to_num(sar, nan=0.0, posinf=0.0, neginf=0.0)
-
-        # ---- VMAX par image ----
-        for i in range(B):
-            valid = mask[i, 0] > 0.5
-            if valid.any():
-                vmax_list.append(sar[i, 0][valid].max())
-            else:
-                # si pas de pixels valides, on ignore
-                continue
-
-        # ---- RMAX par image via profil radial ----
-        for i in range(B):
-            t = sar[i, 0]
-            valid = mask[i, 0] > 0.5
-            if not valid.any():
-                continue
-
-            prof = torch.zeros((r_bins.numel(),), device=device, dtype=torch.float32)
-            prev = 0.0
-            for j, r0 in enumerate(r_bins):
-                ring = (r_map >= r0) & (r_map < r0 + 1) & valid
-                if ring.any():
-                    prev = t[ring].mean()
-                prof[j] = prev  # carry forward si ring vide
-
-            rmax_list.append(r_bins[torch.argmax(prof)].float())
-
-    if len(vmax_list) == 0 or len(rmax_list) == 0:
-        raise RuntimeError("Impossible de calculer VMAX/RMAX : pas de pixels valides dans le train.")
-
-    vmax_all = torch.stack(vmax_list)  # (N,)
-    rmax_all = torch.stack(rmax_list)  # (N,)
-
-    VMAX_TRAIN = float(vmax_all.max().item())
-    RMIN_TRAIN = float(rmax_all.min().item())
-
-    return VMAX_TRAIN, RMIN_TRAIN
 

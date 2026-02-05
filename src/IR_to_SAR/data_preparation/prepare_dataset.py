@@ -163,6 +163,7 @@ class PrepareDataSet():
                     with xr.open_dataset(row["sargeo_path"]) as sargeo:
                         if "IRWIN" not in sargeo:
                             raise KeyError("Missing IRWIN")
+                        
 
                     with xr.open_dataset(row["sar_aeqd_path"]) as ds_aeqd:
                         if "owiWindSpeed" not in ds_aeqd:
@@ -188,6 +189,8 @@ class PrepareDataSet():
                 pbar.set_postfix(good=len(good_rows), bad=len(bad_rows))
                 pbar.update(1)
             pbar.close()
+            
+
 
             #anggrek cyclone
             if anggrek_test :

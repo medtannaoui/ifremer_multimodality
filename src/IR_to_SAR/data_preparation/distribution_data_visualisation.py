@@ -364,7 +364,7 @@ def plot_aam(tensor, fig=None, ax=None,title=None,x_lim=300):
         ax = plt.gca()
     
     x_sar,y_sar = np.linspace(-x_lim,x_lim,tensor.shape[0]) , np.linspace(-x_lim,x_lim,tensor.shape[1])
-    im = ax.pcolormesh(x_sar, y_sar, tensor,vmin=-1000,vmax=1000)
+    im = ax.pcolormesh(x_sar, y_sar, tensor,vmin=-0,vmax=1000)
     ax.set_xlim(-x_lim,x_lim)
     ax.set_ylim(-x_lim,x_lim)
     if title is not None:
@@ -423,8 +423,8 @@ def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False
         else :    
             if ana_vmax is None or np.isnan(ana_vmax) or  ana_vmax*1.94384 < min or ana_vmax*1.94384 > max:
                 continue
-        vmax_true.append(ana_vmax * 1.94384)
-        vmax_pred.append(np.nanmax(sar2))
+        vmax_true.append(ana_vmax)   #m/s
+        vmax_pred.append(np.nanmax(sar2)) #m/s
 
     vmax_true = np.array(vmax_true)
     vmax_pred = np.array(vmax_pred)
@@ -460,8 +460,8 @@ def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False
     ax.plot(x_line, y_line, "b-", lw=2,
             label=f"Regression: y={coef[0]:.2f}x+{coef[1]:.2f}")
 
-    ax.set_xlabel(f"Analysis Vmax (knots)")
-    ax.set_ylabel("Predicted Vmax (knots)")
+    ax.set_xlabel(f"Analysis Vmax (m/s)")
+    ax.set_ylabel("Predicted Vmax (m/s)")
     ax.set_title(f"Vmax Comparison — Epoch {epoch+1} ({set}) {title_end}")
     ax.grid(True, linestyle="--", alpha=0.3)
     ax.legend(loc="lower right")
@@ -469,17 +469,17 @@ def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False
     # ---------- Error histogram ----------
     ax_hist.hist(errors, bins=40, color="gray", alpha=0.8)
     ax_hist.set_title("Prediction Error Distribution (Pred - Analysis_vmax)")
-    ax_hist.set_xlabel("Prediction Error (kt)")
+    ax_hist.set_xlabel("Prediction Error (m/s)")
     ax_hist.set_ylabel("Count")
     ax_hist.grid(True, linestyle="--", alpha=0.3)
 
     # ---------- Stats box ----------
     textstr = (
-        f"MAE  : {mae:.2f} kt\n"
-        f"RMSE : {rmse:.2f} kt\n"
-        f"Bias : {bias:.2f} kt\n"
-        f"Max analysis vmax : {vmax_true.max():.2f} kt\n"
-        f"Max predicted vmax: {vmax_pred.max():.2f} kt"
+        f"MAE  : {mae:.2f} m/s\n"
+        f"RMSE : {rmse:.2f} m/s\n"
+        f"Bias : {bias:.2f} m/s\n"
+        f"Max analysis vmax : {vmax_true.max():.2f} m/s\n"
+        f"Max predicted vmax: {vmax_pred.max():.2f} m/s"
     )
 
     ax.text(0.02, 0.98, textstr,
@@ -515,8 +515,8 @@ def compare_sar_distribution(sar_knots, pred_knots, output_dir, set, epoch):
         print(f"📈 Saved global distribution")
 
 def compare_radial_vmax(
-    sars_true, 
-    sars_predict, 
+    sars_true,      #m/s
+    sars_predict,   #m/s
     output_dir, 
     set, 
     epoch,  
@@ -601,19 +601,19 @@ def compare_radial_vmax(
     plt.plot(r_norm, vmax_r_true*1.94384, color="green", linewidth=2, label="Reel SAR Radial Vmax (knots)")
     plt.plot(r_norm, vmax_r_pred*1.94384, color="blue", linewidth=2, label="Predict SAR Radial Vmax (knots)")
     plt.plot(r_norm, err_of_means*1.94384, linestyle="--", linewidth=2,
-         label="|Error of means| = |E(true)-E(pred)| (kt)")
+         label="|Error of means| = |E(true)-E(pred)| (m/s)")
     plt.plot(r_norm, mean_of_errors*1.94384, linestyle="-.", linewidth=2, color="orange",
-         label="Mean absolute error = E(|true-pred|) (kt)")
+         label="Mean absolute error = E(|true-pred|) (m/s)")
 
     # --- Add vertical lines for Rmax
     plt.axvline(rmax1d_true*2, color="green", linestyle="--", linewidth=1.5, label=f"Reel Rmax1D = {rmax1d_true*2:.1f}")
     plt.axvline(rmax1d_pred*2, color="blue", linestyle="--", linewidth=1.5, label=f"Pred Rmax1D = {rmax1d_pred*2:.1f}")
     print("--------------------------",vmax1d_true)
-    plt.axhline(vmax1d_true*1.94384, color="green", linestyle="--", linewidth=1.5, label=f"Reel Vmax1D = {vmax1d_true*1.94384:.1f} Kt")
-    plt.axhline(vmax1d_pred*1.94384, color="blue", linestyle="--", linewidth=1.5, label=f"Pred Vmax1D = {vmax1d_pred*1.94384:.1f} Kt")
+    plt.axhline(vmax1d_true*1.94384, color="green", linestyle="--", linewidth=1.5, label=f"Reel Vmax1D = {vmax1d_true*1.94384:.1f} m/s")
+    plt.axhline(vmax1d_pred*1.94384, color="blue", linestyle="--", linewidth=1.5, label=f"Pred Vmax1D = {vmax1d_pred*1.94384:.1f} m/s")
 
     plt.xlabel("Radius R* (R/RMW)", fontsize=14)
-    plt.ylabel("Vmax Mean (Kt)", fontsize=14)
+    plt.ylabel("Vmax Mean (m/s)", fontsize=14)
     plt.title(f"Radial Vmax Profile — {set} (Epoch {epoch+1})", fontsize=16)
     plt.grid(True, linestyle="--", alpha=0.4)
     plt.legend(fontsize=12)
@@ -654,7 +654,7 @@ def compute_mae_metric(sar_true, sar_pred, output_dir, set, epoch, plot=False):
 
     plt.figure(figsize=(6, 5))
     im = plt.imshow(mae_map, cmap="inferno")
-    plt.colorbar(im, label="MAE (knots)")
+    plt.colorbar(im, label="MAE (m/s)")
     plt.title(f"Mean Absolute Error Map — {set} (Epoch {epoch+1})")
     plt.axis("off")
     if not plot : 
