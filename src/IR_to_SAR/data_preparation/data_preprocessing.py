@@ -913,7 +913,7 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
                 out_mask.append(mask_r)
                 out_infos.append(inf_aug)
 
-            for angle in [90,270]:
+            for angle in [90,270,180]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
 
                 inf_aug = copy.deepcopy(inf)
@@ -925,8 +925,8 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
                 out_mask.append(mask_r)
                 out_infos.append(inf_aug)
 
-        if np.isfinite(rmax) and (rmax > 0):
-            for sigma in [0.05]:
+        if np.isfinite(rmax) and (rmax > 80):
+            for sigma in [0.05,0.03]:
                 ir_r = add_white_noise(ir, sigma)
 
                 inf_aug = copy.deepcopy(inf)
@@ -937,8 +937,8 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
                 out_sar.append(sar)      # unchanged
                 out_mask.append(mask)
                 out_infos.append(inf_aug)
-
-            for amount in [0.04]:
+        if np.isfinite(rmax) and (vmax < 20):
+            for amount in [0.04,0.02]:
                 ir_r = add_salt_pepper_noise(ir, amount)
 
                 inf_aug = copy.deepcopy(inf)

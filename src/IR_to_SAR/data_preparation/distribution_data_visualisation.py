@@ -364,7 +364,7 @@ def plot_aam(tensor, fig=None, ax=None,title=None,x_lim=300):
         ax = plt.gca()
     
     x_sar,y_sar = np.linspace(-x_lim,x_lim,tensor.shape[0]) , np.linspace(-x_lim,x_lim,tensor.shape[1])
-    im = ax.pcolormesh(x_sar, y_sar, tensor,vmin=-0,vmax=1000)
+    im = ax.pcolormesh(x_sar, y_sar, tensor,vmin=-0,vmax=4500)
     ax.set_xlim(-x_lim,x_lim)
     ax.set_ylim(-x_lim,x_lim)
     if title is not None:

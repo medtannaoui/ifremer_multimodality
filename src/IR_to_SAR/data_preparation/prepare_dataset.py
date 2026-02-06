@@ -70,8 +70,8 @@ class PrepareDataSet():
             if conditional_model:
                 mag_cols = [f"shear_magnitude_{i}" for i in range(1, 9)]
                 dir_cols = [f"shear_direction_{i}" for i in range(1, 9)]
-                cyclone_phase_space_thermal_wind = [f"cyclone_phase_space_thermal_wind_{i}" for i in range(1,3)]
-                shear_cols = mag_cols + dir_cols + cyclone_phase_space_thermal_wind
+                # cyclone_phase_space_thermal_wind = [f"cyclone_phase_space_thermal_wind_{i}" for i in range(1,3)]
+                shear_cols = mag_cols + dir_cols 
                 train_shear = data[data["split"]=="train"][shear_cols].to_numpy(dtype=np.float32)
                 train_shear = np.nan_to_num(train_shear, nan=0.0)
 

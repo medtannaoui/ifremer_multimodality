@@ -54,6 +54,7 @@ tmp*/
 *.yaml*
 config.yaml
 first_test/
+combined_loss
 
 # ==========================
 #   GIT / OS
