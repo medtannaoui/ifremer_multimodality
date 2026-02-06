@@ -104,8 +104,9 @@ class LogValidationSamples:
         self.input_data = input_data
         self.output_data=output_data
 
-        self.anggrek_test = anggrek_test
+        
         self.conditional_model = conditional_model
+        self.anggrek_test = conditional_model
         self.log_wind = log_wind
 
         
@@ -718,7 +719,14 @@ class LogValidationSamples:
 
         # Predict
         with torch.no_grad():
-            pred = model(x, timestep=0).sample  # (B,1,H,W)
+            if not self.conditional_model:
+                pred = model(x, timestep=0).sample  # (B,1,H,W)
+            else :
+                shear = torch.stack([
+                                        torch.as_tensor(d["shear"], dtype=torch.float32)
+                                        for d in infos
+                                    ]).to(device) 
+                pred = model(x, timestep=0, cond=shear).sample
 
         # -------------------------
         def denorm(t, mean, std):
