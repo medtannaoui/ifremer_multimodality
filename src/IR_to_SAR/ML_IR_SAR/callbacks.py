@@ -220,15 +220,6 @@ class LogValidationSamples:
 
             return sar
 
-        def _compute_stats(err):
-            """err: 1D numpy array (no nan)"""
-            bias = np.mean(err)
-            std  = np.std(err)
-            rmse = np.sqrt(np.mean(err**2))
-            mae  = np.mean(np.abs(err))
-            return bias, std, rmse, mae
-        
-
         def _split_bins_from_train( values_train, n_intervals=3):
             """Build bins from TRAIN only using linspace(min,max,n_intervals+1)."""
             v = np.asarray(values_train)
@@ -239,31 +230,48 @@ class LogValidationSamples:
             return bins
         
 
+        def _compute_stats(err):
+            """err: 1D numpy array (no nan)"""
+            bias = np.mean(err)
+            std  = np.std(err)
+            rmse = np.sqrt(np.mean(err**2))
+            mae  = np.mean(np.abs(err))
+            return bias, std, rmse, mae
+
+
         def _plot_4panel_error_hist(errors, cat_values, bins, title_prefix, unit, save_path, xlim=None):
             """
             errors: 1D array (pred - analysis) in desired unit
-            cat_values: 1D array used to assign categories (typically analysis values)
+            cat_values: 1D array used to assign categories
             bins: array length 4 -> 3 intervals
             """
             errors = np.asarray(errors)
             cat_values = np.asarray(cat_values)
 
-            # keep finite
             ok = np.isfinite(errors) & np.isfinite(cat_values)
             errors = errors[ok]
             cat_values = cat_values[ok]
 
             fig, axes = plt.subplots(1, 4, figsize=(18, 5))
 
-            def draw(ax, err_subset, subtitle):
+            def draw(ax, err_subset, cat_subset, subtitle):
                 err_subset = np.asarray(err_subset)
-                err_subset = err_subset[np.isfinite(err_subset)]
+                cat_subset = np.asarray(cat_subset)
+
+                mask = np.isfinite(err_subset) & np.isfinite(cat_subset)
+                err_subset = err_subset[mask]
+                cat_subset = cat_subset[mask]
+
                 if err_subset.size == 0:
                     ax.set_title(subtitle + "\n(empty)")
                     ax.grid(True, linestyle="--", alpha=0.4)
                     return
 
                 bias, std, rmse, mae = _compute_stats(err_subset)
+
+                # --- normalization with median of category ---
+                med_cat = np.median(cat_subset)
+                norm_bias = bias / med_cat if med_cat != 0 else np.nan
 
                 ax.hist(err_subset, bins=40)
                 ax.set_title(subtitle)
@@ -272,10 +280,13 @@ class LogValidationSamples:
                 ax.grid(True, linestyle="--", alpha=0.4)
 
                 txt = (f"bias = {bias:.2f} {unit}\n"
-                        f"stddev = {std:.2f} {unit}\n"
-                        f"rmse = {rmse:.2f} {unit}\n"
-                        f"mae = {mae:.2f} {unit}\n"
-                        f"n = {err_subset.size}\n")
+                    f"norm_bias = {norm_bias:.4f} (bias/median)\n"
+                    f"median(cat) = {med_cat:.2f}\n"
+                    f"stddev = {std:.2f} {unit}\n"
+                    f"rmse = {rmse:.2f} {unit}\n"
+                    f"mae = {mae:.2f} {unit}\n"
+                    f"n = {err_subset.size}")
+
                 ax.text(0.97, 0.97, txt, transform=ax.transAxes,
                         ha="right", va="top", fontsize=10,
                         bbox=dict(facecolor="white", alpha=0.85, edgecolor="none"))
@@ -284,18 +295,19 @@ class LogValidationSamples:
                     ax.set_xlim(xlim)
 
             # Panel 1: all
-            draw(axes[0], errors, f"{title_prefix}\nAll cases")
+            draw(axes[0], errors, cat_values, f"{title_prefix}\nAll cases")
 
-            bins = [0,32,49,np.max(cat_values)]   # m/s
+            # Panels 2–4: categories
             for k in range(3):
-                lo, hi = bins[k], bins[k+1]
+                lo, hi = bins[k], bins[k + 1]
+
                 if k < 2:
                     sel = (cat_values >= lo) & (cat_values < hi)
                 else:
                     sel = (cat_values >= lo) & (cat_values <= hi)
 
-                subtitle = f"{title_prefix}\nCat{k+1}: [{lo:.1f}, {hi-1:.1f}]"
-                draw(axes[k+1], errors[sel], subtitle)
+                subtitle = f"{title_prefix}\nCat{k+1}: [{lo:.1f}, {hi:.1f}]"
+                draw(axes[k + 1], errors[sel], cat_values[sel], subtitle)
 
             plt.tight_layout()
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -388,7 +400,7 @@ class LogValidationSamples:
             _plot_4panel_error_hist(
                 errors=err_vmax,
                 cat_values=cat_vmax,
-                bins=self.vmax_bins_knots,
+                bins = [0,32,49,80] ,  # m/s,
                 title_prefix="Vmax error",
                 unit="m/s",
                 save_path=save_path_vmax,

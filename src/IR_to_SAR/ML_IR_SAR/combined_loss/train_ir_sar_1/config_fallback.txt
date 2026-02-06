@@ -1,0 +1,40 @@
+img_size: 128
+batch_size: 128
+learning_rate: 8e-05
+num_epochs: 300
+train_split: 0.6
+val_split: 0.2
+test_split: 0.2
+data_path: /scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl/data_cleaned.pkl
+save_dir: /scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/combined_loss
+early_stop_patience: 1000
+early_stop_delta: 0.0001
+start_epoch: 0
+plot_interval: 20
+accelerator: gpu
+devices: [4]
+scheduler_every_n_epochs: 10
+norm: annular
+num_val_exemples: 10
+barycenter: no
+augmentation: True
+drop_nan_sar: False
+dropout: 0.1
+in_channels: 1
+out_channels: 1
+input_channels: []
+w_pix: 1.0
+w_grad: 4.0
+w_radial: 2.0
+input_data: normal
+output_data: aam
+block_out_channels: [16, 32, 16]
+down_block_types: ['DownBlock2D', 'AttnDownBlock2D', 'DownBlock2D']
+up_block_types: ['UpBlock2D', 'AttnUpBlock2D', 'UpBlock2D']
+scheduler: cosin
+conditional_model: False
+anggrek_test: True
+cross_attention_dim: 64
+combined_loss: True
+cond_dim: 18
+log_wind: False
