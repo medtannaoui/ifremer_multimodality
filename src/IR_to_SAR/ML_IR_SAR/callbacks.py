@@ -72,7 +72,8 @@ class LogValidationSamples:
              num_samples=4, start_epoch=20, every_n_epochs=1,
              cmap_ir="gray", cmap_sar="viridis", num_epochs=0, infos_train=None, infos_val=None, infos_test=None, 
              mask_train=None, mask_val = None,mask_test=None,
-             target_dir = None,input_data="normal", output_data="sar",anggrek_test=False,conditional_model=False,log_wind=None
+             target_dir = None,input_data="normal", output_data="sar",anggrek_test=False,conditional_model=False,log_wind=None,
+             crop_sar=False
              ):
 
         self.base_dir = Path(base_dir)
@@ -107,6 +108,7 @@ class LogValidationSamples:
         
         self.conditional_model = conditional_model
         self.log_wind = log_wind
+        self.crop_sar = crop_sar
 
         
         
@@ -343,6 +345,12 @@ class LogValidationSamples:
             pred_denorm = moment_to_sar(pred_denorm)
 
         # Conversion numpy
+        B,H,W = sar_denorm.shape
+        if self.crop_sar:
+            ir_denorm = ir_denorm[:,W//2-W//4:W//2+W//4,H//2-H//4:H//2+H//4]
+            sar_denorm = sar_denorm[:,W//2-W//4:W//2+W//4,H//2-H//4:H//2+H//4]
+            pred_denorm = pred_denorm[:,W//2-W//4:W//2+W//4,H//2-H//4:H//2+H//4]
+
         ir_np   = ir_denorm
         sar_np  = sar_denorm
         pred_np = pred_denorm
@@ -355,9 +363,9 @@ class LogValidationSamples:
         else : 
             infos_np=infos
         
+        if self.crop_sar : 
+            mask_np = mask_np[:,W//2-W//4:W//2+W//4,H//2-H//4:H//2+H//4]
         B, H, W = pred_np.shape
-        cx, cy = W // 2, H // 2
-        
 
         pred_vmax = np.full(B, np.nan, dtype=np.float32)
         pred_rmax_km    = np.full(B, np.nan, dtype=np.float32)

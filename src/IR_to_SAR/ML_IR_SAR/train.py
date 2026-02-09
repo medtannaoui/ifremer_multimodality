@@ -134,7 +134,8 @@ class PairedDataset(Dataset):
 # 🧠 2) Train / Validate functions
 # =============================
 def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.0,scheduler=None,
-                    scheduler_name=None,vmax_train=None,rmin_train=None, conditional_model=False,combined_loss=False):
+                    scheduler_name=None,vmax_train=None,rmin_train=None, conditional_model=False,combined_loss=False,
+                    crop_sar=False):
     model.train()
     total_loss = 0
     metrics.reset()
@@ -163,9 +164,17 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_gr
             pred = model(x, timestep=0).sample  # (B,1,H,W)
         else:
             pred = model.forward(x, timestep=0, cond=shear_infos).sample
-        sar_valid = sar.nan_to_num()
-        pred_valid = pred
+
+        B,H,W = sar.shape
+        hs = slice(H//2 - H//4, H//2 + H//4)
+        ws = slice(W//2 - W//4, W//2 + W//4)
+
+        sar_valid  = sar.nan_to_num()[:, hs, ws] if crop_sar else sar.nan_to_num()
+        pred_valid = pred[:, :, hs, ws] if crop_sar else pred
+        if crop_sar:
+            mask = mask[:, :, hs, ws] if mask.ndim == 4 else mask[:, hs, ws] 
         # compute weights
+
         loss, l_pix, l_grad, l_radial = combined_sar_loss(
                                                             sar_valid, pred_valid, mask,
                                                             w_pix=w_pix, w_grad=w_grad, w_radial=w_radial,
@@ -191,7 +200,7 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_gr
 
 
 def validate(fabric, model, dataloader, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.0,vmax_train=None,rmin_train=None,
-             conditional_model=False,combined_loss = False):
+             conditional_model=False,combined_loss = False,crop_sar=False):
     model.eval()
     total_loss = 0
     metrics.reset()
@@ -213,9 +222,14 @@ def validate(fabric, model, dataloader, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.
                             ]).to(fabric.device)
                 pred = model.forward(x, timestep=0, cond=shear_infos).sample
 
-            # mask = torch.isfinite(sar)
-            sar_valid = sar.nan_to_num()
-            pred_valid = pred
+            B,H,W = sar.shape
+            hs = slice(H//2 - H//4, H//2 + H//4)
+            ws = slice(W//2 - W//4, W//2 + W//4)
+
+            sar_valid  = sar.nan_to_num()[:, hs, ws] if crop_sar else sar.nan_to_num()
+            pred_valid = pred[:, :, hs, ws] if crop_sar else pred
+            if crop_sar : 
+                mask = mask[:, :, hs, ws] if mask.ndim == 4 else mask[:, hs, ws]
 
             loss,l_pix,l_grad,l_radial = combined_sar_loss(sar_valid,pred_valid,mask,
                                      w_pix=w_pix,
@@ -326,7 +340,8 @@ def main(cfg: IR_SAR_Config,test=False):
                 output_data=cfg.output_data,
                 conditional_model=cfg.conditional_model,
                 anggrek_test=cfg.anggrek_test,
-                log_wind=cfg.log_wind
+                log_wind=cfg.log_wind,
+                crop_sar = cfg.crop_sar
             
                 
             )
@@ -422,14 +437,16 @@ def main(cfg: IR_SAR_Config,test=False):
                                                     scheduler=scheduler,
                                                     scheduler_name=cfg.scheduler,
                                                     conditional_model = cfg.conditional_model,
-                                                    combined_loss = cfg.combined_loss)
+                                                    combined_loss = cfg.combined_loss,
+                                                    crop_sar=cfg.crop_sar)
         
         val_loss, val_metrics, l_pix_val,l_grad_val, l_radial_val = validate(fabric, model, val_loader, metrics,
                                          w_pix=cfg.w_pix,
                                          w_grad=cfg.w_grad,
                                          w_radial=cfg.w_radial,
                                          conditional_model=cfg.conditional_model,
-                                         combined_loss = cfg.combined_loss)
+                                         combined_loss = cfg.combined_loss,
+                                         crop_sar=cfg.crop_sar)
 
         # torch.cuda.empty_cache()
         # gc.collect()
