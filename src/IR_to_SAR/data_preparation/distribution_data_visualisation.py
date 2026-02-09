@@ -356,7 +356,8 @@ def plot_sar(tensor, fig=None, ax=None,cmap=cmap_sar,title=None,x_lim=300):
     ax.set_ylim(-x_lim,x_lim)
     if title is not None:
         ax.set_title(title)
-    fig.colorbar(im,ax=ax,orientation="horizontal")
+    if fig is not None:
+        fig.colorbar(im,ax=ax,orientation="horizontal")
     ax.set_aspect('equal')
 
 def plot_aam(tensor, fig=None, ax=None,title=None,x_lim=300):
@@ -369,7 +370,8 @@ def plot_aam(tensor, fig=None, ax=None,title=None,x_lim=300):
     ax.set_ylim(-x_lim,x_lim)
     if title is not None:
         ax.set_title(title)
-    fig.colorbar(im,ax=ax,orientation="horizontal")
+    if fig is not None:
+        fig.colorbar(im,ax=ax,orientation="horizontal")
     ax.set_aspect('equal')
 
 
@@ -387,7 +389,8 @@ def plot_ir(tensor, fig=None,x=None, y=None, ax=None, x_lim=300, cmap=cmap_ir):
     im = ax.pcolormesh(x, y, tensor, cmap=cmap, shading="auto")
     ax.set_xlim(-x_lim, x_lim)
     ax.set_ylim(-x_lim, x_lim)
-    fig.colorbar(im,ax=ax,orientation="horizontal")
+    if fig is not None:
+        fig.colorbar(im,ax=ax,orientation="horizontal")
     ax.set_aspect("equal")
 
 

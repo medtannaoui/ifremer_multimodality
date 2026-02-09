@@ -106,7 +106,6 @@ class LogValidationSamples:
 
         
         self.conditional_model = conditional_model
-        self.anggrek_test = conditional_model
         self.log_wind = log_wind
 
         
@@ -669,7 +668,7 @@ class LogValidationSamples:
             self.log_batch(model, batch_full_val, epoch, device)
             self.log_batch(model, batch_full_train, epoch, device, set="train")
             self.log_batch(model, batch_full_test, epoch, device, set="test")
-            if self.anggrek_test : 
+            if not  self.conditional_model : 
 
                 for ir, sar, mask, inf in dataloader[3]:
                     ir_anggrek.append(ir)
