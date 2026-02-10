@@ -345,6 +345,7 @@ class LogValidationSamples:
             pred_denorm = moment_to_sar(pred_denorm)
 
         # Conversion numpy
+
         B,H,W = sar_denorm.shape
         if self.crop_sar:
             ir_denorm = ir_denorm[:,W//2-W//4:W//2+W//4,H//2-H//4:H//2+H//4]
@@ -802,6 +803,11 @@ class LogValidationSamples:
         pred_den = pred_den[order]
         infos_ord = [infos[i] for i in order]
         time_parsed = time_parsed[order]
+
+        if self.crop_sar:
+            ir_den = ir_den[:,W//2-W//4:W//2+W//4,H//2-H//4:H//2+H//4]
+            pred_den = pred_den[:,W//2-W//4:W//2+W//4,H//2-H//4:H//2+H//4]
+            
 
         # -------------------------
         out_root = Path(self.output_dir) / "anggrek_monitoring"
