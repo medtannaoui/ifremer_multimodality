@@ -4,6 +4,7 @@ import pickle as pkl
 import pandas as pd
 import torch
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import torch.nn.functional as F
 import numpy as np
 import importlib
@@ -478,7 +479,7 @@ class LogValidationSamples:
         for min,max in zip([19,63,83,96,113],[63,83,96,113,200]):
             distdata.vmax_compare(
                 analysis_vmax,
-                pred_2d,
+                pred_2d*mask_2d,
                 self.output_dir,
                 set=set,
                 epoch=epoch,
@@ -487,7 +488,7 @@ class LogValidationSamples:
             )
         distdata.vmax_compare(
                 analysis_vmax,
-                pred_2d,
+                pred_2d*mask_2d,
                 self.output_dir,
                 set=set,
                 epoch=epoch
@@ -497,7 +498,7 @@ class LogValidationSamples:
         for min,max in zip([0,30,60],[30,60,100]):
             distdata.rmax_compare(
                 analysis_rmax,
-                pred_2d,
+                pred_2d*mask_2d,
                 self.output_dir,
                 set=set,
                 epoch=epoch,
@@ -506,7 +507,7 @@ class LogValidationSamples:
             )
         distdata.rmax_compare(
                 analysis_rmax,
-                pred_2d,
+                pred_2d*mask_2d,
                 self.output_dir,
                 set=set,
                 epoch=epoch
@@ -515,7 +516,7 @@ class LogValidationSamples:
         # → Radial Vmax utilise aussi les champs 2D
         distdata.compare_radial_vmax(
             sar_2d,
-            pred_2d,
+            pred_2d*mask_2d,
             output_dir=self.output_dir,
             set=set,
             epoch=epoch,
@@ -525,7 +526,7 @@ class LogValidationSamples:
         # mae 
         distdata.compute_mae_metric(
             sar_2d,
-            pred_2d,
+            pred_2d*mask_2d,
             output_dir=self.output_dir,
             set=set,
             epoch=epoch,
@@ -895,17 +896,81 @@ class LogValidationSamples:
         
         pred_denorm_3m = resample_2km_to_3km_torch(pred_den)
         vmax = np.array([d.get("vmax", np.nan) for d in infos_ord], dtype=float)
-        pred_vmax = np.nanmax(pred_denorm_3m.reshape(B, -1), axis=1)
+        vmax_cyclobs = np.array([d.get("vmax_cyclobs", np.nan) for d in infos_ord], dtype=float)
+        analysis_vmax_cyclobs = np.array([d.get("analysis_vmax_cyclobs", np.nan) for d in infos_ord], dtype=float)
+        ibtracs_vmax = np.array([d.get("ibtracs_vmax", np.nan) for d in infos_ord], dtype=float)
+        satcon_vmax  = np.array([d.get("satcon_vmax", np.nan) for d in infos_ord], dtype=float)
+
+        pred_vmax = np.nanmax(pred_denorm_3m.reshape(len(pred_den), -1), axis=1)
+        pred_vmax_2km = np.nanmax(pred_den.reshape(len(pred_den), -1), axis=1)
 
         ok = np.isfinite(vmax) & np.isfinite(pred_vmax)
         rmse = float(np.sqrt(np.mean((pred_vmax[ok] - vmax[ok]) ** 2))) if np.any(ok) else np.nan
 
         fig, ax = plt.subplots(figsize=(11, 6))
-        ax.plot(time_parsed, vmax, color="black", linewidth=2, label="Vmax")
-        ax.plot(time_parsed, pred_vmax, color="magenta", linewidth=2, label="Pred Vmax")
+        ax.plot(time_parsed, ibtracs_vmax, color="black", linewidth=2, label="IBTrACS (Best Track)")
+        ax.plot(time_parsed, vmax, color="red", linewidth=2, label="ATCF")
+        ax.plot(time_parsed, satcon_vmax, color="blue", linewidth=2, label="SATCON")
 
-        ax.set_title(f"Lifecycle Vmax Comparison — RMSE = {rmse:.2f} m/s")
+        ax.plot(time_parsed, pred_vmax, color="green", linewidth=2, label="UNET Res 3 km")
+        ax.plot(time_parsed, pred_vmax_2km, color="magenta", linewidth=2, label="UNET Res 2 km")
+        analysis_arr = np.array(analysis_vmax_cyclobs, dtype=float)
+        cyclobs_arr  = np.array(vmax_cyclobs, dtype=float)
+
+        t = np.array(time_parsed)
+        analysis_arr = np.array(analysis_vmax_cyclobs, dtype=float)
+        cyclobs_arr  = np.array(vmax_cyclobs, dtype=float)
+
+        t = np.array(time_parsed)
+
+        mA = ~np.isnan(analysis_arr)
+        mC = ~np.isnan(cyclobs_arr)
+
+
+        # --- Markers (high-quality style)
+        ax.scatter(
+            t[mA], analysis_arr[mA],
+            marker="*", s=110,                  # size
+            facecolor="#FFD54F",                # warm yellow
+            edgecolor="black", linewidths=1.2,  # black outline
+            alpha=0.95,
+            zorder=10,
+            label = "Analysis vmax cyclobs"
+        )
+
+        ax.scatter(
+            t[mC], cyclobs_arr[mC],
+            marker="s", s=55,
+            facecolor="#FF0000",                # deep green
+            edgecolor="black", linewidths=1.0,
+            alpha=0.95,
+            zorder=9,
+            label ="Vmax cyclobs"
+        )
+
+        # --- Optional: custom legend handles (so legend looks perfect)
+        handles, labels = ax.get_legend_handles_labels()
+
+        analysis_handle = Line2D(
+            [0], [0], marker="*", linestyle="None",
+            markerfacecolor="#FFD54F", markeredgecolor="black",
+            markeredgewidth=1.2, markersize=12,
+            label="Analysis vmax cyclobs"
+        )
+
+        cyclobs_handle = Line2D(
+            [0], [0], marker="s", linestyle="None",
+            markerfacecolor="#2E7D32", markeredgecolor="black",
+            markeredgewidth=1.0, markersize=8,
+            label="Vmax cyclobs"
+        )
+
+        # Put them at the end (or insert wherever you want)
+        handles += [analysis_handle, cyclobs_handle]
+        ax.legend(handles=handles, loc="upper left", frameon=True, framealpha=0.9)
+        ax.set_title(f"Lifecycle Vmax Comparison - 2024013S10093 — RMSE UNET = {rmse:.2f} m/s")
         ax.set_xlabel("Time")
+        ax.set_ylabel("Vmax (m/s)")
         ax.set_ylabel("Vmax (m/s)")
 
         # clean date axis like your IBTrACS figure

@@ -611,7 +611,6 @@ def compare_radial_vmax(
     # --- Add vertical lines for Rmax
     plt.axvline(rmax1d_true*2, color="green", linestyle="--", linewidth=1.5, label=f"Reel Rmax1D = {rmax1d_true*2:.1f}")
     plt.axvline(rmax1d_pred*2, color="blue", linestyle="--", linewidth=1.5, label=f"Pred Rmax1D = {rmax1d_pred*2:.1f}")
-    print("--------------------------",vmax1d_true)
     plt.axhline(vmax1d_true*1.94384, color="green", linestyle="--", linewidth=1.5, label=f"Reel Vmax1D = {vmax1d_true*1.94384:.1f} m/s")
     plt.axhline(vmax1d_pred*1.94384, color="blue", linestyle="--", linewidth=1.5, label=f"Pred Vmax1D = {vmax1d_pred*1.94384:.1f} m/s")
 

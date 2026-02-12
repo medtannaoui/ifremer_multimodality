@@ -93,7 +93,8 @@ def radial_vmax_l1_loss(pred_valid, sar_valid, mask, r_bins=None, eps=1e-8):
     prof_pred = sum_pred / cnt.clamp_min(eps)
 
     # L1 between profiles
-    return F.l1_loss(prof_pred, prof_true)
+    diff2 = (prof_pred - prof_true) ** 2
+    return torch.sqrt(diff2.mean() + eps)
 
     
 def combined_sar_loss(

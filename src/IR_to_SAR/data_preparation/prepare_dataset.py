@@ -53,7 +53,6 @@ class PrepareDataSet():
         # data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_v3_split_by_year.csv")
         if not  conditional_model : 
             data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_v3_split_by_year.csv")
-        else :
             data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_tcprimed.csv")
             data = data [~data["tcprimed_env_path"].isna()]
             
@@ -204,7 +203,8 @@ class PrepareDataSet():
                                 raise KeyError("Missing IR")
                             irwin_anggrek.append(ir_ds["IR"].values)
                             
-                        infos_anggrek.append({"sid":row["sid"],"date":row["date"],"vmax":row["wind_speed (m/s)"],"lat":row["lat"],"lon":row["lon"]})
+                        infos_anggrek.append({"sid":row["sid"],"date":row["date"],"vmax":row["wind_speed (m/s)"],"lat":row["lat"],"lon":row["lon"],
+                                              "analysis_vmax_cyclobs":row["analysis_vmax_cyclobs"],"vmax_cyclobs":row["vmax_cyclobs"],"ibtracs_vmax":row["ibtracs_vmax"],"satcon_vmax":row["satcon_vmax"]})
 
                         good_rows_anggrek.append(i)
 
@@ -351,9 +351,11 @@ class PrepareDataSet():
             f_val   = np.array([d["coriolis"] for d in self.infos_val], dtype=np.float32)
             f_test  = np.array([d["coriolis"] for d in self.infos_test], dtype=np.float32)
 
-            self.sar_train = dataprep.create_moment_sar(self.sar_train, f_vec=f_train, pixel_km=2.0)
-            self.sar_val   = dataprep.create_moment_sar(self.sar_val,   f_vec=f_val,   pixel_km=2.0)
-            self.sar_test  = dataprep.create_moment_sar(self.sar_test,  f_vec=f_test,  pixel_km=2.0)
+            if self.output_data == "aam":
+                self.sar_train = dataprep.create_moment_sar(self.sar_train)
+                self.sar_val = dataprep.create_moment_sar(self.sar_val)
+                self.sar_test = dataprep.create_moment_sar(self.sar_test)
+            # self.sar_anggrek = dataprep.create_moment_sar(self.sar_anggrek)
 
             # self.sar_anggrek = dataprep.create_moment_sar(self.sar_anggrek)
 
