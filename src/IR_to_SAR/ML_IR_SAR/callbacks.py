@@ -450,8 +450,8 @@ class LogValidationSamples:
         pred_valid = pred_all[valid]
 
         # Conversion en knots
-        sar_knots_flat  = sar_valid * 1.94384
-        pred_knots_flat = pred_valid * 1.94384
+        sar_knots_flat  = sar_valid
+        pred_knots_flat = pred_valid
 
         # → Seulement pour la distribution
         distdata.compare_sar_distribution(
@@ -810,6 +810,11 @@ class LogValidationSamples:
             
 
         # -------------------------
+        os.makedirs(os.path.join(self.output_dir,'predictions_denormalisees',"anggrek"),exist_ok=True)                               # (B, H, W)
+        with open(os.path.join(self.output_dir,"predictions_denormalisees","anggrek","predictions_denormalisées.pkl"),"wb") as f:
+            pkl.dump({f"{set}":[ir_den,pred_den,infos_ord]},f)
+
+
         out_root = Path(self.output_dir) / "anggrek_monitoring"
         field_dir = out_root / "field_plots"
         field_dir.mkdir(parents=True, exist_ok=True)

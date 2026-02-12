@@ -80,7 +80,7 @@ class PrepareDataSet():
                 shear_std  = train_shear.std(axis=0)    # (16,)
             keys = ["cyclone_name","cyclone_id", "sar_time", "vmax",
                 "analysis_vmax", "analysis_rmax",
-                "analysis_center_quality_flag"]
+                "analysis_center_quality_flag","coriolis"]
             good_rows, bad_rows = [], []
             good_rows_anggrek, bad_rows_anggrek = [], []
             irwin_train, irwin_val, irwin_test, irwin_anggrek= [], [], [], []
@@ -347,9 +347,14 @@ class PrepareDataSet():
         # self.sar_anggrek = np.nan_to_num(self.sar_anggrek, nan=0.0, posinf=0.0, neginf=0.0)
 
         if self.output_data == "aam":
-            self.sar_train = dataprep.create_moment_sar(self.sar_train)
-            self.sar_val = dataprep.create_moment_sar(self.sar_val)
-            self.sar_test = dataprep.create_moment_sar(self.sar_test)
+            f_train = np.array([d["coriolis"] for d in self.infos_train], dtype=np.float32)
+            f_val   = np.array([d["coriolis"] for d in self.infos_val], dtype=np.float32)
+            f_test  = np.array([d["coriolis"] for d in self.infos_test], dtype=np.float32)
+
+            self.sar_train = dataprep.create_moment_sar(self.sar_train, f_vec=f_train, pixel_km=2.0)
+            self.sar_val   = dataprep.create_moment_sar(self.sar_val,   f_vec=f_val,   pixel_km=2.0)
+            self.sar_test  = dataprep.create_moment_sar(self.sar_test,  f_vec=f_test,  pixel_km=2.0)
+
             # self.sar_anggrek = dataprep.create_moment_sar(self.sar_anggrek)
 
 

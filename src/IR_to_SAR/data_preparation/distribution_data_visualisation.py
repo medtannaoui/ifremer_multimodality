@@ -507,7 +507,7 @@ def compare_sar_distribution(sar_knots, pred_knots, output_dir, set, epoch):
         plt.hist(sar_knots, bins=60, alpha=0.5, density=False, label="True SAR", color="blue")
         plt.hist(pred_knots, bins=60, alpha=0.5, density=False, label="Predicted SAR", color="orange")
         plt.legend()
-        plt.xlabel("Wind Speed (knots)")
+        plt.xlabel("Wind Speed (m/s)")
         plt.ylabel("Count")
         plt.title(f"Global Wind Speed Distribution —_{set}")
         os.makedirs(os.path.join(output_dir, "compare_sar_distribution",set),exist_ok=True)
@@ -648,7 +648,7 @@ def compare_radial_vmax(
 def compute_mae_metric(sar_true, sar_pred, output_dir, set, epoch, plot=False):
     if set=="train":
         return None
-    
+    mask = np.isfinite(sar_true)
     mae_global = np.nanmean(np.abs(sar_pred - sar_true))
 
 
