@@ -74,7 +74,7 @@ class LogValidationSamples:
              cmap_ir="gray", cmap_sar="viridis", num_epochs=0, infos_train=None, infos_val=None, infos_test=None, 
              mask_train=None, mask_val = None,mask_test=None,
              target_dir = None,input_data="normal", output_data="sar",anggrek_test=False,conditional_model=False,log_wind=None,
-             crop_sar=False
+             crop_sar=False,irwin_channels=1
              ):
 
         self.base_dir = Path(base_dir)
@@ -110,6 +110,8 @@ class LogValidationSamples:
         self.conditional_model = conditional_model
         self.log_wind = log_wind
         self.crop_sar = crop_sar
+
+        self.irwin_channels = irwin_channels
 
         
         
@@ -674,10 +676,9 @@ class LogValidationSamples:
             batch_full_train = (ir_full_train, sar_full_train, mask_train, infos_train)
             batch_full_test = (ir_full_test, sar_full_test, mask_test, infos_test)
             
-
-            self.log_batch(model, batch_full_val, epoch, device)
             self.log_batch(model, batch_full_train, epoch, device, set="train")
-            self.log_batch(model, batch_full_test, epoch, device, set="test")
+            # self.log_batch(model, batch_full_val, epoch, device)
+            # self.log_batch(model, batch_full_test, epoch, device, set="test")
             if not  self.conditional_model : 
 
                 for ir, sar, mask, inf in dataloader[3]:

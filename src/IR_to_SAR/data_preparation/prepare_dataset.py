@@ -12,13 +12,25 @@ from importlib import reload
 import matplotlib.pyplot as plt
 import pandas as pd
 from tqdm import tqdm
+import re
+from datetime import datetime, timedelta
 import src.IR_to_SAR.data_preparation.data_preprocessing as dataprep
 from src.visualisation.utils_colormap import CMAP
 cmap_ir , cmap_sar = CMAP.cira_ir(), CMAP.cmap_sar()
 reload(dataprep)
 
 
+def shift_ir_path(ir_path: str, idx: int, step_minutes: int = 30) -> str:
+    m = re.search(r"(IR_)(\d{14})(\.nc)$", ir_path)
+    if not m:
+        raise ValueError(f"Format inattendu pour ir_path: {ir_path}")
 
+    prefix, dt_str, suffix = m.group(1), m.group(2), m.group(3)
+    dt = datetime.strptime(dt_str, "%Y%m%d%H%M%S")
+    dt_shifted = dt + timedelta(minutes=idx * step_minutes)
+
+    new_name = f"{prefix}{dt_shifted.strftime('%Y%m%d%H%M%S')}{suffix}"
+    return ir_path[:m.start()] + new_name  # garde le même dossier
 
 class PrepareDataSet():
     
@@ -37,7 +49,8 @@ class PrepareDataSet():
                   output_data = "sar",
                   conditional_model = None,
                   anggrek_test = False,
-                  log_wind=False
+                  log_wind=False,
+                  irwin_channels = 1
                  ):
         self.train_split = train_split
         self.val_split=val_split
@@ -47,12 +60,13 @@ class PrepareDataSet():
         self.input_data = input_data
         self.output_data = output_data
         self.log_wind = log_wind
+        self.irwin_channels= irwin_channels
         
 
         print("🔹 Loading data from csv ...")
         # data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_v3_split_by_year.csv")
         if not  conditional_model : 
-            data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_v3_split_by_year.csv")
+            data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_v3_split_by_year.csv")[:]
         else :
             data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_tcprimed.csv")
             data = data [~data["tcprimed_env_path"].isna()]
@@ -196,24 +210,54 @@ class PrepareDataSet():
             #anggrek cyclone
             if anggrek_test :
                 N = len(anggrek_csv)
+                indices = list(range(-(self.irwin_channels // 2), (self.irwin_channels // 2) + 1))
                 pbar = tqdm(total=N, desc="Checking ANGGREK files", unit="row")
-                for i, row in anggrek_csv.iterrows():
-                    try:
-                        with xr.open_dataset(row["ir_path"]) as ir_ds:
-                            if "IR" not in ir_ds:
-                                raise KeyError("Missing IR")
-                            irwin_anggrek.append(ir_ds["IR"].values)
-                            
-                        infos_anggrek.append({"sid":row["sid"],"date":row["date"],"vmax":row["wind_speed (m/s)"],"lat":row["lat"],"lon":row["lon"],
-                                              "analysis_vmax_cyclobs":row["analysis_vmax_cyclobs"],"vmax_cyclobs":row["vmax_cyclobs"],"ibtracs_vmax":row["ibtracs_vmax"],"satcon_vmax":row["satcon_vmax"]})
+                for row_idx, row in anggrek_csv.iterrows():
+                    ir_path = row["ir_path"]
+                    paths = [shift_ir_path(ir_path, idx=i, step_minutes=30) for i in indices]
 
-                        good_rows_anggrek.append(i)
+                    sample_imgs = []
+                    ok = True
 
-                    except Exception as e:
-                        bad_rows_anggrek.append(i)
+                    for path in paths:
+                        try:
+                            with xr.open_dataset(path) as ir_ds:
+                                if "IR" not in ir_ds:
+                                    ok = False
+                                    break
+                                arr = np.squeeze(ir_ds["IR"].values)
+                                sample_imgs.append(arr)
+                            good_rows_anggrek.append(row_idx)
+                        except FileNotFoundError:
+                            ok = False
+                            bad_rows_anggrek.append(row_idx)
+                            break
+
+                    # On n'ajoute le sample que si on a bien C canaux
+                    if ok and len(sample_imgs) == len(indices):
+                        # empile en (C, H, W)
+                        irwin_anggrek.append(np.stack(sample_imgs, axis=0))
+
+                        infos_anggrek.append({
+                            "sid": row["sid"],
+                            "date": row["date"],
+                            "vmax": row["wind_speed (m/s)"],
+                            "lat": row["lat"],
+                            "lon": row["lon"],
+                            "analysis_vmax_cyclobs": row["analysis_vmax_cyclobs"],
+                            "vmax_cyclobs": row["vmax_cyclobs"],
+                            "ibtracs_vmax": row["ibtracs_vmax"],
+                            "satcon_vmax": row["satcon_vmax"],
+                        })
+
+                        
+
+                
 
                     pbar.set_postfix(good=len(good_rows), bad=len(bad_rows))
                     pbar.update(1)
+                # Final: (N, C, H, W)
+                irwin_anggrek = np.stack(irwin_anggrek, axis=0)
                 pbar.close()
                          
             #Filter dataframe to only good indices
@@ -249,9 +293,9 @@ class PrepareDataSet():
                     image_channels_anggrek.append(irwin_anggrek)
 
         elif self.input_data == "normal":
-            image_channels_train.append(irwin_train[:,4,:,:])  
-            image_channels_val.append(irwin_val[:,4,:,:])  
-            image_channels_test.append(irwin_test[:,4,:,:])  
+            image_channels_train.append(irwin_train[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:])  
+            image_channels_val.append(irwin_val[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:])  
+            image_channels_test.append(irwin_test[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:])  
             if anggrek_test:
                 image_channels_anggrek.append(irwin_anggrek)   if anggrek_test else None
 
@@ -282,17 +326,18 @@ class PrepareDataSet():
                 image_channels_anggrek.append(irwin_anggrek) 
 
         #stack the pictures list
-        self.X_train = np.stack(image_channels_train, axis=1)  
-        self.X_val = np.stack(image_channels_val, axis=1)
-        self.X_test = np.stack(image_channels_test, axis=1)
+        self.X_train = np.concatenate(image_channels_train, axis=1)  
+        self.X_val = np.concatenate(image_channels_val, axis=1)
+        self.X_test = np.concatenate(image_channels_test, axis=1)
         if anggrek_test:
-            self.X_anggrek = np.stack(image_channels_anggrek, axis=1)
+            self.X_anggrek = irwin_anggrek
 
 
         print("Start Reshaping Data ........")
+        print("sabaaaaaaaaaaaaaaaaaaaaaah",self.X_train.shape,self.X_anggrek.shape)
         N, C, H, W = self.X_train.shape
         if anggrek_test:
-            self.X_anggrek = self.X_anggrek.squeeze(2)
+            self.X_anggrek = self.X_anggrek
             
             N,C,h_anggrek,W_anggrek= self.X_anggrek.shape
         N,H_sar,W_sar = self.sar_train.shape
