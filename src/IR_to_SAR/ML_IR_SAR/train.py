@@ -314,7 +314,7 @@ def main(cfg: IR_SAR_Config,test=False):
     fabric = L.Fabric(
         accelerator=cfg.accelerator,
         devices= cfg.devices,
-        strategy= "auto",
+        strategy= "ddp",
         callbacks=[
             EarlyStopping(patience=cfg.early_stop_patience, min_delta=cfg.early_stop_delta),
             ModelCheckpoint(cfg.save_dir, target_dir= target_dir),
