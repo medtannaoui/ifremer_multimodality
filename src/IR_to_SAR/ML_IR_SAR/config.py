@@ -47,6 +47,7 @@ class IR_SAR_Config:
     log_wind : bool
     crop_sar : bool
     irwin_channels : int
+    regrid_ir : bool
     @staticmethod
     def from_yaml(path: str):
         with open(path, "r") as file:

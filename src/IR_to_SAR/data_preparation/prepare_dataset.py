@@ -50,7 +50,8 @@ class PrepareDataSet():
                   conditional_model = None,
                   anggrek_test = False,
                   log_wind=False,
-                  irwin_channels = 1
+                  irwin_channels = 1,
+                  regrid_ir = False
                  ):
         self.train_split = train_split
         self.val_split=val_split
@@ -61,12 +62,16 @@ class PrepareDataSet():
         self.output_data = output_data
         self.log_wind = log_wind
         self.irwin_channels= irwin_channels
+        self.regrid_ir = regrid_ir
         
 
         print("🔹 Loading data from csv ...")
         # data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_v3_split_by_year.csv")
         if not  conditional_model : 
-            data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_v3_split_by_year.csv")[:]
+            if not self.regrid_ir:
+                data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_v3_split_by_year.csv")[:]
+            else : 
+                data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/tcva_matched_sargeo_4km_resolution.csv")[:10]
         else :
             data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_tcprimed.csv")
             data = data [~data["tcprimed_env_path"].isna()]
@@ -335,6 +340,15 @@ class PrepareDataSet():
 
         print("Start Reshaping Data ........")
         print("sabaaaaaaaaaaaaaaaaaaaaaah",self.X_train.shape,self.X_anggrek.shape)
+
+        if self.regrid_ir:
+            print("start regriding infrared data to 4km resolution : ")
+            self.X_train = dataprep.regrid_batch_by_resolution(self.X_train,2,4)
+            self.X_anggrek = dataprep.regrid_batch_by_resolution(self.X_anggrek,2,4)
+            self.X_test = dataprep.regrid_batch_by_resolution(self.X_test,2,4)
+            self.X_val = dataprep.regrid_batch_by_resolution(self.X_val,2,4)
+            print("shape with 4 km resolution is ",self.X_train.shape)
+
         N, C, H, W = self.X_train.shape
         if anggrek_test:
             self.X_anggrek = self.X_anggrek

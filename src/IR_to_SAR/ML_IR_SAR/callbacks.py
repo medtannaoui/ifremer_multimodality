@@ -677,8 +677,8 @@ class LogValidationSamples:
             batch_full_test = (ir_full_test, sar_full_test, mask_test, infos_test)
             
             self.log_batch(model, batch_full_train, epoch, device, set="train")
-            self.log_batch(model, batch_full_val, epoch, device)
-            self.log_batch(model, batch_full_test, epoch, device, set="test")
+            # self.log_batch(model, batch_full_val, epoch, device)
+            # self.log_batch(model, batch_full_test, epoch, device, set="test")
             if not  self.conditional_model : 
 
                 for ir, sar, mask, inf in dataloader[3]:
@@ -884,11 +884,11 @@ class LogValidationSamples:
                     x = x.unsqueeze(0).unsqueeze(0)
 
                 H, W = x.shape[-2:]
-                new_H = int(H * 2 / 3)
-                new_W = int(W * 2 / 3)
+                new_H = int(H * 4 / 3)
+                new_W = int(W * 4 / 3)
 
                 # CPU interpolation
-                x3 = F.interpolate(x, size=(new_H, new_W), mode="bilinear", align_corners=False)
+                x3 = F.interpolate(x, size=(new_H, new_W), mode="nearest", align_corners=False)
 
                 # back to numpy (HxW)
                 resamples.append(x3.squeeze(0).squeeze(0).cpu().numpy())

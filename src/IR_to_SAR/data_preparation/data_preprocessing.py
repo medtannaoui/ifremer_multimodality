@@ -1054,6 +1054,39 @@ def visualize_dataset_statistics(dictio, target_dir, mask=None):
 
     print(f"📊 Dataset visualization saved to: {save_path}")
 
+def regrid_batch_by_resolution(x, in_resolution, out_resolution):
+    """
+    x : numpy array of shape (N, C, H, W)
+    in_resolution : km/pixel (ex: 2)
+    out_resolution : km/pixel (ex: 4)
+
+    Returns:
+        Regridded array with same spatial extent.
+    """
+
+    scale = out_resolution / in_resolution  # ex: 4/2 = 2
+
+    if np.isclose(scale, 1.0):
+        return x
+
+    if scale < 1:
+        raise ValueError("This implementation handles downsampling only (out_resolution > in_resolution).")
+
+    factor = int(np.round(scale))
+
+    N, C, H, W = x.shape
+
+    # Crop to multiple of factor
+    Hc = (H // factor) * factor
+    Wc = (W // factor) * factor
+    x = x[:, :, :Hc, :Wc]
+
+    # Block average pooling
+    x = x.reshape(N, C, Hc // factor, factor, Wc // factor, factor)
+    x = x.mean(axis=(3, 5))
+
+    return x
+
 
     
 if __name__ =="__main__":
