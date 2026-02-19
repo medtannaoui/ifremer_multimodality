@@ -677,8 +677,8 @@ class LogValidationSamples:
             batch_full_test = (ir_full_test, sar_full_test, mask_test, infos_test)
             
             self.log_batch(model, batch_full_train, epoch, device, set="train")
-            # self.log_batch(model, batch_full_val, epoch, device)
-            # self.log_batch(model, batch_full_test, epoch, device, set="test")
+            self.log_batch(model, batch_full_val, epoch, device)
+            self.log_batch(model, batch_full_test, epoch, device, set="test")
             if not  self.conditional_model : 
 
                 for ir, sar, mask, inf in dataloader[3]:
