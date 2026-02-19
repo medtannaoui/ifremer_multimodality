@@ -89,13 +89,13 @@ def convert_sar_to_xy(sar_file, i, row, sargeo_df, output_dir, max_r=300, dxy=2,
     # Mettre à jour ton CSVa ton avis 
     current_index = i
     sargeo_df.at[current_index, "sar_xy"] = out_file
-    sargeo_df.to_csv("excels/SARGEO_SAR_v5.csv", index=False)
+    sargeo_df.to_csv("excels/SARGEO_SAR_4_500.csv", index=False)
 
     print(f"✅ Fichier reprojeté sauvegardé : {out_file}")
 
 
 def main(dxy=2,max_r=300,center="storm"):
-    output_dir = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_3km"
+    output_dir = "/scale/user/mtannaou/alternance/sar_aeqd_4_500"
     sargeo = pd.read_csv("excels/SARGEO_SAR_v00r00_09_janvier_v1.csv")
 
     # test only for al122024
@@ -113,4 +113,4 @@ def main(dxy=2,max_r=300,center="storm"):
 
 
 if __name__ == "__main__":
-    main(3,500, center="storm")
+    main(4,500, center="storm")
