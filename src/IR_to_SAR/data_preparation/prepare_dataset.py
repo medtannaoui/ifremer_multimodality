@@ -71,7 +71,7 @@ class PrepareDataSet():
             if not self.regrid_ir:
                 data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_v3_split_by_year.csv")[:]
             else : 
-                data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/tcva_matched_sargeo_4km_resolution.csv")[:10]
+                data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/tcva_matched_sargeo_4km_resolution.csv")[:]
         else :
             data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_tcprimed.csv")
             data = data [~data["tcprimed_env_path"].isna()]
