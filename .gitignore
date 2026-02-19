@@ -25,7 +25,7 @@ __pycache__/
 *.pkl
 *.npz
 *.npy
-
+*.vscode
 # Dossiers internes à ignorer
 donnees_sar/
 donnees_sar_changes/
