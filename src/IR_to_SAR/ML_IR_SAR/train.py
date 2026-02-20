@@ -344,7 +344,8 @@ def main(cfg: IR_SAR_Config,test=False):
                 anggrek_test=cfg.anggrek_test,
                 log_wind=cfg.log_wind,
                 crop_sar = cfg.crop_sar,
-                irwin_channels=cfg.irwin_channels
+                irwin_channels=cfg.irwin_channels,
+                regrid_ir=cfg.regrid_ir
             
                 
             )

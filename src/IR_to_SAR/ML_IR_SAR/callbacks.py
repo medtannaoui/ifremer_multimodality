@@ -74,7 +74,7 @@ class LogValidationSamples:
              cmap_ir="gray", cmap_sar="viridis", num_epochs=0, infos_train=None, infos_val=None, infos_test=None, 
              mask_train=None, mask_val = None,mask_test=None,
              target_dir = None,input_data="normal", output_data="sar",anggrek_test=False,conditional_model=False,log_wind=None,
-             crop_sar=False,irwin_channels=1
+             crop_sar=False,irwin_channels=1,regrid_ir=False
              ):
 
         self.base_dir = Path(base_dir)
@@ -112,6 +112,7 @@ class LogValidationSamples:
         self.crop_sar = crop_sar
 
         self.irwin_channels = irwin_channels
+        self.regrid_ir = regrid_ir
 
         
         
@@ -884,8 +885,9 @@ class LogValidationSamples:
                     x = x.unsqueeze(0).unsqueeze(0)
 
                 H, W = x.shape[-2:]
-                new_H = int(H * 4 / 3)
-                new_W = int(W * 4 / 3)
+                in_res = 4 if self.regrid_ir else 2
+                new_H = int(H * in_res / 3) 
+                new_W = int(W * in_res / 3)
 
                 # CPU interpolation
                 x3 = F.interpolate(x, size=(new_H, new_W), mode="bilinear", align_corners=False)

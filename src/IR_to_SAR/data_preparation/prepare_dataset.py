@@ -91,7 +91,7 @@ class PrepareDataSet():
                 dir_cols = [f"shear_direction_{i}" for i in range(1, 9)]
                 storm_cols = ["storm_speed","storm_speed_zonal_component","storm_speed_meridional_component"]
                 cyclone_phase_space_thermal_wind = [f"cyclone_phase_space_thermal_wind_{i}" for i in range(1,3)]
-                shear_cols = cyclone_phase_space_thermal_wind
+                shear_cols = dir_cols+mag_cols
                 train_shear = data[data["split"]=="train"][shear_cols].to_numpy(dtype=np.float32)
                 train_shear = np.nan_to_num(train_shear, nan=0.0)
 
