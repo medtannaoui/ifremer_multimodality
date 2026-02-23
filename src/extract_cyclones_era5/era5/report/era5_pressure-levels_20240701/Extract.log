@@ -1,0 +1,4 @@
+INFO:extract_cyclones:Processing /home/ref-ecmwf/ERA5T/2024/07/era5_pressure-levels_20240701.nc...
+getfattr: /home/ref-ecmwf/ERA5T/2024/07/era5_pressure-levels_20240701.nc: Operation not supported
+INFO:extract_cyclones:Writing file ERA5_20240701T000000_20240701T230000_al022024.nc
+INFO:extract_cyclones:Writing file ERA5_20240701T000000_20240701T230000_al032024.nc
