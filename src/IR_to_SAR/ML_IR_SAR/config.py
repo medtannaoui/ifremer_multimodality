@@ -48,6 +48,7 @@ class IR_SAR_Config:
     crop_sar : bool
     irwin_channels : int
     regrid_ir : bool
+    ir_smoothing : bool
     @staticmethod
     def from_yaml(path: str):
         with open(path, "r") as file:

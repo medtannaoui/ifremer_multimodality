@@ -51,7 +51,8 @@ class PrepareDataSet():
                   anggrek_test = False,
                   log_wind=False,
                   irwin_channels = 1,
-                  regrid_ir = False
+                  regrid_ir = False,
+                  ir_smoothing = False
                  ):
         self.train_split = train_split
         self.val_split=val_split
@@ -63,6 +64,7 @@ class PrepareDataSet():
         self.log_wind = log_wind
         self.irwin_channels= irwin_channels
         self.regrid_ir = regrid_ir
+        self.ir_smoothing = ir_smoothing
         
 
         print("🔹 Loading data from csv ...")
@@ -302,7 +304,7 @@ class PrepareDataSet():
             image_channels_val.append(irwin_val[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:])  
             image_channels_test.append(irwin_test[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:])  
             if anggrek_test:
-                image_channels_anggrek.append(irwin_anggrek)   if anggrek_test else None
+                image_channels_anggrek.append(irwin_anggrek) if anggrek_test else None
 
         elif self.input_data == "normal+gradients":
             image_channels_train.append(irwin_train[:,4,:,:])
@@ -339,7 +341,6 @@ class PrepareDataSet():
 
 
         print("Start Reshaping Data ........")
-        print("sabaaaaaaaaaaaaaaaaaaaaaah",self.X_train.shape,self.X_anggrek.shape)
 
         if self.regrid_ir:
             print("start regriding infrared data to 4km resolution : ")
@@ -355,11 +356,11 @@ class PrepareDataSet():
             
             N,C,h_anggrek,W_anggrek= self.X_anggrek.shape
         N,H_sar,W_sar = self.sar_train.shape
-        self.X_train = self.X_train[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2]
-        self.X_val = self.X_val[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2]
-        self.X_test = self.X_test[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2]
+        self.X_train = self.X_train[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2] if not self.ir_smoothing else dataprep.build_irwin_channels(self.X_train[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2],9)
+        self.X_val = self.X_val[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2] if not self.ir_smoothing else dataprep.build_irwin_channels(self.X_val[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2],9)
+        self.X_test = self.X_test[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2] if not self.ir_smoothing else dataprep.build_irwin_channels(self.X_test[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2],9)
         if anggrek_test : 
-            self.X_anggrek = self.X_anggrek[:, :, h_anggrek//2-size//2:h_anggrek//2+size//2, W_anggrek//2-size//2:W_anggrek//2+size//2]
+            self.X_anggrek = self.X_anggrek[:, :, h_anggrek//2-size//2:h_anggrek//2+size//2, W_anggrek//2-size//2:W_anggrek//2+size//2] if not self.ir_smoothing else dataprep.build_irwin_channels(self.X_anggrek[:, :, h_anggrek//2-size//2:h_anggrek//2+size//2, W_anggrek//2-size//2:W_anggrek//2+size//2],9)
 
 
         self.sar_train = self.sar_train[:, H_sar//2-size//2:H_sar//2+size//2, W_sar//2-size//2:W_sar//2+size//2]

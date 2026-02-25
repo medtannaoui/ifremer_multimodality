@@ -44,8 +44,13 @@ scat_paths=(
           ) # multiple paths
 era5_paths=(
   "/home/ref-ecmwf/ERA5T"
-  #"/home/ref-ecmwf/ERA5/2023"
-  #"/home/ref-ecmwf/ERA5/2024"
+  "/home/ref-ecmwf/ERA5/2023"
+  "/home/ref-ecmwf/ERA5/2024"
+  "/home/ref-ecmwf/ERA5/2022"
+  "/home/ref-ecmwf/ERA5/2021"
+  "/home/ref-ecmwf/ERA5/2020"
+  "/home/ref-ecmwf/ERA5/2019"
+  "/home/ref-ecmwf/ERA5/2018"
   ) # ERA5T single levels instantaneous data
 
 if [ -z "$smos" ] && [ -z "$smap" ] && [ -z "$scat" ] && [ -z "$era5" ] ; then
@@ -80,8 +85,14 @@ files_to_process=""
 # Keeping only files that are in the requested time interval for SMAP
 for p in "${inpaths[@]}"; do
   #echo "$p"
+  if [[ "$p" == *"ERA5T"* ]]; then
+    pattern="*single-levels_inst*.nc"
+  else
+    # Sinon (ERA5 2018–2024) → pattern copernicus
+    pattern="*copernicus*.nc"
+  fi
 
-  for file in "$p"/**/*.nc; do
+  for file in "$p"/**/$pattern; do
     #echo " $file"
 
       #echo "################# debug $file $inpath/**/*.nc"
@@ -110,15 +121,24 @@ for p in "${inpaths[@]}"; do
       fi
       secDt=$(echo "$file" | awk -F_ '{print $5}' | xargs -IDT date -d DT +%s 2>/dev/null)
     elif [ "$era5" == "True" ] ; then
-    # example filename: /home/ref-ecmwf/ERA5/2023/12/era_5-copernicus__20231231.nc
-      # secDt=$(basename "$file" | awk -F_ '{print $4}' | sed 's/.nc$//' | xargs -IDT date -d DT +%s 2>/dev/null)
-      secDt=$(basename "$file" \
-                  | awk -F_ '{d=$NF; sub(/\.nc$/,"",d); print d}' \
-                  | xargs -IDT date -d DT +%s 2>/dev/null)
-      if [[ -z "$secDt" ]]; then
-        echo "Invalid date in filename for $file → skipping"
-        continue
+      filename=$(basename "$file")
+
+      # extraire le dernier bloc numérique avant .nc
+      date_str=$(echo "$filename" | sed -E 's/.*_([0-9]{8})\.nc$/\1/')
+
+      if [[ -z "$date_str" ]]; then
+          echo "Invalid date in filename for $file → skipping"
+          continue
       fi
+
+      # convertir en secondes UNIX
+      secDt=$(date -d "$date_str" +%s 2>/dev/null)
+
+      if [[ -z "$secDt" ]]; then
+          echo "Cannot parse date $date_str in $file → skipping"
+          continue
+      fi
+    
     elif [ "$scat" == "True" ] ; then
       secDt=$(basename "$file" | awk -F_ '{print $2}' | xargs -IDT date -d DT +%s 2>/dev/null)
       if [[ -z "$secDt" ]]; then

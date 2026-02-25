@@ -68,7 +68,5 @@ if __name__ == "__main__":
                      attrs=attrs,
                      attrs_to_del=attrs_to_del,
                      attrs_rename=attrs_rename,
-                     wind_cols=["u", "v"], time_col="valid_time",
-                     lat_col="latitude",
-                     lon_col="longitude", pass_width=2000,
+                     wind_cols=["u10", "v10"], pass_width=2000,
                      filename_format="ERA5_<start_date>_<stop_date>_<sid>.nc")

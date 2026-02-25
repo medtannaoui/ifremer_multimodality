@@ -1088,6 +1088,24 @@ def regrid_batch_by_resolution(x, in_resolution, out_resolution):
     return x
 
 
+def build_irwin_channels(irwin_train, n_channels):
     
+    assert n_channels % 2 == 1, "Number of channels must be odd"
+    half = n_channels // 2
+    N,C,W,H = irwin_train.shape
+    output = []
+    for ir in irwin_train:
+        left_1 = np.nanmean(ir[0:4,:,:],axis=0)
+        left_2 = np.nanmean(ir[2:4,:,:],axis=0)
+        center = ir[4,:,:]
+        right_1 = np.nanmean(ir[4:6,:,:],axis=0)
+        right_2 = np.nanmean(ir[4:,:,:],axis=0)
+        output.append([left_2,left_1,center,right_1,right_2])
+        # print(np.array(left_2).shape,np.array(left_1).shape,np.array(center).shape,np.array(right_1).shape,np.array(right_2).shape)
+    return np.array(output)
+
+
+
+
 if __name__ =="__main__":
     create_coloc_pkl()

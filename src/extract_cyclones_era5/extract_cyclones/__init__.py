@@ -865,7 +865,7 @@ def new_set_metadata(dataset, wind_col_name, time_col_name, file_date, attrs, at
     return dataset, min_date, max_date, year, doy, resolution_km
 
 def process_file_era5(file, output_path, extract_date_func, attrs, var_to_del, wind_cols,
-                 time_col, lat_col, lon_col, filename_format, pass_width, pass_col=None, attrs_to_del=[],
+                 filename_format, pass_width, pass_col=None, attrs_to_del=[],
                  attrs_rename={},
                  var_attr_edit={},
                  specfic_func=None):
@@ -931,6 +931,9 @@ def process_file_era5(file, output_path, extract_date_func, attrs, var_to_del, w
         LISTE = ["d2m", "t2m", "msl", "sst", "sp", "u100", "v100", "hcc", "lcc", "tcc", "tclw", "blh", "tcw", "tcwv", "iews", "inss", "skt", "rsn", "sd", "stl1", "stl2", "stl3", "stl4", "swvl1", "swvl2", "swvl3", "swvl4", "zust", "z", "lsm", "siconc"]
         to_drop = [v for v in LISTE if v in dataset.variables]
         dataset = dataset.drop_vars(to_drop)
+        lon_col = "longitude" if "longitude" in dataset.coords else "longitude025"
+        lat_col = "latitude" if "latitude" in dataset.coords else "latitude025"
+        time_col = "time" if "time" in dataset.coords else "valid_time"
         #dataset = df.drop_dims(["longitude050", "latitude050"])
         df = dataset.to_dataframe()
         # Not processing file if it contains only NaNs

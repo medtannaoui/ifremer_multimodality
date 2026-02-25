@@ -45,7 +45,10 @@ unetsargeo
 old_experiments
 UNETSARGEO
 notebooks
+era5
 *sar_aeqd*
+*era5_single_levels*
+
 
 # ==========================
 #   TEMPORARY & LOG FILES
