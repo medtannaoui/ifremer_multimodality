@@ -929,12 +929,13 @@ def process_file_era5(file, output_path, extract_date_func, attrs, var_to_del, w
         # df = dataset.drop_vars(["d2m", "t2m", "msl", "sst", "sp", "u100", "v100", "hcc", "lcc", "tcc", "tclw", "blh", "tcw", "tcwv", "iews", "inss", "skt", "rsn", "sd", "stl1", "stl2", "stl3", "stl4", "swvl1", "swvl2", "swvl3", "swvl4", "zust", "z", "lsm", "siconc"])
         #["u100", "v100", "d2m", "t2m", "blh", "hcc", "lcc", "mdww", "mpww", "msl", "mwd", "p140122", "p1ps", "mwp", "pp1d", "r", "siconc", "sst", "swh", "shww", "p140121", "slhf", "ssr", "str", "sp", "sshf", "tcc", "tclw", "tcw", "tcwv", "tp"])
         LISTE = ["d2m", "t2m", "msl", "sst", "sp", "u100", "v100", "hcc", "lcc", "tcc", "tclw", "blh", "tcw", "tcwv", "iews", "inss", "skt", "rsn", "sd", "stl1", "stl2", "stl3", "stl4", "swvl1", "swvl2", "swvl3", "swvl4", "zust", "z", "lsm", "siconc"]
-        to_drop = [v for v in LISTE if v in dataset.variables]
-        dataset = dataset.drop_vars(to_drop)
+        to_drop = [v for v in LISTE if v not in ["v10", "u10"]]
+        dataset =   dataset[["v10", "u10"]]  #dataset.drop_vars(to_drop)
         lon_col = "longitude" if "longitude" in dataset.coords else "longitude025"
         lat_col = "latitude" if "latitude" in dataset.coords else "latitude025"
         time_col = "time" if "time" in dataset.coords else "valid_time"
         #dataset = df.drop_dims(["longitude050", "latitude050"])
+
         df = dataset.to_dataframe()
         # Not processing file if it contains only NaNs
         if not df[wind_cols[0]].isnull().all():

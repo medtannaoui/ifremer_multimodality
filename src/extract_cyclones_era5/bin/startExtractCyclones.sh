@@ -43,7 +43,7 @@ scat_paths=(
 
           ) # multiple paths
 era5_paths=(
-  "/home/ref-ecmwf/ERA5T"
+  # "/home/ref-ecmwf/ERA5T"
   "/home/ref-ecmwf/ERA5/2023"
   "/home/ref-ecmwf/ERA5/2024"
   "/home/ref-ecmwf/ERA5/2022"
