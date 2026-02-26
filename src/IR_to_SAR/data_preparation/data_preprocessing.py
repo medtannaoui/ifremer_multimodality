@@ -1095,13 +1095,15 @@ def build_irwin_channels(irwin_train, n_channels):
     N,C,W,H = irwin_train.shape
     output = []
     for ir in irwin_train:
-        left_1 = np.nanmean(ir[0:4,:,:],axis=0)
-        left_2 = np.nanmean(ir[2:4,:,:],axis=0)
-        center = ir[4,:,:]
-        right_1 = np.nanmean(ir[4:6,:,:],axis=0)
-        right_2 = np.nanmean(ir[4:,:,:],axis=0)
-        output.append([left_2,left_1,center,right_1,right_2])
-        # print(np.array(left_2).shape,np.array(left_1).shape,np.array(center).shape,np.array(right_1).shape,np.array(right_2).shape)
+        left_1 = np.nanmean(ir[0:3,:,:],axis=0)
+        left_2 = np.nanmean(ir[1:4,:,:],axis=0)
+        left_3 = np.nanmean(ir[2:5,:,:],axis=0)
+        center = np.nanmean(ir[3:6,:,:],axis=0)
+        right_1 = np.nanmean(ir[4:7,:,:],axis=0)
+        right_2 = np.nanmean(ir[5:8,:,:],axis=0)
+        right_3 = np.nanmean(ir[6:,:,:],axis=0)
+        output.append([left_3,left_2,left_1,left_3,right_1,right_2,right_3])
+        # print(np.array(left_2).shape,np.array(left_1).shape,np.array(left_3).shape,np.array(right_1).shape,np.array(right_2).shape)
     return np.array(output)
 
 
