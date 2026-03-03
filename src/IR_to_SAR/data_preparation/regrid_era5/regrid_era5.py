@@ -515,7 +515,6 @@ def write_regridded_files_era5(regridded, sid, output_path):
 def regrid_and_write_era5_file(filename, output_path, grid_size_km=300, resolution_km=2, sar_path=None):
     try:
         regridded, sid = regrid_one_file_era5(filename, grid_size_km=grid_size_km, resolution_km=resolution_km,sar_path=sar_path)
-        print(sid,len(regridded))
         return regridded, sid
         # if regridded is not None:
         #     write_regridded_files_era5(regridded, sid, output_path)
