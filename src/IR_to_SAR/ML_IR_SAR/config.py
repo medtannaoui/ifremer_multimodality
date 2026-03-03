@@ -49,6 +49,7 @@ class IR_SAR_Config:
     irwin_channels : int
     regrid_ir : bool
     ir_smoothing : bool
+    add_era5 : bool
     @staticmethod
     def from_yaml(path: str):
         with open(path, "r") as file:

@@ -903,6 +903,7 @@ class LogValidationSamples:
         analysis_vmax_cyclobs = np.array([d.get("analysis_vmax_cyclobs", np.nan) for d in infos_ord], dtype=float)
         ibtracs_vmax = np.array([d.get("ibtracs_vmax", np.nan) for d in infos_ord], dtype=float)
         satcon_vmax  = np.array([d.get("satcon_vmax", np.nan) for d in infos_ord], dtype=float)
+        era5_vmaxs = np.array([d.get("era5_vmax", np.nan) for d in infos_ord], dtype=float)
 
         pred_vmax = np.nanmax(pred_denorm_3m.reshape(len(pred_den), -1), axis=1)
         pred_vmax_2km = np.nanmax(pred_den.reshape(len(pred_den), -1), axis=1)
@@ -914,6 +915,7 @@ class LogValidationSamples:
         ax.plot(time_parsed, ibtracs_vmax, color="black", linewidth=2, label="IBTrACS (Best Track)")
         ax.plot(time_parsed, vmax, color="red", linewidth=2, label="ATCF")
         ax.plot(time_parsed, satcon_vmax, color="blue", linewidth=2, label="SATCON")
+        ax.plot(time_parsed, era5_vmaxs, color="orange", linewidth=2, label="ERA5")
 
         ax.plot(time_parsed, pred_vmax, color="green", linewidth=2, label="UNET Res 3 km")
         ax.plot(time_parsed, pred_vmax_2km, color="magenta", linewidth=2, label="UNET Res 2 km")

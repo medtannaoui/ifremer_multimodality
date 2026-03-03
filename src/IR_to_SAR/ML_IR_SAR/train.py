@@ -83,14 +83,14 @@ class IRSARDataset(Dataset):
     """
     def __init__(self,test=False,size=256, norm = "z_score", barycenter = "no" ,augmentation = False, drop_nan_100 = True,input_channels=None,
                  data_path=None,train_split=None,val_split=None,test_split=None,target_dir = None, input_data="norm", output_data="sar",
-                 conditional_model=None,anggrek_test = False,log_wind=None,irwin_channels=1,regrid_ir=False,ir_smoothing=False):
+                 conditional_model=None,anggrek_test = False,log_wind=None,irwin_channels=1,regrid_ir=False,ir_smoothing=False,add_era5=False):
         self.norm = norm
         
         dataset = prep_dataset.PrepareDataSet(size=size, norm= norm, barycenter= barycenter, drop_nan_100=drop_nan_100,input_channels=input_channels,
                                               pkl_file=data_path,train_split=train_split,val_split=val_split,test_split=test_split,
                                               augmentation=augmentation,target_dir = target_dir, input_data=input_data, output_data=output_data,
                                               conditional_model=conditional_model,anggrek_test=anggrek_test,log_wind=log_wind,irwin_channels=irwin_channels,
-                                              regrid_ir=regrid_ir,ir_smoothing=ir_smoothing)
+                                              regrid_ir=regrid_ir,ir_smoothing=ir_smoothing,add_era5=add_era5)
          
         self.dataset = dataset     
         print("Data preparation finished")
@@ -295,7 +295,7 @@ def main(cfg: IR_SAR_Config,test=False):
                              train_split=cfg.train_split,val_split=cfg.val_split,test_split=cfg.test_split,
                              target_dir = target_dir,augmentation=cfg.augmentation,input_data=cfg.input_data,output_data=cfg.output_data,
                              conditional_model = cfg.conditional_model,anggrek_test=cfg.anggrek_test,log_wind=cfg.log_wind,irwin_channels=cfg.irwin_channels,
-                             regrid_ir=cfg.regrid_ir,ir_smoothing=cfg.ir_smoothing)
+                             regrid_ir=cfg.regrid_ir,ir_smoothing=cfg.ir_smoothing,add_era5=cfg.add_era5)
     # X_all, sar_all = full_data.dataset.X, full_data.dataset.sar
 
     

@@ -13,11 +13,16 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from tqdm import tqdm
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import src.IR_to_SAR.data_preparation.data_preprocessing as dataprep
 from src.visualisation.utils_colormap import CMAP
+import src.IR_to_SAR.data_preparation.regrid_era5.regrid_era5 as regrid_colocs
 cmap_ir , cmap_sar = CMAP.cira_ir(), CMAP.cmap_sar()
 reload(dataprep)
+
+era5_path = "/scale/user/mtannaou/alternance/src/extract_cyclones_era5/era5_single_levels"
+janvier,mars,mai,juillet,aout,octobre,decembre = np.arange(1,32,1), np.arange(1,32,1), np.arange(1,32,1), np.arange(1,32,1), np.arange(1,32,1), np.arange(1,32,1), np.arange(1,32,1)
+avril,juin,septembre,novembre = np.arange(1,31,1), np.arange(1,31,1), np.arange(1,31,1), np.arange(1,31,1)
 
 
 def shift_ir_path(ir_path: str, idx: int, step_minutes: int = 30) -> str:
@@ -52,7 +57,8 @@ class PrepareDataSet():
                   log_wind=False,
                   irwin_channels = 1,
                   regrid_ir = False,
-                  ir_smoothing = False
+                  ir_smoothing = False,
+                  add_era5=False
                  ):
         self.train_split = train_split
         self.val_split=val_split
@@ -65,6 +71,7 @@ class PrepareDataSet():
         self.irwin_channels= irwin_channels
         self.regrid_ir = regrid_ir
         self.ir_smoothing = ir_smoothing
+        self.add_era5 = add_era5
         
 
         print("🔹 Loading data from csv ...")
@@ -107,6 +114,7 @@ class PrepareDataSet():
             irwin_train, irwin_val, irwin_test, irwin_anggrek= [], [], [], []
             sar_train, sar_val, sar_test, sar_anggrek = [], [], [], []
             infos_train, infos_val, infos_test, infos_anggrek = [], [], [], []
+            era5_train, era5_val, era5_test = [], [], []
 
             N = len(data[data["split"]=="train"])
             pbar = tqdm(total=N, desc="Checking train files", unit="row")
@@ -121,6 +129,31 @@ class PrepareDataSet():
                             raise KeyError("Missing owiWindSpeed")
                         sar_train.append(ds_aeqd["owiWindSpeed"].values)
                         irwin_train.append(sargeo["IRWIN"].values)
+                        if self.add_era5:
+                            sar_path = row["sar_aeqd_path"]
+                            list_sar_path = [sar_path]
+                            cyclone_id = row["cyclone_id"]
+                            date = str(sar_path.split("/")[-1].split("-")[5])
+                            year = date[0:4]; month = date[4:6];day = date[6:8]
+                            hour = date[9:11]; minute = date[11:13]
+                            year_path = os.path.join(era5_path, str(year))
+                            fevrier = np.arange(1,29,1) if int(year)%4!=0 else np.arange(1,30,1)
+                            months = [janvier,fevrier,mars,avril,mai,juin,juillet, aout, septembre, octobre, novembre, decembre]
+                            ndays = 0
+                            for i in range(int(month)-1):
+                                ndays += len(months[i])
+                            ndays += int(day)
+                            ndays_str= "0"+str(ndays) if len(str(ndays)) < 3 else str(ndays)
+                            dayera5_path = os.path.join(year_path, ndays_str)
+                            nc_path = ""
+                            for nc_file in os.listdir(dayera5_path):
+                                if cyclone_id in nc_file:
+                                    nc_path = os.path.join(dayera5_path, nc_file)
+                                    break
+                            reg_era5 = regrid_colocs.regrid_files_era5([nc_path], "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_preparation/regrid_era5/regridded_era5", 
+                                           resolution_km=2, grid_size_km=300, list_sar_path=list_sar_path, index_hour=int(hour)-1+int(minute)//30)[0]
+                            era5_train.append(reg_era5)
+
                     #add also environemental features
                     if conditional_model:
                         shear_vec = row[shear_cols].to_numpy(dtype=np.float32)
@@ -157,6 +190,32 @@ class PrepareDataSet():
                             raise KeyError("Missing owiWindSpeed")
                         sar_val.append(ds_aeqd["owiWindSpeed"].values)
                         irwin_val.append(sargeo["IRWIN"].values)
+                        if self.add_era5:
+                            sar_path = row["sar_aeqd_path"]
+                            list_sar_path = [sar_path]
+                            cyclone_id = row["cyclone_id"]
+                            date = str(sar_path.split("/")[-1].split("-")[5])
+                            year = date[0:4]; month = date[4:6];day = date[6:8]
+                            hour = date[9:11]; minute = date[11:13]
+                            year_path = os.path.join(era5_path, str(year))
+                            fevrier = np.arange(1,29,1) if int(year)%4!=0 else np.arange(1,30,1)
+                            months = [janvier,fevrier,mars,avril,mai,juin,juillet, aout, septembre, octobre, novembre, decembre]
+                            ndays = 0
+                            for i in range(int(month)-1):
+                                ndays += len(months[i])
+                            ndays += int(day)
+                            ndays_str= "0"+str(ndays) if len(str(ndays)) < 3 else str(ndays)
+                            dayera5_path = os.path.join(year_path, ndays_str)
+                            nc_path = ""
+                            for nc_file in os.listdir(dayera5_path):
+                                if cyclone_id in nc_file:
+                                    nc_path = os.path.join(dayera5_path, nc_file)
+                                    break
+                            reg_era5 = regrid_colocs.regrid_files_era5([nc_path], "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_preparation/regrid_era5/regridded_era5", 
+                                           resolution_km=2, grid_size_km=300, list_sar_path=list_sar_path, index_hour=int(hour)-1+int(minute)//30)[0]
+                            era5_val.append(reg_era5)
+
+                            
                     if conditional_model:
                         shear_vec = row[shear_cols].to_numpy(dtype=np.float32)
                         shear_vec = np.nan_to_num(shear_vec, nan=0.0)
@@ -192,6 +251,32 @@ class PrepareDataSet():
                             raise KeyError("Missing owiWindSpeed")
                         sar_test.append(ds_aeqd["owiWindSpeed"].values)
                         irwin_test.append(sargeo["IRWIN"].values)
+
+                        if self.add_era5:
+                            sar_path = row["sar_aeqd_path"]
+                            list_sar_path = [sar_path]
+                            cyclone_id = row["cyclone_id"]
+                            date = str(sar_path.split("/")[-1].split("-")[5])
+                            year = date[0:4]; month = date[4:6];day = date[6:8]
+                            hour = date[9:11]; minute = date[11:13]
+                            year_path = os.path.join(era5_path, str(year))
+                            fevrier = np.arange(1,29,1) if int(year)%4!=0 else np.arange(1,30,1)
+                            months = [janvier,fevrier,mars,avril,mai,juin,juillet, aout, septembre, octobre, novembre, decembre]
+                            ndays = 0
+                            for i in range(int(month)-1):
+                                ndays += len(months[i])
+                            ndays += int(day)
+                            ndays_str= "0"+str(ndays) if len(str(ndays)) < 3 else str(ndays)
+                            dayera5_path = os.path.join(year_path, ndays_str)
+                            nc_path = ""
+                            for nc_file in os.listdir(dayera5_path):
+                                if cyclone_id in nc_file:
+                                    nc_path = os.path.join(dayera5_path, nc_file)
+                                    break
+                            reg_era5 = regrid_colocs.regrid_files_era5([nc_path], "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_preparation/regrid_era5/regridded_era5", 
+                                           resolution_km=2, grid_size_km=300, list_sar_path=list_sar_path, index_hour=int(hour)-1+int(minute)//30)[0]
+                            era5_test.append(reg_era5)
+
                     if conditional_model:
                         shear_vec = row[shear_cols].to_numpy(dtype=np.float32)
                         shear_vec = np.nan_to_num(shear_vec, nan=0.0)
@@ -239,6 +324,26 @@ class PrepareDataSet():
                             ok = False
                             bad_rows_anggrek.append(row_idx)
                             break
+                    if self.add_era5:
+                        cyclone_id = anggrek_csv.iloc[row_idx]["sid"]
+                        date = anggrek_csv.iloc[row_idx]["date"]
+                        year = date[0:4]; month = date[5:7];day = date[8:10]
+                        year_path = os.path.join(era5_path, str(year))
+                        fevrier = np.arange(1,29,1) if int(year)%4!=0 else np.arange(1,30,1)
+                        months = [janvier,fevrier,mars,avril,mai,juin,juillet, aout, septembre, octobre, novembre, decembre]
+                        ndays = 0
+                        for i in range(int(month)-1):
+                            ndays += len(months[i])
+                        ndays += int(day)
+                        ndays_str= "0"+str(ndays) if len(str(ndays)) < 3 else str(ndays)
+                        dayera5_path = os.path.join(year_path, ndays_str)
+                        nc_path = ""
+                        for nc_file in os.listdir(dayera5_path):
+                            if cyclone_id in nc_file:
+                                nc_path = os.path.join(dayera5_path, nc_file)
+                                break
+                        reg_era5 = regrid_colocs.regrid_files_era5([nc_path], "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_preparation/regrid_era5/regridded_era5", 
+                                                                resolution_km=2, grid_size_km=300, list_sar_path=list_sar_path, index_hour=int(hour)-1+int(minute)//30)
 
                     # On n'ajoute le sample que si on a bien C canaux
                     if ok and len(sample_imgs) == len(indices):
