@@ -724,7 +724,7 @@ class LogValidationSamples:
 
         model.eval()
 
-        # -------------------------
+
         x, _, _, infos = batch
         x = x.to(device)
 

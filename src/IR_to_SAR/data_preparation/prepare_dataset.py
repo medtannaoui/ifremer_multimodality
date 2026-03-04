@@ -114,7 +114,7 @@ class PrepareDataSet():
             irwin_train, irwin_val, irwin_test, irwin_anggrek= [], [], [], []
             sar_train, sar_val, sar_test, sar_anggrek = [], [], [], []
             infos_train, infos_val, infos_test, infos_anggrek = [], [], [], []
-            era5_train, era5_val, era5_test = [], [], []
+            era5_train, era5_val, era5_test , era5_anggrek = [], [], [], []
 
             N = len(data[data["split"]=="train"])
             pbar = tqdm(total=N, desc="Checking train files", unit="row")
@@ -127,8 +127,7 @@ class PrepareDataSet():
                     with xr.open_dataset(row["sar_aeqd_path"]) as ds_aeqd:
                         if "owiWindSpeed" not in ds_aeqd:
                             raise KeyError("Missing owiWindSpeed")
-                        sar_train.append(ds_aeqd["owiWindSpeed"].values)
-                        irwin_train.append(sargeo["IRWIN"].values)
+                        
                         if self.add_era5:
                             sar_path = row["sar_aeqd_path"]
                             list_sar_path = [sar_path]
@@ -153,6 +152,11 @@ class PrepareDataSet():
                             reg_era5 = regrid_colocs.regrid_files_era5([nc_path], "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_preparation/regrid_era5/regridded_era5", 
                                            resolution_km=2, grid_size_km=300, list_sar_path=list_sar_path, index_hour=int(hour)-1+int(minute)//30)[0]
                             era5_train.append(reg_era5)
+                            sar_train.append(ds_aeqd["owiWindSpeed"].values)
+                            irwin_train.append(sargeo["IRWIN"].values)
+                        else : 
+                            sar_train.append(ds_aeqd["owiWindSpeed"].values)
+                            irwin_train.append(sargeo["IRWIN"].values)
 
                     #add also environemental features
                     if conditional_model:
@@ -188,8 +192,7 @@ class PrepareDataSet():
                     with xr.open_dataset(row["sar_aeqd_path"]) as ds_aeqd:
                         if "owiWindSpeed" not in ds_aeqd:
                             raise KeyError("Missing owiWindSpeed")
-                        sar_val.append(ds_aeqd["owiWindSpeed"].values)
-                        irwin_val.append(sargeo["IRWIN"].values)
+                        
                         if self.add_era5:
                             sar_path = row["sar_aeqd_path"]
                             list_sar_path = [sar_path]
@@ -214,6 +217,11 @@ class PrepareDataSet():
                             reg_era5 = regrid_colocs.regrid_files_era5([nc_path], "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_preparation/regrid_era5/regridded_era5", 
                                            resolution_km=2, grid_size_km=300, list_sar_path=list_sar_path, index_hour=int(hour)-1+int(minute)//30)[0]
                             era5_val.append(reg_era5)
+                            sar_val.append(ds_aeqd["owiWindSpeed"].values)
+                            irwin_val.append(sargeo["IRWIN"].values)
+                        else :
+                            sar_val.append(ds_aeqd["owiWindSpeed"].values)
+                            irwin_val.append(sargeo["IRWIN"].values)
 
                             
                     if conditional_model:
@@ -249,8 +257,7 @@ class PrepareDataSet():
                     with xr.open_dataset(row["sar_aeqd_path"]) as ds_aeqd:
                         if "owiWindSpeed" not in ds_aeqd:
                             raise KeyError("Missing owiWindSpeed")
-                        sar_test.append(ds_aeqd["owiWindSpeed"].values)
-                        irwin_test.append(sargeo["IRWIN"].values)
+                        
 
                         if self.add_era5:
                             sar_path = row["sar_aeqd_path"]
@@ -276,6 +283,11 @@ class PrepareDataSet():
                             reg_era5 = regrid_colocs.regrid_files_era5([nc_path], "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_preparation/regrid_era5/regridded_era5", 
                                            resolution_km=2, grid_size_km=300, list_sar_path=list_sar_path, index_hour=int(hour)-1+int(minute)//30)[0]
                             era5_test.append(reg_era5)
+                            sar_test.append(ds_aeqd["owiWindSpeed"].values)
+                            irwin_test.append(sargeo["IRWIN"].values)
+                        else :
+                            sar_test.append(ds_aeqd["owiWindSpeed"].values)
+                            irwin_test.append(sargeo["IRWIN"].values)
 
                     if conditional_model:
                         shear_vec = row[shear_cols].to_numpy(dtype=np.float32)
@@ -324,8 +336,26 @@ class PrepareDataSet():
                             ok = False
                             bad_rows_anggrek.append(row_idx)
                             break
-                    if self.add_era5:
-                        cyclone_id = anggrek_csv.iloc[row_idx]["sid"]
+                    
+                    # On n'ajoute le sample que si on a bien C canaux
+                    if ok and len(sample_imgs) == len(indices):
+                        # empile en (C, H, W)
+                        irwin_anggrek.append(np.stack(sample_imgs, axis=0))
+
+                        infos_anggrek.append({
+                            "sid": row["sid"],
+                            "date": row["date"],
+                            "vmax": row["wind_speed (m/s)"],
+                            "lat": row["lat"],
+                            "lon": row["lon"],
+                            "analysis_vmax_cyclobs": row["analysis_vmax_cyclobs"],
+                            "vmax_cyclobs": row["vmax_cyclobs"],
+                            "ibtracs_vmax": row["ibtracs_vmax"],
+                            "satcon_vmax": row["satcon_vmax"],
+                            "era5_vmax": row["era5_vmax"]
+                        })
+                        if self.add_era5:
+                            cyclone_id = anggrek_csv.iloc[row_idx]["sid"]
                         date = anggrek_csv.iloc[row_idx]["date"]
                         year = date[0:4]; month = date[5:7];day = date[8:10]
                         year_path = os.path.join(era5_path, str(year))
@@ -344,23 +374,7 @@ class PrepareDataSet():
                                 break
                         reg_era5 = regrid_colocs.regrid_files_era5([nc_path], "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_preparation/regrid_era5/regridded_era5", 
                                                                 resolution_km=2, grid_size_km=300, list_sar_path=list_sar_path, index_hour=int(hour)-1+int(minute)//30)
-
-                    # On n'ajoute le sample que si on a bien C canaux
-                    if ok and len(sample_imgs) == len(indices):
-                        # empile en (C, H, W)
-                        irwin_anggrek.append(np.stack(sample_imgs, axis=0))
-
-                        infos_anggrek.append({
-                            "sid": row["sid"],
-                            "date": row["date"],
-                            "vmax": row["wind_speed (m/s)"],
-                            "lat": row["lat"],
-                            "lon": row["lon"],
-                            "analysis_vmax_cyclobs": row["analysis_vmax_cyclobs"],
-                            "vmax_cyclobs": row["vmax_cyclobs"],
-                            "ibtracs_vmax": row["ibtracs_vmax"],
-                            "satcon_vmax": row["satcon_vmax"],
-                        })
+                        era5_anggrek.append(reg_era5)
 
                         
 
@@ -369,7 +383,18 @@ class PrepareDataSet():
                     pbar.set_postfix(good=len(good_rows), bad=len(bad_rows))
                     pbar.update(1)
                 # Final: (N, C, H, W)
-                irwin_anggrek = np.stack(irwin_anggrek, axis=0)
+                era5_train = np.expand_dims(era5_train,axis=1)
+                era5_val = np.expand_dims(era5_val,axis=1)
+                era5_test = np.expand_dims(era5_test,axis=1)
+                era5_anggrek = np.array(era5_anggrek)    #np.expand_dims(era5_anggrek,axis=1)
+                print(np.array(irwin_anggrek).shape,np.array(era5_anggrek).shape)
+                print(np.array(irwin_train).shape, np.array(era5_train).shape)
+                print(np.array(irwin_val).shape,np.array(era5_val).shape)
+                print(np.array(irwin_test).shape, np.array(era5_test).shape)
+                h_era5,w_era5 = era5_anggrek.shape[-2],era5_anggrek.shape[-1]
+                h_anggrek,w_anggrek = np.array(irwin_anggrek).shape[-2],np.array(irwin_anggrek).shape[-1]
+                irwin_anggrek = np.array(irwin_anggrek)[:,:,h_anggrek//2-h_era5//2:h_anggrek//2+h_era5//2,h_anggrek//2-h_era5//2:h_anggrek//2+h_era5//2]
+                irwin_anggrek = np.concatenate([irwin_anggrek,era5_anggrek], axis=1)
                 pbar.close()
                          
             #Filter dataframe to only good indices
@@ -386,9 +411,18 @@ class PrepareDataSet():
         image_channels_train, image_channels_val, image_channels_test, image_channels_anggrek = [], [], [], []
     
         # all irwins (9)
-        irwin_train = np.array(irwin_train)    # (N, 9, H, W) par ex.
-        irwin_val,irwin_test, irwin_anggrek = np.array(irwin_val), np.array(irwin_test), np.array(irwin_anggrek) if anggrek_test else None
+        #add era5 to irwin 
+        h_sargeo = np.array(irwin_train).shape[-1]
+        irwin_train = np.array(irwin_train)[:,:,h_sargeo//2-h_era5//2:h_sargeo//2+h_era5//2,h_sargeo//2-w_era5//2:h_sargeo//2+w_era5//2]
+        irwin_val= np.array(irwin_val)[:,:,h_sargeo//2-h_era5//2:h_sargeo//2+h_era5//2,h_sargeo//2-w_era5//2:h_sargeo//2+w_era5//2]
+        irwin_test = np.array(irwin_test)[:,:,h_sargeo//2-h_era5//2:h_sargeo//2+h_era5//2,h_sargeo//2-w_era5//2:h_sargeo//2+w_era5//2]
+
+        irwin_train = np.concatenate([irwin_train,era5_train],axis=1)   # (N, 9, H, W) par ex.
+        
+        
+        irwin_val,irwin_test, irwin_anggrek = np.concatenate([irwin_val,era5_val],axis=1) ,np.concatenate([irwin_test,era5_test],axis=1) , np.array(irwin_anggrek) if anggrek_test else None
         self.sar_train, self.sar_val, self.sar_test = np.array(sar_train), np.array(sar_val), np.array(sar_test)
+
         print("train size :",len(sar_train))
         print("val_size : ",len(sar_val))
         print("Test size: ",len(sar_test))
@@ -405,9 +439,13 @@ class PrepareDataSet():
                     image_channels_anggrek.append(irwin_anggrek)
 
         elif self.input_data == "normal":
-            image_channels_train.append(irwin_train[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:])  
-            image_channels_val.append(irwin_val[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:])  
-            image_channels_test.append(irwin_test[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:])  
+            if not self.add_era5:
+                irwin_train = irwin_train[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:]
+                irwin_val = irwin_val[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:]
+                irwin_test = irwin_test[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:]
+            image_channels_train.append(irwin_train)  
+            image_channels_val.append(irwin_val)  
+            image_channels_test.append(irwin_test)  
             if anggrek_test:
                 image_channels_anggrek.append(irwin_anggrek) if anggrek_test else None
 
