@@ -77,32 +77,26 @@ def radial_vmax_l1_loss(pred_valid, sar_valid, mask, r_bins=None, eps=1e-8):
     idx = r_int.view(1, 1, -1).expand(B, 1, H*W)           # (B,1,HW)
     m   = (mask > 0).view(B, 1, -1).to(dtype)             # (B,1,HW)
 
-    # t_true = sar_valid.view(B, 1, -1) * m
-    # t_pred = pred_valid.view(B, 1, -1) * m
-    t_true = sar_valid.view(B, 1, -1).masked_fill(m == 0, -1e9)
-    t_pred = pred_valid.view(B, 1, -1).masked_fill(m == 0, -1e9)
+    t_true = sar_valid.view(B, 1, -1) * m
+    t_pred = pred_valid.view(B, 1, -1) * m
 
     # sums per radius
-    # sum_true = torch.zeros((B, 1, r_max), device=device, dtype=dtype)
-    # sum_pred = torch.zeros((B, 1, r_max), device=device, dtype=dtype)
-    sum_true = torch.full((B,1,r_max), -1e9, device=device, dtype=dtype)
-    sum_pred = torch.full((B,1,r_max), -1e9, device=device, dtype=dtype)
+    sum_true = torch.zeros((B, 1, r_max), device=device, dtype=dtype)
+    sum_pred = torch.zeros((B, 1, r_max), device=device, dtype=dtype)
     cnt      = torch.zeros((B, 1, r_max), device=device, dtype=dtype)
 
-    # sum_true.scatter_add_(2, idx, t_true)
-    # sum_pred.scatter_add_(2, idx, t_pred)
-    sum_true.scatter_reduce_(2, idx, t_true, reduce="amax", include_self=False)
-    sum_pred.scatter_reduce_(2, idx, t_pred, reduce="amax", include_self=False)
+    sum_true.scatter_add_(2, idx, t_true)
+    sum_pred.scatter_add_(2, idx, t_pred)
     cnt.scatter_add_(2, idx, m)
 
-    # prof_true = sum_true / cnt.clamp_min(eps)
-    # prof_pred = sum_pred / cnt.clamp_min(eps)
-    prof_true = sum_true
-    prof_pred = sum_pred
+    prof_true = sum_true / cnt.clamp_min(eps)
+    prof_pred = sum_pred / cnt.clamp_min(eps)
 
     # L1 between profiles
     return F.l1_loss(prof_pred, prof_true)
+
     
+
 def combined_sar_loss(
     sar_valid,
     pred_valid,
