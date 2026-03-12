@@ -74,7 +74,7 @@ class LogValidationSamples:
              cmap_ir="gray", cmap_sar="viridis", num_epochs=0, infos_train=None, infos_val=None, infos_test=None, 
              mask_train=None, mask_val = None,mask_test=None,
              target_dir = None,input_data="normal", output_data="sar",anggrek_test=False,conditional_model=False,log_wind=None,
-             crop_sar=False,irwin_channels=1,regrid_ir=False
+             crop_sar=False,irwin_channels=1,regrid_ir=False,add_era5=False
              ):
 
         self.base_dir = Path(base_dir)
@@ -113,6 +113,7 @@ class LogValidationSamples:
 
         self.irwin_channels = irwin_channels
         self.regrid_ir = regrid_ir
+        self.add_era5 = add_era5
 
         
         
@@ -775,8 +776,13 @@ class LogValidationSamples:
             pred_np = pred_np[None, ...]  # force (B,H,W)
 
         B = x_np.shape[0]
-        ch = 0  # IR channel index
+        print("Ibtissaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaam",x_np.shape)
+        ch = 4 if x_np.shape[1] > 4 else 0   # IR channel index
+        
         ir = x_np[:, ch, :, :]  # (B,H,W)
+        if self.add_era5 : 
+            era5 = x_np[:,-1,:,:]
+            era5 = denorm(era5,self.mean_X[-1],self.std_X[-1])
         pred1 = pred_np          # (B,H,W)
 
         ir_den = denorm(ir, self.mean_X[ch], self.std_X[ch])
@@ -810,6 +816,7 @@ class LogValidationSamples:
         if self.crop_sar:
             ir_den = ir_den[:,W//2-W//4:W//2+W//4,H//2-H//4:H//2+H//4]
             pred_den = pred_den[:,W//2-W//4:W//2+W//4,H//2-H//4:H//2+H//4]
+            era5 = era5[:,W//2-W//4:W//2+W//4,H//2-H//4:H//2+H//4]
             
 
         # -------------------------
@@ -851,17 +858,22 @@ class LogValidationSamples:
             sub = field_dir
             sub.mkdir(parents=True, exist_ok=True)
 
-            fig, axs = plt.subplots(1, 2, figsize=(8, 4), constrained_layout=True)
+            fig, axs = plt.subplots(1, 3 if self.add_era5 else 2, figsize=(8, 4), constrained_layout=True)
 
             distdata.plot_ir(ir_den[i], cmap=self.cmap_ir,ax=axs[0],fig=fig,x_lim=H)
             axs[0].set_title("IRWIN")
             axs[0].axis("off")
-            distdata.plot_sar(pred_den[i], cmap=self.cmap_sar,ax=axs[1],fig=fig, x_lim=H)
-            axs[1].set_title("Prediction")
-            axs[1].axhline(y=0, color="black", linewidth=1)
-            axs[1].axvline(x=0, color="black", linewidth=1)
+            distdata.plot_sar(pred_den[i], cmap=self.cmap_sar,ax=axs[2 if self.add_era5 else 1],fig=fig, x_lim=H)
+            axs[2 if self.add_era5 else 1].set_title("Prediction")
+            axs[2 if self.add_era5 else 1].axhline(y=0, color="black", linewidth=1)
+            axs[2 if self.add_era5 else 1].axvline(x=0, color="black", linewidth=1)
+            if self.add_era5:
+                distdata.plot_sar(era5[i], cmap=self.cmap_sar,ax=axs[1],fig=fig,x_lim=H)
+                axs[1].set_title("ERA 5")
+                axs[1].axis("off")
+
             # cercle RMW
-            axs[1].add_patch(
+            axs[2 if self.add_era5 else 1].add_patch(
                                Circle((0, 0), radius=rmax_pred, color="black", fill=False, linestyle="--")
                             )
 

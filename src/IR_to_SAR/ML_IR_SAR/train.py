@@ -345,7 +345,8 @@ def main(cfg: IR_SAR_Config,test=False):
                 log_wind=cfg.log_wind,
                 crop_sar = cfg.crop_sar,
                 irwin_channels=cfg.irwin_channels,
-                regrid_ir=cfg.regrid_ir
+                regrid_ir=cfg.regrid_ir,
+                add_era5=cfg.add_era5
             
                 
             )

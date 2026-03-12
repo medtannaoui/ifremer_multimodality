@@ -522,7 +522,8 @@ class PrepareDataSet():
 
 
         #  Convert IR from Kelvin to Celsius ===
-        for c in range(self.X_train.shape[1]) : 
+        n_ir_channels = self.X_train.shape[1] - 1 if self.add_era5 else self.X_train.shape[1]
+        for c in range(n_ir_channels) : 
             self.X_train[:, c] = self.X_train[:, c] - 273.15  
             self.X_val[:,c] = self.X_val[:,c] - 273.15
             self.X_test[:,c] = self.X_test[:,c] - 273.15
