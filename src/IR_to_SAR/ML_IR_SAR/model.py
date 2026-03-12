@@ -3,6 +3,7 @@
 import torch
 import torch.nn as nn
 from diffusers import UNet2DModel, UNet2DConditionModel
+import numpy as np
 
 
 def create_model(
@@ -30,7 +31,7 @@ def create_model(
             down_block_types=down_block_types,
             up_block_types=up_block_types,
             dropout=dropout,
-            norm_num_groups=16
+            norm_num_groups=np.min([block_out_channels])
         )
     else : 
         unet = UNet2DConditionModel(
@@ -41,7 +42,7 @@ def create_model(
             down_block_types=down_block_types,
             up_block_types=up_block_types,
             dropout=dropout,
-            norm_num_groups=16,
+            norm_num_groups=np.min([block_out_channels]),
             cross_attention_dim=cross_attention_dim   #features diemnsion
         )
         model = ConditionalUNet(unet=unet, cond_dim=cond_dim,cross_attention_dim=cross_attention_dim)
