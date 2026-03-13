@@ -496,7 +496,7 @@ class PrepareDataSet():
         self.X_val = np.concatenate(image_channels_val, axis=1)
         self.X_test = np.concatenate(image_channels_test, axis=1)
         if anggrek_test:
-            self.X_anggrek = irwin_anggrek
+            self.X_anggrek = np.array(image_channels_anggrek)
 
 
         print("Start Reshaping Data ........")
