@@ -324,7 +324,7 @@ class LogValidationSamples:
 
         # ---------------------------------------------------------------------------------------------------------------------------------------------------
         # On ne visualise que le canal IRWIN (canal 0)
-        ch = 4 if x.shape[1] == 9 else 0
+        ch = 2 if x.shape[1] >3 else 0
         ir = x[:, ch, :, :]
         ir = ir.squeeze().cpu().numpy()
         sar = sar.squeeze().cpu().numpy()
@@ -777,7 +777,7 @@ class LogValidationSamples:
 
         B = x_np.shape[0]
         print("Ibtissaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaam",x_np.shape)
-        ch = 4 if x_np.shape[1] > 4 else 0   # IR channel index
+        ch = 2 if x_np.shape[1] > 4 else 0   # IR channel index
         
         ir = x_np[:, ch, :, :]  # (B,H,W)
         if self.add_era5 : 

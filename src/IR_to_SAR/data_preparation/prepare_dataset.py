@@ -439,15 +439,31 @@ class PrepareDataSet():
                     image_channels_anggrek.append(irwin_anggrek)
 
         elif self.input_data == "normal":
+
+            def transform_irwin_channels(x):
+                """
+                x shape: (N, 10, W, H)
+                return shape: (N, 6, W, H)
+                """
+                c0 = x[:, 0:1, :, :]                       # garder canal 0
+                c1 = x[:, 0:5, :, :].mean(axis=1, keepdims=True)   # mean(0,1,2,3,4)
+                c2 = x[:, 2:5, :, :].mean(axis=1, keepdims=True)   # mean(2,3,4)
+                c3 = x[:, 4:7, :, :].mean(axis=1, keepdims=True)   # mean(4,5,6)
+                c4 = x[:, 4:9, :, :].mean(axis=1, keepdims=True)   # mean(4,5,6,7,8)
+                c5 = x[:, 9:10, :, :]                      # garder canal 9
+
+                return np.concatenate([c0, c1, c2, c3, c4, c5], axis=1)
             if not self.add_era5:
                 irwin_train = irwin_train[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:]
                 irwin_val = irwin_val[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:]
                 irwin_test = irwin_test[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:]
-            image_channels_train.append(irwin_train)  
-            image_channels_val.append(irwin_val)  
-            image_channels_test.append(irwin_test)  
+            
+            image_channels_train.append(transform_irwin_channels(irwin_train))
+            image_channels_val.append(transform_irwin_channels(irwin_val))
+            image_channels_test.append(transform_irwin_channels(irwin_test))
+
             if anggrek_test:
-                image_channels_anggrek.append(irwin_anggrek) if anggrek_test else None
+                image_channels_anggrek.append(transform_irwin_channels(irwin_anggrek))
 
         elif self.input_data == "normal+gradients":
             image_channels_train.append(irwin_train[:,4,:,:])
