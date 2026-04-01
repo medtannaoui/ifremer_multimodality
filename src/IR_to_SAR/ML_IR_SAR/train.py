@@ -59,7 +59,7 @@ import src.IR_to_SAR.ML_IR_SAR.model as model_ir_sar
 import src.IR_to_SAR.ML_IR_SAR.callbacks as callbacks
 reload(model_ir_sar)
 reload(callbacks)
-from src.IR_to_SAR.ML_IR_SAR.model import create_model
+from src.IR_to_SAR.ML_IR_SAR.model import create_model,create_fm_model_direct
 from src.IR_to_SAR.ML_IR_SAR.callbacks import EarlyStopping,ModelCheckpoint,LogValidationSamples
 
 import src.IR_to_SAR.ML_IR_SAR.config as config
@@ -83,14 +83,15 @@ class IRSARDataset(Dataset):
     """
     def __init__(self,test=False,size=256, norm = "z_score", barycenter = "no" ,augmentation = False, drop_nan_100 = True,input_channels=None,
                  data_path=None,train_split=None,val_split=None,test_split=None,target_dir = None, input_data="norm", output_data="sar",
-                 conditional_model=None,anggrek_test = False,log_wind=None,irwin_channels=1,regrid_ir=False,ir_smoothing=False,add_era5=False):
+                 conditional_model=None,anggrek_test = False,log_wind=None,irwin_channels=1,regrid_ir=False,
+                 ir_smoothing=False,add_era5=False,cfg=None):
         self.norm = norm
         
         dataset = prep_dataset.PrepareDataSet(size=size, norm= norm, barycenter= barycenter, drop_nan_100=drop_nan_100,input_channels=input_channels,
                                               pkl_file=data_path,train_split=train_split,val_split=val_split,test_split=test_split,
                                               augmentation=augmentation,target_dir = target_dir, input_data=input_data, output_data=output_data,
                                               conditional_model=conditional_model,anggrek_test=anggrek_test,log_wind=log_wind,irwin_channels=irwin_channels,
-                                              regrid_ir=regrid_ir,ir_smoothing=ir_smoothing,add_era5=add_era5)
+                                              regrid_ir=regrid_ir,ir_smoothing=ir_smoothing,add_era5=add_era5,cfg=cfg)
          
         self.dataset = dataset     
         print("Data preparation finished")
@@ -134,9 +135,7 @@ class PairedDataset(Dataset):
 # =============================
 # 🧠 2) Train / Validate functions
 # =============================
-def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.0,scheduler=None,
-                    scheduler_name=None,vmax_train=None,rmin_train=None, conditional_model=False,combined_loss=False,
-                    crop_sar=False):
+def train_one_epoch(fabric, model, dataloader, optimizer, metrics, cfg, scheduler=None):
     model.train()
     total_loss = 0
     metrics.reset()
@@ -150,7 +149,7 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_gr
 
     for x, sar, mask, infos in tqdm(dataloader, desc="Training"):  #infos is a dictionanry
         x, sar, mask= x.to(fabric.device), sar.to(fabric.device), mask.to(fabric.device)
-        if conditional_model:
+        if cfg.conditional_model:
             
             shear_infos = torch.stack([
             torch.as_tensor(d["shear"], dtype=torch.float32)
@@ -161,7 +160,7 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_gr
 
         
         # Forward pass
-        if not conditional_model:
+        if not cfg.conditional_model:
             pred = model(x, timestep=0).sample  # (B,1,H,W)
         else:
             pred = model.forward(x, timestep=0, cond=shear_infos).sample
@@ -170,15 +169,15 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_gr
         hs = slice(H//2 - H//4, H//2 + H//4)
         ws = slice(W//2 - W//4, W//2 + W//4)
 
-        sar_valid  = sar.nan_to_num()[:, hs, ws] if crop_sar else sar.nan_to_num()
-        pred_valid = pred[:, :, hs, ws] if crop_sar else pred
-        if crop_sar:
+        sar_valid  = sar.nan_to_num()[:, hs, ws] if cfg.crop_sar else sar.nan_to_num()
+        pred_valid = pred[:, :, hs, ws] if cfg.crop_sar else pred
+        if cfg.crop_sar:
             mask = mask[:, :, hs, ws] if mask.ndim == 4 else mask[:, hs, ws] 
         # compute weights
 
         loss, l_pix, l_grad, l_radial = combined_sar_loss(
                                                             sar_valid, pred_valid, mask,
-                                                            w_pix=w_pix, w_grad=w_grad, w_radial=w_radial,
+                                                            w_pix=cfg.w_pix, w_grad=cfg.w_grad, w_radial=cfg.w_radial,
                                                             bin_edges=BIN_EDGES, bin_weights=BIN_WEIGHTS,
                                                             use_weighted_pix=True
                                                         )
@@ -191,8 +190,7 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_gr
         fabric.backward(loss)
         fabric.clip_gradients(model, optimizer, max_norm=1.0)
         optimizer.step()
-        if scheduler_name == "onecycle":
-            scheduler.step()
+        
 
         total_loss += loss.item()
         metrics.update(pred_valid*mask, sar_valid*mask)
@@ -200,8 +198,7 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics,w_pix=0.1,w_gr
     return total_loss / len(dataloader), metrics.compute(), l_pix, l_grad, l_radial
 
 
-def validate(fabric, model, dataloader, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.0,vmax_train=None,rmin_train=None,
-             conditional_model=False,combined_loss = False,crop_sar=False):
+def validate(fabric, model, dataloader, metrics, cfg):
     model.eval()
     total_loss = 0
     metrics.reset()
@@ -214,7 +211,7 @@ def validate(fabric, model, dataloader, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.
         for x, sar, mask, infos in tqdm(dataloader, desc="Validating"):
             x, sar, mask = x.to(fabric.device), sar.to(fabric.device), mask.to(fabric.device)
 
-            if not conditional_model:
+            if not cfg.conditional_model:
                 pred = model(x, timestep=0).sample  # (B,1,H,W)
             else:
                 shear_infos = torch.stack([
@@ -227,15 +224,15 @@ def validate(fabric, model, dataloader, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.
             hs = slice(H//2 - H//4, H//2 + H//4)
             ws = slice(W//2 - W//4, W//2 + W//4)
 
-            sar_valid  = sar.nan_to_num()[:, hs, ws] if crop_sar else sar.nan_to_num()
-            pred_valid = pred[:, :, hs, ws] if crop_sar else pred
-            if crop_sar : 
+            sar_valid  = sar.nan_to_num()[:, hs, ws] if cfg.crop_sar else sar.nan_to_num()
+            pred_valid = pred[:, :, hs, ws] if cfg.crop_sar else pred
+            if cfg.crop_sar : 
                 mask = mask[:, :, hs, ws] if mask.ndim == 4 else mask[:, hs, ws]
 
             loss,l_pix,l_grad,l_radial = combined_sar_loss(sar_valid,pred_valid,mask,
-                                     w_pix=w_pix,
-                                     w_grad=w_grad,
-                                     w_radial=w_radial,
+                                     w_pix=cfg.w_pix,
+                                     w_grad= cfg.w_grad,
+                                     w_radial=cfg.w_radial,
                                      bin_edges=BIN_EDGES, bin_weights=BIN_WEIGHTS,
               
                                                             use_weighted_pix=True)
@@ -250,6 +247,133 @@ def validate(fabric, model, dataloader, metrics,w_pix=0.1,w_grad=0.0,w_radial=0.
             metrics.update(pred_valid*mask, sar_valid*mask)
 
     return total_loss / len(dataloader), metrics.compute(), l_pix, l_grad,l_radial
+
+def train_fm_epoch_direct(fabric, model, dataloader, optimizer, scheduler=None,
+                          scheduler_name=None):
+    """
+    One flow matching training epoch — direct approach.
+
+    Args:
+        fabric:         Lightning Fabric instance (handles device + amp)
+        model:          FM UNet (in_channels = C_IR + 1)
+        dataloader:     returns (x, sar, mask, infos) batches
+        optimizer:      PyTorch optimizer
+        scheduler:      optional LR scheduler
+        scheduler_name: "onecycle" | "cosin" | "expo" | "reduceplateau" | None
+
+    Returns:
+        mean loss over the epoch (float)
+    """
+    model.train()
+    total_loss = 0.0
+
+    for x, sar, mask, infos in tqdm(dataloader, desc="FM train", leave=False):
+        x    = x.to(fabric.device)
+        sar  = sar.to(fabric.device)
+        mask = mask.to(fabric.device)
+
+        B = x.shape[0]
+
+        # Ensure sar and mask are (B, 1, H, W)
+        if sar.ndim == 3:
+            sar  = sar.unsqueeze(1)
+        if mask.ndim == 3:
+            mask = mask.unsqueeze(1)
+
+        # ── Flow matching forward ──────────────────────────────────────
+        x_1 = sar.nan_to_num(0.0)                       # NaN → 0 (excluded by mask)
+        z   = torch.randn_like(x_1)                     # source noise
+        t   = torch.rand(B, device=fabric.device)       # t ~ U[0, 1]
+
+        # Linear interpolation (the FM "forward process")
+        x_t = t.view(-1, 1, 1, 1) * x_1 + (1 - t.view(-1, 1, 1, 1)) * z
+
+        # Concatenate noisy SAR with IR conditioning
+        model_input = torch.cat([x_t, x], dim=1)        # (B, C_IR+1, H, W)
+
+        optimizer.zero_grad()
+
+        pred_velocity = model(model_input, t).sample     # (B, 1, H, W)
+        true_velocity = x_1 - z
+
+        # Loss on valid SAR pixels only
+        valid = (mask > 0).expand_as(pred_velocity)
+        loss  = F.mse_loss(pred_velocity[valid], true_velocity[valid])
+
+        fabric.backward(loss)
+        fabric.clip_gradients(model, optimizer, max_norm=1.0)
+        optimizer.step()
+
+        # OneCycle scheduler steps per batch
+        if scheduler is not None and scheduler_name == "onecycle":
+            scheduler.step()
+
+        total_loss += loss.item()
+
+    # Epoch-level scheduler step for other types
+    if scheduler is not None and scheduler_name not in (None, "onecycle"):
+        scheduler.step()
+
+    return total_loss / max(len(dataloader), 1)
+
+
+def validate_fm_direct(fabric, model, dataloader, stats, num_inference_steps=50):
+    """
+    Flow matching validation.
+
+    Returns a dict with:
+      - 'loss': mean FM velocity loss (primary metric for early stopping / checkpoint)
+      - 'mae_mean': pixel-space MAE of the ensemble mean vs SAR target
+    """
+    model.eval()
+    total_loss = 0.0
+    total_mae  = 0.0
+    n_batches  = 0
+
+    with torch.no_grad():
+        for x, sar, mask, infos in tqdm(dataloader, desc="FM val", leave=False):
+            x    = x.to(fabric.device)
+            sar  = sar.to(fabric.device)
+            mask = mask.to(fabric.device)
+
+            B = x.shape[0]
+
+            if sar.ndim == 3:
+                sar  = sar.unsqueeze(1)
+            if mask.ndim == 3:
+                mask = mask.unsqueeze(1)
+
+            # ── FM velocity loss (same as training) ───────────────────
+            x_1 = sar.nan_to_num(0.0)
+            z   = torch.randn_like(x_1)
+            t   = torch.rand(B, device=fabric.device)
+            x_t = t.view(-1,1,1,1)*x_1 + (1-t.view(-1,1,1,1))*z
+
+            model_input   = torch.cat([x_t, x], dim=1)
+            pred_velocity = model(model_input, t).sample
+            true_velocity = x_1 - z
+
+            valid = (mask > 0).expand_as(pred_velocity)
+            loss  = F.mse_loss(pred_velocity[valid], true_velocity[valid])
+            total_loss += loss.item()
+
+            # # ── Pixel-space MAE: one sample per validation example ────
+            # z_infer = torch.randn_like(x_1)
+            # x_pred  = _euler_ode(model, z_infer, x, num_inference_steps, fabric.device)
+
+            # # Denormalise if stats provided
+            # sar_mean = torch.tensor(stats["mean"], device=fabric.device).view(1,1,1,1)
+            # sar_std  = torch.tensor(stats["std"],  device=fabric.device).view(1,1,1,1)
+            # sar_phys = sar  * sar_std + sar_mean
+            # pred_phys = x_pred * sar_std + sar_mean
+
+            # mae = (pred_phys - sar_phys).abs()[valid].mean()
+            # total_mae += mae.item()
+            n_batches += 1
+
+    n = max(n_batches, 1)
+    return total_loss / n
+   
 
 
 # =============================
@@ -295,7 +419,7 @@ def main(cfg: IR_SAR_Config,test=False):
                              train_split=cfg.train_split,val_split=cfg.val_split,test_split=cfg.test_split,
                              target_dir = target_dir,augmentation=cfg.augmentation,input_data=cfg.input_data,output_data=cfg.output_data,
                              conditional_model = cfg.conditional_model,anggrek_test=cfg.anggrek_test,log_wind=cfg.log_wind,irwin_channels=cfg.irwin_channels,
-                             regrid_ir=cfg.regrid_ir,ir_smoothing=cfg.ir_smoothing,add_era5=cfg.add_era5)
+                             regrid_ir=cfg.regrid_ir,ir_smoothing=cfg.ir_smoothing,add_era5=cfg.add_era5,cfg=cfg)
     # X_all, sar_all = full_data.dataset.X, full_data.dataset.sar
 
     
@@ -319,18 +443,15 @@ def main(cfg: IR_SAR_Config,test=False):
         strategy= "auto",
         callbacks=[
             EarlyStopping(patience=cfg.early_stop_patience, min_delta=cfg.early_stop_delta),
-            ModelCheckpoint(cfg.save_dir, target_dir= target_dir),
+            ModelCheckpoint(cfg.save_dir, filename="best_fm_model.pt" if cfg.use_flow_matching else "best_regression_model.pt", target_dir= target_dir),
             LogValidationSamples(
-                base_dir=cfg.save_dir,
-                num_samples=cfg.num_val_exemples,
-                norm = cfg.norm,
+                base_dir= cfg.save_dir,
                 mean_X=full_data.dataset.mean_X,
                 mean_sar=full_data.dataset.mean_sar,
                 std_X=full_data.dataset.std_X,
                 std_sar=full_data.dataset.std_sar,
                 cmap_ir=cmap_ir,
-                cmap_sar=cmap_sar,
-                start_epoch=cfg.start_epoch,    
+                cmap_sar=cmap_sar,   
                 mask_train = full_data.dataset.mask_train,
                 mask_val = full_data.dataset.mask_val,
                 mask_test=full_data.dataset.mask_test,
@@ -338,17 +459,7 @@ def main(cfg: IR_SAR_Config,test=False):
                 infos_val = full_data.dataset.infos_val,
                 infos_test = full_data.dataset.infos_test,
                 target_dir = target_dir,
-                input_data= cfg.input_data,
-                output_data=cfg.output_data,
-                conditional_model=cfg.conditional_model,
-                anggrek_test=cfg.anggrek_test,
-                log_wind=cfg.log_wind,
-                crop_sar = cfg.crop_sar,
-                irwin_channels=cfg.irwin_channels,
-                regrid_ir=cfg.regrid_ir,
-                add_era5=cfg.add_era5
-            
-                
+                cfg=cfg
             )
         ],
     )
@@ -363,20 +474,16 @@ def main(cfg: IR_SAR_Config,test=False):
 
     # --- Model & Optimizer & Scheduler ---
     in_channels = train_ds.X.shape[1] if isinstance(train_ds.X, np.ndarray) else train_ds.X[0].shape[0]
-    model = create_model(
-        image_size=cfg.img_size,
-        dropout=cfg.dropout,
-        in_channels=in_channels,       #
-        out_channels=cfg.out_channels,
-        block_out_channels = cfg.block_out_channels,
-        down_block_types = cfg.down_block_types,
-        up_block_types= cfg.up_block_types,
-        conditional_model = cfg.conditional_model,
-        batch_size=cfg.batch_size,
-        cross_attention_dim= cfg.cross_attention_dim,
-        cond_dim=cfg.cond_dim
-    ).to(fabric.device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate, weight_decay=1e-3)   #add regularisation
+    if cfg.use_flow_matching:
+        model = create_fm_model_direct(cfg, in_channels_ir=in_channels)
+        
+    else : 
+        model = create_model(
+            cfg=cfg,
+            conditional_model=cfg.conditional_model
+        ).to(fabric.device)
+        
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.fm_lr if cfg.use_flow_matching else cfg.learning_rate, weight_decay=1e-3)   #add regularisation
 
     if cfg.scheduler == "cosin":
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.num_epochs, eta_min=1e-6)
@@ -404,7 +511,7 @@ def main(cfg: IR_SAR_Config,test=False):
         steps_per_epoch = len(train_loader)  # ton DataLoader train
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
-            max_lr=cfg.learning_rate,     # peak lr
+            max_lr=cfg.fm_lr if cfg.use_flow_matching else cfg.learning_rate,     # peak lr
             epochs=cfg.num_epochs,
             steps_per_epoch=steps_per_epoch,
             pct_start=0.1,                # 10% warmup
@@ -417,12 +524,12 @@ def main(cfg: IR_SAR_Config,test=False):
     model, optimizer = fabric.setup(model, optimizer)
     if cfg.anggrek_test:
         train_loader, val_loader, test_loader, anggrek_loader = fabric.setup_dataloaders(
-                                                                                        train_loader, val_loader, test_loader, anggrek_loader
-                                                                                    )
+                                                            train_loader, val_loader, test_loader, anggrek_loader
+                                                            )
     else : 
         train_loader, val_loader, test_loader = fabric.setup_dataloaders(
-                                                                         train_loader, val_loader, test_loader
-                                                                     )
+                                                            train_loader, val_loader, test_loader
+                                                            )
 
 
     # --- Training Loop ---
@@ -434,32 +541,31 @@ def main(cfg: IR_SAR_Config,test=False):
 
     for epoch in range(cfg.num_epochs):
         logger.info(f"===== Epoch {epoch+1}/{cfg.num_epochs} =====")
-        
-        train_loss, train_metrics,l_pix, l_grad, l_radial = train_one_epoch(fabric, model, train_loader, optimizer, metrics,
-                                                    w_pix=cfg.w_pix,
-                                                    w_grad=cfg.w_grad,
-                                                    w_radial=cfg.w_radial,
-                                                    scheduler=scheduler,
-                                                    scheduler_name=cfg.scheduler,
-                                                    conditional_model = cfg.conditional_model,
-                                                    combined_loss = cfg.combined_loss,
-                                                    crop_sar=cfg.crop_sar)
-        
-        val_loss, val_metrics, l_pix_val,l_grad_val, l_radial_val = validate(fabric, model, val_loader, metrics,
-                                         w_pix=cfg.w_pix,
-                                         w_grad=cfg.w_grad,
-                                         w_radial=cfg.w_radial,
-                                         conditional_model=cfg.conditional_model,
-                                         combined_loss = cfg.combined_loss,
-                                         crop_sar=cfg.crop_sar)
+        if cfg.use_flow_matching:                                     
+            train_loss = train_fm_epoch_direct(                       
+                fabric, model, train_loader, optimizer,               
+                scheduler, cfg.scheduler,                              
+            )                                                         
+            val_loss = validate_fm_direct(
+                                fabric, model, val_loader, 0, cfg.fm_num_inference_steps
+                            ) 
+
+        else:
+            train_loss, train_metrics,l_pix, l_grad, l_radial = train_one_epoch(fabric, model, train_loader, optimizer, metrics,
+                                                        scheduler=scheduler,
+                                                        cfg = cfg)
+            
+            val_loss, val_metrics, l_pix_val,l_grad_val, l_radial_val = validate(fabric, model, val_loader, metrics,
+                                                        cfg = cfg)
 
         # torch.cuda.empty_cache()
         # gc.collect()
         train_loss_history.append(train_loss)
         val_loss_history.append(val_loss)
-        pix2pix_loss_history.append((l_pix,l_pix_val))
-        gradient_loss_history.append((l_grad,l_grad_val))
-        radial_loss_history.append((l_radial,l_radial_val))
+        if not cfg.use_flow_matching:
+            pix2pix_loss_history.append((l_pix,l_pix_val))
+            gradient_loss_history.append((l_grad,l_grad_val))
+            radial_loss_history.append((l_radial,l_radial_val))
 
 
         if cfg.scheduler == "reduceplateau":
@@ -509,7 +615,8 @@ def main(cfg: IR_SAR_Config,test=False):
                 break
 
         if stop_training or epoch == cfg.num_epochs - 1:
-            best_ckpt_path = target_dir / "best_regression_model.pt"
+            ckpt_name = "best_fm_model.pt" if cfg.use_flow_matching else "best_regression_model.pt"
+            best_ckpt_path = target_dir / ckpt_name
 
             if best_ckpt_path.exists():
                 fabric.print("✅ Loading best model for final visualization...")
@@ -528,22 +635,10 @@ def main(cfg: IR_SAR_Config,test=False):
                 device=fabric.device
             )
             break
+        
 
 
-    history_df = pd.DataFrame({
-    "train_loss": train_loss_history,
-    "val_loss": val_loss_history,
-    "pix2pix_history": pix2pix_loss_history,
-    "gradient_loss_history" : gradient_loss_history,
-    "radial_loss_history" : radial_loss_history
-
-    })
     
-
-    # Construire le chemin du CSV
-    csv_path = target_dir / "training_history.csv"
-    
-    history_df.to_csv(csv_path, index=False)
 
     plt.figure()
     plt.plot(train_loss_history, label="Train Loss")
@@ -552,51 +647,66 @@ def main(cfg: IR_SAR_Config,test=False):
     plt.ylabel("Loss")
     plt.title("Training and Validation Loss")
     plt.legend()
-    plot_path = os.path.join(target_dir, "loss_history.png")
+    plot_path = os.path.join(target_dir, "loss_history.png" if not cfg.use_flow_matching else "fm_loss_history.png")
     plt.savefig(plot_path)
     plt.close()
     #3 losses 
-    pix_train = [x[0] for x in pix2pix_loss_history]
-    pix_val   = [x[1] for x in pix2pix_loss_history]
+    if not cfg.use_flow_matching:
+        history_df = pd.DataFrame({
+        "train_loss": train_loss_history,
+        "val_loss": val_loss_history,
+        "pix2pix_history": pix2pix_loss_history,
+        "gradient_loss_history" : gradient_loss_history,
+        "radial_loss_history" : radial_loss_history
 
-    grad_train = [x[0] for x in gradient_loss_history]
-    grad_val   = [x[1] for x in gradient_loss_history]
+        })
+        
 
-    rad_train = [x[0] for x in radial_loss_history]
-    rad_val   = [x[1] for x in radial_loss_history]
+        # Construire le chemin du CSV
+        csv_path = target_dir / "training_history.csv" 
+        
+        history_df.to_csv(csv_path, index=False)
+        pix_train = [x[0] for x in pix2pix_loss_history]
+        pix_val   = [x[1] for x in pix2pix_loss_history]
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharex=True)
+        grad_train = [x[0] for x in gradient_loss_history]
+        grad_val   = [x[1] for x in gradient_loss_history]
 
-    # --- Pix2Pix ---
-    axes[0].plot(pix_train, label="Train")
-    axes[0].plot(pix_val, label="Val")
-    axes[0].set_title("Pix2Pix Loss")
-    axes[0].set_xlabel("Epoch")
-    axes[0].set_ylabel("Loss")
-    axes[0].legend()
-    axes[0].grid(True)
+        rad_train = [x[0] for x in radial_loss_history]
+        rad_val   = [x[1] for x in radial_loss_history]
 
-    # --- Gradient ---
-    axes[1].plot(grad_train, label="Train")
-    axes[1].plot(grad_val, label="Val")
-    axes[1].set_title("Gradient Loss")
-    axes[1].set_xlabel("Epoch")
-    axes[1].legend()
-    axes[1].grid(True)
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharex=True)
 
-    # --- Radial ---
-    axes[2].plot(rad_train, label="Train")
-    axes[2].plot(rad_val, label="Val")
-    axes[2].set_title("Radial Loss (Vmax)")
-    axes[2].set_xlabel("Epoch")
-    axes[2].legend()
-    axes[2].grid(True)
+        # --- Pix2Pix ---
+        axes[0].plot(pix_train, label="Train")
+        axes[0].plot(pix_val, label="Val")
+        axes[0].set_title("Pix2Pix Loss")
+        axes[0].set_xlabel("Epoch")
+        axes[0].set_ylabel("Loss")
+        axes[0].legend()
+        axes[0].grid(True)
 
-    plt.suptitle("Loss Components Evolution", fontsize=14)
-    plt.tight_layout()
-    plot_path = os.path.join(target_dir, "3_losses_history.png")
-    plt.savefig(plot_path)
-    plt.close()
+        # --- Gradient ---
+        axes[1].plot(grad_train, label="Train")
+        axes[1].plot(grad_val, label="Val")
+        axes[1].set_title("Gradient Loss")
+        axes[1].set_xlabel("Epoch")
+        axes[1].legend()
+        axes[1].grid(True)
+
+        # --- Radial ---
+        axes[2].plot(rad_train, label="Train")
+        axes[2].plot(rad_val, label="Val")
+        axes[2].set_title("Radial Loss (Vmax)")
+        axes[2].set_xlabel("Epoch")
+        axes[2].legend()
+        axes[2].grid(True)
+
+        plt.suptitle("Loss Components Evolution", fontsize=14)
+        plt.tight_layout()
+        plot_path = os.path.join(target_dir, "3_losses_history.png")
+        plt.savefig(plot_path)
+        plt.close()
 
     logger.info("🎯 Training Complete!")
     dst_cfg = os.path.join(target_dir, "config.yaml")

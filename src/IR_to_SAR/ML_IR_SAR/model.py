@@ -7,47 +7,53 @@ import numpy as np
 
 
 def create_model(
-    image_size=None,   # patch final utile
-    in_channels=1,           # IR 
-    out_channels=1,          # SAR output (wind speed map)
-    block_out_channels=None,
-    dropout= 0.0,
-    down_block_types=None,
-    up_block_types=None,
-    conditional_model = False,
-    cross_attention_dim=0,
-    batch_size=None,
-    cond_dim=16
+    cfg,
+    conditional_model=False,
+    in_channels = None
 ):
     """
     Creates a UNet2DModel with the specified configuration.
     """
     if not conditional_model:
         model = UNet2DModel(
-            sample_size=image_size,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            block_out_channels=block_out_channels,
-            down_block_types=down_block_types,
-            up_block_types=up_block_types,
-            dropout=dropout,
-            norm_num_groups=np.min([block_out_channels])
+            sample_size=cfg.img_size,
+            in_channels= in_channels if in_channels is not None else cfg.irwin_channels + (1 if cfg.add_era5 else 0),  # IR channels + optional ERA5 channel
+            out_channels=cfg.out_channels,
+            block_out_channels=cfg.block_out_channels,
+            down_block_types=cfg.down_block_types,
+            up_block_types=cfg.up_block_types,
+            dropout=cfg.dropout,
+            norm_num_groups=np.min([cfg.block_out_channels])
         )
     else : 
         unet = UNet2DConditionModel(
-            sample_size=image_size,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            block_out_channels=block_out_channels,
-            down_block_types=down_block_types,
-            up_block_types=up_block_types,
-            dropout=dropout,
-            norm_num_groups=np.min([block_out_channels]),
-            cross_attention_dim=cross_attention_dim   #features diemnsion
+            sample_size=cfg.img_size,
+            in_channels=cfg.inrwin_channels if cfg.add_era5 else cfg.irwin_channels +1,
+            out_channels=cfg.out_channels,
+            block_out_channels=cfg.block_out_channels,
+            down_block_types=cfg.down_block_types,
+            up_block_types=cfg.up_block_types,
+            dropout=cfg.dropout,
+            norm_num_groups=np.min([cfg.block_out_channels]),
+            cross_attention_dim=cfg.cross_attention_dim   #features diemnsion
         )
-        model = ConditionalUNet(unet=unet, cond_dim=cond_dim,cross_attention_dim=cross_attention_dim)
-
+        model = ConditionalUNet(unet=unet, cond_dim=cfg.cond_dim,cross_attention_dim=cfg.cross_attention_dim)
     return model
+
+def create_fm_model_direct(cfg, in_channels_ir):
+    """
+    Create a UNet2DModel for direct flow matching.
+
+    The only difference from the deterministic model:
+      in_channels = in_channels_ir + 1   (extra channel for x_t)
+      out_channels = 1                   (velocity in SAR space)
+    """
+    in_channels_fm = in_channels_ir + 1   # x_t (1 ch) + IR (C_ir ch)
+    return create_model(
+        cfg=cfg,
+        conditional_model=False,
+        in_channels=in_channels_fm
+            )
 
 
 class ConditionalUNet(nn.Module):

@@ -50,6 +50,9 @@ class IR_SAR_Config:
     regrid_ir : bool
     ir_smoothing : bool
     add_era5 : bool
+    use_flow_matching : bool
+    fm_num_inference_steps : int
+    fm_lr : float
     @staticmethod
     def from_yaml(path: str):
         with open(path, "r") as file:

@@ -58,7 +58,7 @@ class PrepareDataSet():
                   irwin_channels = 1,
                   regrid_ir = False,
                   ir_smoothing = False,
-                  add_era5=False
+                  add_era5=False,cfg=None
                  ):
         self.train_split = train_split
         self.val_split=val_split
@@ -72,6 +72,7 @@ class PrepareDataSet():
         self.regrid_ir = regrid_ir
         self.ir_smoothing = ir_smoothing
         self.add_era5 = add_era5
+        self.cfg=cfg
         
 
         print("🔹 Loading data from csv ...")
@@ -354,27 +355,28 @@ class PrepareDataSet():
                             "satcon_vmax": row["satcon_vmax"],
                             "era5_vmax": row["era5_vmax"]
                         })
+                        cyclone_id = anggrek_csv.iloc[row_idx]["sid"]
                         if self.add_era5:
-                            cyclone_id = anggrek_csv.iloc[row_idx]["sid"]
-                        date = anggrek_csv.iloc[row_idx]["date"]
-                        year = date[0:4]; month = date[5:7];day = date[8:10]
-                        year_path = os.path.join(era5_path, str(year))
-                        fevrier = np.arange(1,29,1) if int(year)%4!=0 else np.arange(1,30,1)
-                        months = [janvier,fevrier,mars,avril,mai,juin,juillet, aout, septembre, octobre, novembre, decembre]
-                        ndays = 0
-                        for i in range(int(month)-1):
-                            ndays += len(months[i])
-                        ndays += int(day)
-                        ndays_str= "0"+str(ndays) if len(str(ndays)) < 3 else str(ndays)
-                        dayera5_path = os.path.join(year_path, ndays_str)
-                        nc_path = ""
-                        for nc_file in os.listdir(dayera5_path):
-                            if cyclone_id in nc_file:
-                                nc_path = os.path.join(dayera5_path, nc_file)
-                                break
-                        reg_era5 = regrid_colocs.regrid_files_era5([nc_path], "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_preparation/regrid_era5/regridded_era5", 
-                                                                resolution_km=2, grid_size_km=300, list_sar_path=list_sar_path, index_hour=int(hour)-1+int(minute)//30)
-                        era5_anggrek.append(reg_era5)
+                            
+                            date = anggrek_csv.iloc[row_idx]["date"]
+                            year = date[0:4]; month = date[5:7];day = date[8:10]
+                            year_path = os.path.join(era5_path, str(year))
+                            fevrier = np.arange(1,29,1) if int(year)%4!=0 else np.arange(1,30,1)
+                            months = [janvier,fevrier,mars,avril,mai,juin,juillet, aout, septembre, octobre, novembre, decembre]
+                            ndays = 0
+                            for i in range(int(month)-1):
+                                ndays += len(months[i])
+                            ndays += int(day)
+                            ndays_str= "0"+str(ndays) if len(str(ndays)) < 3 else str(ndays)
+                            dayera5_path = os.path.join(year_path, ndays_str)
+                            nc_path = ""
+                            for nc_file in os.listdir(dayera5_path):
+                                if cyclone_id in nc_file:
+                                    nc_path = os.path.join(dayera5_path, nc_file)
+                                    break
+                            reg_era5 = regrid_colocs.regrid_files_era5([nc_path], "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_preparation/regrid_era5/regridded_era5", 
+                                                                    resolution_km=2, grid_size_km=300, list_sar_path=list_sar_path, index_hour=int(hour)-1+int(minute)//30)
+                            era5_anggrek.append(reg_era5)
 
                         
 
@@ -383,18 +385,24 @@ class PrepareDataSet():
                     pbar.set_postfix(good=len(good_rows), bad=len(bad_rows))
                     pbar.update(1)
                 # Final: (N, C, H, W)
-                era5_train = np.expand_dims(era5_train,axis=1)
-                era5_val = np.expand_dims(era5_val,axis=1)
-                era5_test = np.expand_dims(era5_test,axis=1)
-                era5_anggrek = np.array(era5_anggrek)    #np.expand_dims(era5_anggrek,axis=1)
-                print(np.array(irwin_anggrek).shape,np.array(era5_anggrek).shape)
-                print(np.array(irwin_train).shape, np.array(era5_train).shape)
-                print(np.array(irwin_val).shape,np.array(era5_val).shape)
-                print(np.array(irwin_test).shape, np.array(era5_test).shape)
-                h_era5,w_era5 = era5_anggrek.shape[-2],era5_anggrek.shape[-1]
-                h_anggrek,w_anggrek = np.array(irwin_anggrek).shape[-2],np.array(irwin_anggrek).shape[-1]
-                irwin_anggrek = np.array(irwin_anggrek)[:,:,h_anggrek//2-h_era5//2:h_anggrek//2+h_era5//2,h_anggrek//2-h_era5//2:h_anggrek//2+h_era5//2]
-                irwin_anggrek = np.concatenate([irwin_anggrek,era5_anggrek], axis=1)
+                if self.add_era5:
+                    era5_train = np.expand_dims(era5_train,axis=1)
+                    era5_val = np.expand_dims(era5_val,axis=1)
+                    era5_test = np.expand_dims(era5_test,axis=1)
+                    era5_anggrek = np.array(era5_anggrek)    #np.expand_dims(era5_anggrek,axis=1)
+                    print(np.array(irwin_anggrek).shape,np.array(era5_anggrek).shape)
+                    print(np.array(irwin_train).shape, np.array(era5_train).shape)
+                    print(np.array(irwin_val).shape,np.array(era5_val).shape)
+                    print(np.array(irwin_test).shape, np.array(era5_test).shape)
+                    h_era5,w_era5 = era5_anggrek.shape[-2],era5_anggrek.shape[-1]
+                    h_anggrek,w_anggrek = np.array(irwin_anggrek).shape[-2],np.array(irwin_anggrek).shape[-1]
+                    irwin_anggrek = np.array(irwin_anggrek)[:,:,h_anggrek//2-h_era5//2:h_anggrek//2+h_era5//2,h_anggrek//2-h_era5//2:h_anggrek//2+h_era5//2]
+                    irwin_anggrek = np.concatenate([irwin_anggrek,era5_anggrek], axis=1)
+                else : 
+                    irwin_anggrek = np.array(irwin_anggrek) 
+                    irwin_train = np.array(irwin_train)
+                    irwin_val = np.array(irwin_val)
+                    irwin_test = np.array(irwin_test)
                 pbar.close()
                          
             #Filter dataframe to only good indices
@@ -412,15 +420,16 @@ class PrepareDataSet():
     
         # all irwins (9)
         #add era5 to irwin 
-        h_sargeo = np.array(irwin_train).shape[-1]
-        irwin_train = np.array(irwin_train)[:,:,h_sargeo//2-h_era5//2:h_sargeo//2+h_era5//2,h_sargeo//2-w_era5//2:h_sargeo//2+w_era5//2]
-        irwin_val= np.array(irwin_val)[:,:,h_sargeo//2-h_era5//2:h_sargeo//2+h_era5//2,h_sargeo//2-w_era5//2:h_sargeo//2+w_era5//2]
-        irwin_test = np.array(irwin_test)[:,:,h_sargeo//2-h_era5//2:h_sargeo//2+h_era5//2,h_sargeo//2-w_era5//2:h_sargeo//2+w_era5//2]
+        if self.add_era5:
+            h_sargeo = np.array(irwin_train).shape[-1]
+            irwin_train = np.array(irwin_train)[:,:,h_sargeo//2-h_era5//2:h_sargeo//2+h_era5//2,h_sargeo//2-w_era5//2:h_sargeo//2+w_era5//2]
+            irwin_val= np.array(irwin_val)[:,:,h_sargeo//2-h_era5//2:h_sargeo//2+h_era5//2,h_sargeo//2-w_era5//2:h_sargeo//2+w_era5//2]
+            irwin_test = np.array(irwin_test)[:,:,h_sargeo//2-h_era5//2:h_sargeo//2+h_era5//2,h_sargeo//2-w_era5//2:h_sargeo//2+w_era5//2]
 
-        irwin_train = np.concatenate([irwin_train,era5_train],axis=1)   # (N, 9, H, W) par ex.
-        
-        
-        irwin_val,irwin_test, irwin_anggrek = np.concatenate([irwin_val,era5_val],axis=1) ,np.concatenate([irwin_test,era5_test],axis=1) , np.array(irwin_anggrek) if anggrek_test else None
+            irwin_train = np.concatenate([irwin_train,era5_train],axis=1)   # (N, 9, H, W) par ex.
+            
+            
+            irwin_val,irwin_test, irwin_anggrek = np.concatenate([irwin_val,era5_val],axis=1) ,np.concatenate([irwin_test,era5_test],axis=1) , np.array(irwin_anggrek) if anggrek_test else None
         self.sar_train, self.sar_val, self.sar_test = np.array(sar_train), np.array(sar_val), np.array(sar_test)
 
         print("train size :",len(sar_train))
@@ -458,13 +467,12 @@ class PrepareDataSet():
                 irwin_val = irwin_val[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:]
                 irwin_test = irwin_test[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:]
             
-            image_channels_train.append(transform_irwin_channels(irwin_train))
-            image_channels_val.append(transform_irwin_channels(irwin_val))
-            image_channels_test.append(transform_irwin_channels(irwin_test))
+            image_channels_train.append(transform_irwin_channels(irwin_train) if self.ir_smoothing else irwin_train)
+            image_channels_val.append(transform_irwin_channels(irwin_val) if self.ir_smoothing else irwin_val)
+            image_channels_test.append(transform_irwin_channels(irwin_test) if self.ir_smoothing else irwin_test)
 
             if anggrek_test:
-                image_channels_anggrek.append(transform_irwin_channels(irwin_anggrek))
-
+                image_channels_anggrek.append(transform_irwin_channels(irwin_anggrek) if self.ir_smoothing else irwin_anggrek)
         elif self.input_data == "normal+gradients":
             image_channels_train.append(irwin_train[:,4,:,:])
             image_channels_val.append(irwin_val[:,4,:,:])
@@ -511,7 +519,6 @@ class PrepareDataSet():
 
         N, C, H, W = self.X_train.shape
         if anggrek_test:
-            print("waaaaaaaaaaaaaaaaaaaaa ibtissaaaaaaaaaaaaaaaam",self.X_anggrek.shape)
             self.X_anggrek = self.X_anggrek
             
             N,C,h_anggrek,W_anggrek= self.X_anggrek.shape

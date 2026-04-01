@@ -61,7 +61,16 @@ class ModelCheckpoint:
 
 
 
-
+def _euler_ode(model, z, ir_input, num_steps, device):
+            """Euler ODE solver (no-grad context assumed)."""
+            x_t = z
+            dt  = 1.0 / num_steps
+            for i in range(num_steps):
+                t = torch.full((x_t.shape[0],), i / num_steps, device=device)
+                model_input   = torch.cat([x_t, ir_input], dim=1)
+                pred_velocity = model(model_input, t).sample
+                x_t = x_t + pred_velocity * dt
+            return x_t
 
 class LogValidationSamples:
     """
@@ -69,20 +78,19 @@ class LogValidationSamples:
     saving per-sample plots in a unique train directory.
     """
 
-    def __init__(self, base_dir, mean_X, std_X, mean_sar, std_sar, norm,
-             num_samples=4, start_epoch=20, every_n_epochs=1,
-             cmap_ir="gray", cmap_sar="viridis", num_epochs=0, infos_train=None, infos_val=None, infos_test=None, 
-             mask_train=None, mask_val = None,mask_test=None,
-             target_dir = None,input_data="normal", output_data="sar",anggrek_test=False,conditional_model=False,log_wind=None,
-             crop_sar=False,irwin_channels=1,regrid_ir=False,add_era5=False
+    def __init__(self, base_dir, mean_X, std_X, mean_sar, std_sar,
+             cmap_ir="gray", cmap_sar="viridis", num_epochs=0, 
+             infos_train=None, infos_val=None, infos_test=None, 
+             mask_train=None, mask_val = None,mask_test=None,target_dir=None,
+             cfg=None
              ):
 
         self.base_dir = Path(base_dir)
         self.output_dir = target_dir
 
-        self.num_samples = num_samples
-        self.start_epoch = start_epoch
-        self.every_n_epochs = every_n_epochs  
+        self.num_samples = cfg.num_val_exemples
+        self.start_epoch = cfg.start_epoch
+        self.every_n_epochs = cfg.plot_interval  
         self.cmap_ir = cmap_ir
         self.cmap_sar = cmap_sar
 
@@ -91,7 +99,7 @@ class LogValidationSamples:
         self.std_sar = std_sar
         self.std_X = std_X
         
-        self.norm = norm
+        self.norm = cfg.norm
         self.mask_train = mask_train
         self.mask_val = mask_val
         self.mask_test=mask_test
@@ -103,18 +111,18 @@ class LogValidationSamples:
         self.vmax_bins_knots = None
         self.rmax_bins_km = None
 
-        self.input_data = input_data
-        self.output_data=output_data
+        self.input_data = cfg.input_data
+        self.output_data=cfg.output_data
 
         
-        self.conditional_model = conditional_model
-        self.log_wind = log_wind
-        self.crop_sar = crop_sar
+        self.conditional_model = cfg.conditional_model
+        self.log_wind = cfg.log_wind
+        self.crop_sar = cfg.crop_sar
 
-        self.irwin_channels = irwin_channels
-        self.regrid_ir = regrid_ir
-        self.add_era5 = add_era5
-
+        self.irwin_channels = cfg.irwin_channels
+        self.regrid_ir = cfg.regrid_ir
+        self.add_era5 = cfg.add_era5
+        self.cfg = cfg
         
         
     def _create_unique_dir(self, base_dir):
@@ -154,6 +162,7 @@ class LogValidationSamples:
         vmax1d_knots = vmax1d
         rmax1d_km = rmax1d * 2
         return vmax1d_knots, rmax1d_km
+    
 
     def log_batch(self, model, batch, epoch, device, set="validation"):
         """
@@ -179,12 +188,19 @@ class LogValidationSamples:
         
         with torch.no_grad():
             if not self.conditional_model:
-                pred = model(x, timestep=0).sample  # (B,1,H,W)
-            else :
+                if not self.cfg.use_flow_matching:
+                    pred = model(x, timestep=0).sample
+                else:
+                    B = x.shape[0]
+                    H = x.shape[2]
+                    W = x.shape[3]
+                    z = torch.randn(B, 1, H, W, device=device)
+                    pred = _euler_ode(model, z, x, self.cfg.fm_num_inference_steps, device)
+            else:
                 shear = torch.stack([
-                                        torch.as_tensor(d["shear"], dtype=torch.float32)
-                                        for d in infos
-                                    ]).to(device) 
+                    torch.as_tensor(d["shear"], dtype=torch.float32)
+                    for d in infos
+                ]).to(device)
                 pred = model(x, timestep=0, cond=shear).sample
             
 
@@ -320,6 +336,8 @@ class LogValidationSamples:
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
             plt.savefig(save_path, dpi=150)
             plt.close(fig)
+        
+        
 
 
         # ---------------------------------------------------------------------------------------------------------------------------------------------------
@@ -329,6 +347,7 @@ class LogValidationSamples:
         ir = ir.squeeze().cpu().numpy()
         sar = sar.squeeze().cpu().numpy()
         pred = pred.squeeze().cpu().numpy()
+
         
         ir_denorm   = denorm(ir,  self.mean_X[ch],   self.std_X[ch])
        
@@ -602,6 +621,7 @@ class LogValidationSamples:
 
         
     
+
     def on_validation_plots(self, model, epoch, dataloader, device):
             print(f"📸 Logging validation samples at epoch {epoch +1}")
             print("size of dataloader",len(dataloader))
@@ -732,7 +752,14 @@ class LogValidationSamples:
         # Predict
         with torch.no_grad():
             if not self.conditional_model:
-                pred = model(x, timestep=0).sample  # (B,1,H,W)
+                if not self.cfg.use_flow_matching:
+                    pred = model(x, timestep=0).sample
+                else:
+                    B = x.shape[0]
+                    H = x.shape[2]
+                    W = x.shape[3]
+                    z = torch.randn(B, 1, H, W, device=device)
+                    pred = _euler_ode(model, z, x, self.cfg.fm_num_inference_steps, device)
             else :
                 shear = torch.stack([
                                         torch.as_tensor(d["shear"], dtype=torch.float32)
@@ -822,7 +849,7 @@ class LogValidationSamples:
         # -------------------------
         os.makedirs(os.path.join(self.output_dir,'predictions_denormalisees',"anggrek"),exist_ok=True)                               # (B, H, W)
         with open(os.path.join(self.output_dir,"predictions_denormalisees","anggrek","predictions_denormalisées.pkl"),"wb") as f:
-            pkl.dump({f"{set}":[ir_den,pred_den,infos_ord]},f)
+            pkl.dump({f"anggrek":[ir_den,pred_den,infos_ord]},f)
 
 
         out_root = Path(self.output_dir) / "anggrek_monitoring"
