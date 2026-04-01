@@ -496,9 +496,9 @@ class PrepareDataSet():
         self.X_val = np.concatenate(image_channels_val, axis=1)
         self.X_test = np.concatenate(image_channels_test, axis=1)
         if anggrek_test:
-            self.X_anggrek = np.array(image_channels_anggrek)
+            self.X_anggrek = np.array(image_channels_anggrek).squeeze()
 
-
+ 
         print("Start Reshaping Data ........")
 
         if self.regrid_ir:
@@ -511,6 +511,7 @@ class PrepareDataSet():
 
         N, C, H, W = self.X_train.shape
         if anggrek_test:
+            print("waaaaaaaaaaaaaaaaaaaaa ibtissaaaaaaaaaaaaaaaam",self.X_anggrek.shape)
             self.X_anggrek = self.X_anggrek
             
             N,C,h_anggrek,W_anggrek= self.X_anggrek.shape
