@@ -169,8 +169,7 @@ class LogValidationSamples:
         Log l'ensemble d'un batch : images + distributions pixel-par-pixel.
         Compatible avec un batch normal ou avec 'toute la validation concaténée'.
         """
-        if epoch < self.start_epoch or (epoch - self.start_epoch) % self.every_n_epochs != 0:
-            return
+        
 
         model.eval()
 
@@ -803,7 +802,7 @@ class LogValidationSamples:
             pred_np = pred_np[None, ...]  # force (B,H,W)
 
         B = x_np.shape[0]
-        print("Ibtissaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaam",x_np.shape)
+        
         ch = 2 if x_np.shape[1] > 4 else 0   # IR channel index
         
         ir = x_np[:, ch, :, :]  # (B,H,W)

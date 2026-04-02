@@ -153,11 +153,10 @@ class PrepareDataSet():
                             reg_era5 = regrid_colocs.regrid_files_era5([nc_path], "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_preparation/regrid_era5/regridded_era5", 
                                            resolution_km=2, grid_size_km=300, list_sar_path=list_sar_path, index_hour=int(hour)-1+int(minute)//30)[0]
                             era5_train.append(reg_era5)
-                            sar_train.append(ds_aeqd["owiWindSpeed"].values)
-                            irwin_train.append(sargeo["IRWIN"].values)
-                        else : 
-                            sar_train.append(ds_aeqd["owiWindSpeed"].values)
-                            irwin_train.append(sargeo["IRWIN"].values)
+
+                        sar_train.append(ds_aeqd["owiWindSpeed"].values)
+                        irwin_train.append(sargeo["IRWIN"].values)
+                        
 
                     #add also environemental features
                     if conditional_model:
@@ -218,11 +217,10 @@ class PrepareDataSet():
                             reg_era5 = regrid_colocs.regrid_files_era5([nc_path], "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_preparation/regrid_era5/regridded_era5", 
                                            resolution_km=2, grid_size_km=300, list_sar_path=list_sar_path, index_hour=int(hour)-1+int(minute)//30)[0]
                             era5_val.append(reg_era5)
-                            sar_val.append(ds_aeqd["owiWindSpeed"].values)
-                            irwin_val.append(sargeo["IRWIN"].values)
-                        else :
-                            sar_val.append(ds_aeqd["owiWindSpeed"].values)
-                            irwin_val.append(sargeo["IRWIN"].values)
+
+                        sar_val.append(ds_aeqd["owiWindSpeed"].values)
+                        irwin_val.append(sargeo["IRWIN"].values)
+                        
 
                             
                     if conditional_model:
@@ -284,11 +282,9 @@ class PrepareDataSet():
                             reg_era5 = regrid_colocs.regrid_files_era5([nc_path], "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_preparation/regrid_era5/regridded_era5", 
                                            resolution_km=2, grid_size_km=300, list_sar_path=list_sar_path, index_hour=int(hour)-1+int(minute)//30)[0]
                             era5_test.append(reg_era5)
-                            sar_test.append(ds_aeqd["owiWindSpeed"].values)
-                            irwin_test.append(sargeo["IRWIN"].values)
-                        else :
-                            sar_test.append(ds_aeqd["owiWindSpeed"].values)
-                            irwin_test.append(sargeo["IRWIN"].values)
+                        sar_test.append(ds_aeqd["owiWindSpeed"].values)
+                        irwin_test.append(sargeo["IRWIN"].values)
+                        
 
                     if conditional_model:
                         shear_vec = row[shear_cols].to_numpy(dtype=np.float32)
@@ -426,7 +422,8 @@ class PrepareDataSet():
             irwin_val= np.array(irwin_val)[:,:,h_sargeo//2-h_era5//2:h_sargeo//2+h_era5//2,h_sargeo//2-w_era5//2:h_sargeo//2+w_era5//2]
             irwin_test = np.array(irwin_test)[:,:,h_sargeo//2-h_era5//2:h_sargeo//2+h_era5//2,h_sargeo//2-w_era5//2:h_sargeo//2+w_era5//2]
 
-            irwin_train = np.concatenate([irwin_train,era5_train],axis=1)   # (N, 9, H, W) par ex.
+            irwin_train = np.concatenate([irwin_train,era5_train],axis=1)   # (N, 10, H, W) par ex.
+            print("abiriiiiiiiiiiiiiiiiir",irwin_train.shape)
             
             
             irwin_val,irwin_test, irwin_anggrek = np.concatenate([irwin_val,era5_val],axis=1) ,np.concatenate([irwin_test,era5_test],axis=1) , np.array(irwin_anggrek) if anggrek_test else None
@@ -466,13 +463,21 @@ class PrepareDataSet():
                 irwin_train = irwin_train[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:]
                 irwin_val = irwin_val[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:]
                 irwin_test = irwin_test[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:]
+            else : 
+                
+                irwin_train = np.concatenate([irwin_train[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:],era5_train], axis=1)
+                irwin_val = np.concatenate([irwin_val[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:],era5_val], axis=1)
+                irwin_test = np.concatenate([irwin_test[:,4-self.irwin_channels//2:4+self.irwin_channels//2+1,:,:],era5_test], axis=1)
+
             
             image_channels_train.append(transform_irwin_channels(irwin_train) if self.ir_smoothing else irwin_train)
             image_channels_val.append(transform_irwin_channels(irwin_val) if self.ir_smoothing else irwin_val)
             image_channels_test.append(transform_irwin_channels(irwin_test) if self.ir_smoothing else irwin_test)
 
-            if anggrek_test:
+        if anggrek_test:
                 image_channels_anggrek.append(transform_irwin_channels(irwin_anggrek) if self.ir_smoothing else irwin_anggrek)
+
+
         elif self.input_data == "normal+gradients":
             image_channels_train.append(irwin_train[:,4,:,:])
             image_channels_val.append(irwin_val[:,4,:,:])
@@ -504,7 +509,7 @@ class PrepareDataSet():
         self.X_val = np.concatenate(image_channels_val, axis=1)
         self.X_test = np.concatenate(image_channels_test, axis=1)
         if anggrek_test:
-            self.X_anggrek = np.array(image_channels_anggrek).squeeze()
+            self.X_anggrek = np.array(image_channels_anggrek).squeeze(axis=0)
 
  
         print("Start Reshaping Data ........")
@@ -546,8 +551,11 @@ class PrepareDataSet():
 
 
         #  Convert IR from Kelvin to Celsius ===
+        
         n_ir_channels = self.X_train.shape[1] - 1 if self.add_era5 else self.X_train.shape[1]
+        print(self.X_train.shape, n_ir_channels)
         for c in range(n_ir_channels) : 
+            print(f"Converting channel {c} from Kelvin to Celsius...")
             self.X_train[:, c] = self.X_train[:, c] - 273.15  
             self.X_val[:,c] = self.X_val[:,c] - 273.15
             self.X_test[:,c] = self.X_test[:,c] - 273.15
