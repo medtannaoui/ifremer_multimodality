@@ -620,6 +620,63 @@ class LogValidationSamples:
 
         
     
+    def plot_fm_diagnostics(self, model, x_ir, sar_target, mask, stats, device="cpu",
+                        num_steps=20, n_rows=5, set="validation", epoch=0):
+        """
+        Quick validation figure: IR | SAR target | FM sample | velocity at t=0.5.
+        Call this from LogValidationSamples.on_validation_plots() with use_flow_matching=True.
+        """
+        model.eval()
+        B = min(x_ir.shape[0], n_rows)
+        x_ir    = x_ir[:B].to(device)
+        sar_tgt = sar_target[:B].to(device)
+        mask_v  = mask[:B].to(device)
+
+        if sar_tgt.ndim == 3:
+            sar_tgt = sar_tgt.unsqueeze(1)
+            mask_v  = mask_v.unsqueeze(1)
+
+        with torch.no_grad():
+            # One FM sample
+            z      = torch.randn(B, 1, x_ir.shape[2], x_ir.shape[3], device=device)
+            fm_out = _euler_ode(model, z, x_ir, num_steps, device)
+
+            # Velocity at midpoint t=0.5 (diagnostic: should be near x₁−z)
+            t_mid = torch.full((B,), 0.5, device=device)
+            mi    = torch.cat([z, x_ir], dim=1)
+            vel05 = model(mi, t_mid).sample
+
+        sar_mean = stats["mean"]
+        sar_std  = stats["std"]
+
+        fig, axes = plt.subplots(B, 4, figsize=(16, 4 * B))
+        if B == 1:
+            axes = axes[None]
+        #create a folder for fm diagnostics
+        
+        for i in range(B):
+            im_ir  = x_ir[i, 0].cpu().numpy()          # first IR channel
+            im_tgt = sar_tgt[i, 0].cpu().numpy() * sar_std + sar_mean
+            im_fm  = fm_out[i, 0].cpu().numpy()  * sar_std + sar_mean
+            im_vel = vel05[i, 0].cpu().numpy()
+
+            axes[i, 0].imshow(im_ir,  cmap="gray");         axes[i, 0].set_title("IR (ch 0)")
+            axes[i, 1].imshow(im_tgt, cmap="RdBu_r");       axes[i, 1].set_title("SAR target")
+            axes[i, 2].imshow(im_fm,  cmap="RdBu_r");       axes[i, 2].set_title("FM sample")
+            axes[i, 3].imshow(im_vel, cmap="seismic");       axes[i, 3].set_title("Velocity @ t=0.5")
+
+            
+
+
+        for ax in axes.flat:
+            ax.axis("off")
+        plt.tight_layout()
+        os.makedirs(os.path.join(self.output_dir,f"fm_diagnostics_{set}"),exist_ok=True)
+        save_path = os.path.join(self.output_dir, f"fm_diagnostics_{set}", f"fm_diagnostics_{epoch+1}.png")
+        plt.savefig(save_path, dpi=150)
+        return fig
+
+    
 
     def on_validation_plots(self, model, epoch, dataloader, device):
             print(f"📸 Logging validation samples at epoch {epoch +1}")
@@ -700,6 +757,12 @@ class LogValidationSamples:
             self.log_batch(model, batch_full_train, epoch, device, set="train")
             self.log_batch(model, batch_full_val, epoch, device)
             self.log_batch(model, batch_full_test, epoch, device, set="test")
+            self.plot_fm_diagnostics(model, ir_full_train, sar_full_train, mask_train, stats={"mean": self.mean_sar, "std": self.std_sar}, 
+                                     device=device, num_steps=self.cfg.fm_num_inference_steps, n_rows=5, set="train", epoch=epoch)
+            self.plot_fm_diagnostics(model, ir_full_val, sar_full_val, mask_val, stats={"mean": self.mean_sar, "std": self.std_sar}, 
+                                     device=device, num_steps=self.cfg.fm_num_inference_steps, n_rows=5, set="validation", epoch=epoch)
+            self.plot_fm_diagnostics(model, ir_full_test, sar_full_test, mask_test, stats={"mean": self.mean_sar, "std": self.std_sar}, 
+                                     device=device, num_steps=self.cfg.fm_num_inference_steps, n_rows=5, set="test", epoch=epoch)   
             if not  self.conditional_model : 
 
                 for ir, sar, mask, inf in dataloader[3]:
