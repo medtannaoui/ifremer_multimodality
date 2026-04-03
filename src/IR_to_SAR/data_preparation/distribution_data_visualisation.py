@@ -410,7 +410,7 @@ def plot_mw(tensor, cmap="cividis",x=None, y=None, ax=None, x_lim=300):
     ax.set_aspect('equal')
     
 
-def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False,min=None, max=None):
+def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False,min=None, max=None, y_label = None, output = None):
     
     if set == "train":
         return None
@@ -464,7 +464,7 @@ def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False
             label=f"Regression: y={coef[0]:.2f}x+{coef[1]:.2f}")
 
     ax.set_xlabel(f"Analysis Vmax (m/s)")
-    ax.set_ylabel("Predicted Vmax (m/s)")
+    ax.set_ylabel(y_label or "Predicted Vmax (m/s)")
     ax.set_title(f"Vmax Comparison — Epoch {epoch+1} ({set}) {title_end}")
     ax.grid(True, linestyle="--", alpha=0.3)
     ax.legend(loc="lower right")
@@ -494,8 +494,9 @@ def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False
     plt.tight_layout()
 
     filename = f"Vmax_Comparison_{title_end}.png"
-    os.makedirs(os.path.join(output_dir,"vmax_compare",set),exist_ok=True)
-    plt.savefig(os.path.join(output_dir,"vmax_compare",set, filename), dpi=150)
+    if output is None:
+        os.makedirs(os.path.join(output_dir,"vmax_compare",set),exist_ok=True)
+    plt.savefig(output if output is not None else os.path.join(output_dir,"vmax_compare",set, filename), dpi=150)
     plt.close(fig)
 
 
@@ -670,7 +671,7 @@ def compute_mae_metric(sar_true, sar_pred, output_dir, set, epoch, plot=False):
         plt.show()
 
 
-def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False, min=None, max=None):
+def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False, min=None, max=None, y_label=None, output=None):
     """
     Compare Analysis Rmax vs Predicted Rmax (from SAR prediction).
 
@@ -758,7 +759,7 @@ def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False
 
     ax1.set_title(f"Rmax Comparison — Epoch {epoch+1} ({set}) {title_end}", fontsize=15)
     ax1.set_xlabel("Analysis Rmax (km)")
-    ax1.set_ylabel("Predicted Rmax (km)")
+    ax1.set_ylabel(y_label or "Predicted Rmax (km)")
     ax1.grid(True, linestyle="--", alpha=0.4)
     
 
@@ -793,8 +794,9 @@ def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False
     if plot:
         plt.show()
     else:
-        os.makedirs(os.path.join(output_dir,"rmax_compare",set,),exist_ok=True)
-        out_path = os.path.join(output_dir,"rmax_compare",set, f"Rmax_Comparison_{set}_{title_end}.png")
+        if output is None:
+            os.makedirs(os.path.join(output_dir,"rmax_compare",set,),exist_ok=True)
+        out_path = output if output is not None else os.path.join(output_dir,"rmax_compare",set, f"Rmax_Comparison_{set}_{title_end}.png")
         plt.savefig(out_path, dpi=150)
         plt.close()
 

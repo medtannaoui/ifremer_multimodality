@@ -13,6 +13,13 @@ import src.IR_to_SAR.data_preparation.distribution_data_visualisation as distdat
 importlib.reload(distdata)
 
 
+
+import src.IR_to_SAR.ML_IR_SAR.flow_matching_inference as fm_inf
+importlib.reload(fm_inf)
+from src.IR_to_SAR.ML_IR_SAR import flow_matching_inference as fm_inf
+
+
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class EarlyStopping:
@@ -164,7 +171,7 @@ class LogValidationSamples:
         return vmax1d_knots, rmax1d_km
     
 
-    def log_batch(self, model, batch, epoch, device, set="validation"):
+    def log_batch(self, model, batch, epoch, device, set="validation",ode_pred=None):
         """
         Log l'ensemble d'un batch : images + distributions pixel-par-pixel.
         Compatible avec un batch normal ou avec 'toute la validation concaténée'.
@@ -172,8 +179,10 @@ class LogValidationSamples:
         
 
         model.eval()
-
-        x, sar, mask, infos = batch
+        if ode_pred is None:
+            x_fm, sar_fm, mask_fm, infos_fm = batch
+        x, sar, mask, infos, ode_pred = batch if ode_pred is not None else (*batch, None)
+        
         cyclone_id = [d["cyclone_id"] for d in infos]             
         sar_time = [d["sar_time"] for d in infos] 
         vmax=  [d["vmax"] for d in infos] 
@@ -185,22 +194,28 @@ class LogValidationSamples:
         sar = sar.to(device)
         mask = mask.to(device)
         
-        with torch.no_grad():
-            if not self.conditional_model:
-                if not self.cfg.use_flow_matching:
-                    pred = model(x, timestep=0).sample
+
+        if ode_pred is None:
+            with torch.no_grad():
+                if not self.conditional_model:
+                    if not self.cfg.use_flow_matching:
+                        pred = model(x, timestep=0).sample
+                    else:
+                        B = x.shape[0]
+                        H = x.shape[2]
+                        W = x.shape[3]
+                        z = torch.randn(B, 1, H, W, device=device)
+                        pred = _euler_ode(model, z, x, self.cfg.fm_num_inference_steps, device)
                 else:
-                    B = x.shape[0]
-                    H = x.shape[2]
-                    W = x.shape[3]
-                    z = torch.randn(B, 1, H, W, device=device)
-                    pred = _euler_ode(model, z, x, self.cfg.fm_num_inference_steps, device)
-            else:
-                shear = torch.stack([
-                    torch.as_tensor(d["shear"], dtype=torch.float32)
-                    for d in infos
-                ]).to(device)
-                pred = model(x, timestep=0, cond=shear).sample
+                    shear = torch.stack([
+                        torch.as_tensor(d["shear"], dtype=torch.float32)
+                        for d in infos
+                    ]).to(device)
+                    pred = model(x, timestep=0, cond=shear).sample
+        
+        else : 
+            pred = ode_pred.to(device)
+            print(pred.shape)
             
 
         def denorm(t, mean, std):
@@ -490,7 +505,7 @@ class LogValidationSamples:
         mask_2d = mask_np 
         os.makedirs(os.path.join(self.output_dir,'predictions_denormalisees',set),exist_ok=True)                               # (B, H, W)
         with open(os.path.join(self.output_dir,"predictions_denormalisees",set,"predictions_denormalisées.pkl"),"wb") as f:
-            pkl.dump({f"{set}":[ir_np,sar_2d,pred_2d,mask_2d,infos_np]},f)
+            pkl.dump({f"{set}":[ir_np,sar_2d,pred_2d,mask_2d,infos_np],"model":model},f)
 
         # Conversion en knots
         sar_2d  = sar_2d #m/s
@@ -617,11 +632,99 @@ class LogValidationSamples:
             plt.close(fig)
 
         print(f"💾 Saved {num} sample images.")
+        
+        if set == "test" and self.cfg.use_flow_matching:
+            os.makedirs(os.path.join(self.output_dir,f"fm_diagnostics_{set}","rank_hist_and_samples"), exist_ok=True)
+            rank_smple_path = os.path.join(self.output_dir,f"fm_diagnostics_{set}","rank_hist_and_samples")
+            
+            print(f"starting fm diagnostics for {set} set")
+            #loop over thye batch with tqdm to see the progress
+            mean_ph, std_ph = [], []
+            
+            for i, (x_ir, sar_target, mask, infos) in enumerate(zip(x_fm, sar_fm, mask_fm, infos_fm)):
+                x_ir = x_ir.unsqueeze(0).to(device)
+                sar_target = sar_target.unsqueeze(0).to(device)
+                mask = mask.unsqueeze(0).to(device)
+                fm_model = model
+                stats = {"mean": self.mean_sar, "std": self.std_sar}
+                ensemble = fm_inf.generate_ensemble(model=fm_model, ir_input=x_ir, n_members=20, device=device)
+                if i%10==0 : 
+                    os.makedirs(os.path.join(rank_smple_path, f"{cyclone_id[i]}_{sar_time[i]}"), exist_ok=True)
+                    
+                    save_path_samples = os.path.join(rank_smple_path, f"{cyclone_id[i]}_{sar_time[i]}", "samples.png")
+                    save_path_rank =    os.path.join(rank_smple_path, f"{cyclone_id[i]}_{sar_time[i]}", "rank_histogram.png")
+                    ens_mean_phys, ens_std_phys = fm_inf.plot_ensemble_results(x_ir,sar_target=sar_target, ensemble=ensemble, stats=stats, mask=mask, save_path= save_path_samples,
+                                                cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir,save_pic=i%10==0)
+                    mean_ph.append(ens_mean_phys); std_ph.append(ens_std_phys)
+
+                    #rank histogram of the analysis in the ensemble
+                    ranks , n_members= fm_inf.rank_histogram(ensemble, sar_target.unsqueeze(0), mask)
+                    fm_inf.plot_rank_histogram(ranks, n_members=n_members, save_pth=save_path_rank)
+                else : 
+                    ens_mean_phys, ens_std_phys = fm_inf.plot_ensemble_results(x_ir,sar_target=sar_target, ensemble=ensemble, stats=stats, mask=mask, save_path= save_path_samples,
+                                                cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir,save_pic=False)
+                    mean_ph.append(ens_mean_phys); std_ph.append(ens_std_phys)
+
+
+
+
+            #plot_vmax plots and rmax plot with mean_ph vs sar and std_ph vs sar for all the samples in the batch
+            mean_ph = np.array(mean_ph)
+            std_ph = np.array(std_ph)
+            sar_target = sar_target.squeeze().cpu().numpy()
+            os.makedirs(os.path.join(self.output_dir,f"fm_diagnostics_{set}","mean_std_plots"), exist_ok=True)
+            save_path = os.path.join(self.output_dir,f"fm_diagnostics_{set}","mean_std_plots", f"mean_std_vmax_rmax_epoch_{epoch+1}.png")
+            distdata.vmax_compare(
+                analysis_vmax,
+                mean_ph*mask_2d,
+                self.output_dir,
+                set=set,
+                epoch=epoch,
+                y_label= "Vmax Mean ensemble fm (m/s)",
+                output = os.path.join(self.output_dir,f"fm_diagnostics_{set}","mean_std_plots", f"mean_vmax_epoch_{epoch+1}.png")
+            )
+            distdata.rmax_compare(
+                analysis_rmax,
+                mean_ph*mask_2d,
+                self.output_dir,
+                set=set,
+                epoch=epoch,
+                y_label= "Rmax Mean ensemble fm (km)",
+                output= os.path.join(self.output_dir,f"fm_diagnostics_{set}","mean_std_plots", f"mean_rmax_epoch_{epoch+1}.png")
+            )
+            # Stabdard deviation plots
+            distdata.vmax_compare(
+                analysis_vmax,
+                std_ph*mask_2d,
+                self.output_dir,
+                set=set,
+                epoch=epoch,
+                y_label= "Vmax Std ensemble fm (m/s)",
+                output = os.path.join(self.output_dir,f"fm_diagnostics_{set}","mean_std_plots", f"std_vmax_epoch_{epoch+1}.png")
+            )
+            distdata.rmax_compare(
+                analysis_rmax,
+                std_ph*mask_2d,
+                self.output_dir,
+                set=set,
+                epoch=epoch,
+                y_label= "Rmax Std ensemble fm (km)",
+                output= os.path.join(self.output_dir,f"fm_diagnostics_{set}","mean_std_plots", f"std_rmax_epoch_{epoch+1}.png")
+            )
+
+       
+            
+            
+
+
+            
+
+
 
         
     
     def plot_fm_diagnostics(self, model, x_ir, sar_target, mask, stats, device="cpu",
-                        num_steps=20, n_rows=5, set="validation", epoch=0):
+                        num_steps=20, n_rows=5, set="validation", epoch=0, cmap_sar="viridis", cmap_ir="gray"):
         """
         Quick validation figure: IR | SAR target | FM sample | velocity at t=0.5.
         Call this from LogValidationSamples.on_validation_plots() with use_flow_matching=True.
@@ -660,10 +763,10 @@ class LogValidationSamples:
             im_fm  = fm_out[i, 0].cpu().numpy()  * sar_std + sar_mean
             im_vel = vel05[i, 0].cpu().numpy()
 
-            axes[i, 0].imshow(im_ir,  cmap="gray");         axes[i, 0].set_title("IR (ch 0)")
-            axes[i, 1].imshow(im_tgt, cmap="RdBu_r");       axes[i, 1].set_title("SAR target")
-            axes[i, 2].imshow(im_fm,  cmap="RdBu_r");       axes[i, 2].set_title("FM sample")
-            axes[i, 3].imshow(im_vel, cmap="seismic");       axes[i, 3].set_title("Velocity @ t=0.5")
+            axes[i, 0].imshow(im_ir,  cmap=cmap_ir or "gray");         axes[i, 0].set_title("IR (ch 0)")
+            axes[i, 1].imshow(im_tgt, cmap=cmap_sar or "RdBu_r");       axes[i, 1].set_title("SAR target")
+            axes[i, 2].imshow(im_fm,  cmap=cmap_sar or "RdBu_r");       axes[i, 2].set_title("FM sample")
+            axes[i, 3].imshow(im_vel, cmap=cmap_sar or "seismic");       axes[i, 3].set_title("Velocity @ t=0.5")
 
             
 
@@ -680,7 +783,6 @@ class LogValidationSamples:
 
     def on_validation_plots(self, model, epoch, dataloader, device):
             print(f"📸 Logging validation samples at epoch {epoch +1}")
-            print("size of dataloader",len(dataloader))
 
             all_ir_val = []
             all_sar_val = []
@@ -757,13 +859,8 @@ class LogValidationSamples:
             self.log_batch(model, batch_full_train, epoch, device, set="train")
             self.log_batch(model, batch_full_val, epoch, device)
             self.log_batch(model, batch_full_test, epoch, device, set="test")
-            self.plot_fm_diagnostics(model, ir_full_train, sar_full_train, mask_train, stats={"mean": self.mean_sar, "std": self.std_sar}, 
-                                     device=device, num_steps=self.cfg.fm_num_inference_steps, n_rows=5, set="train", epoch=epoch)
-            self.plot_fm_diagnostics(model, ir_full_val, sar_full_val, mask_val, stats={"mean": self.mean_sar, "std": self.std_sar}, 
-                                     device=device, num_steps=self.cfg.fm_num_inference_steps, n_rows=5, set="validation", epoch=epoch)
-            self.plot_fm_diagnostics(model, ir_full_test, sar_full_test, mask_test, stats={"mean": self.mean_sar, "std": self.std_sar}, 
-                                     device=device, num_steps=self.cfg.fm_num_inference_steps, n_rows=5, set="test", epoch=epoch)   
-            if not  self.conditional_model : 
+             
+            if not  self.conditional_model: 
 
                 for ir, sar, mask, inf in dataloader[3]:
                     ir_anggrek.append(ir)
@@ -779,19 +876,54 @@ class LogValidationSamples:
                 
 
                 self.anggrek_plots(model, batch_full_anggrek, epoch, device)
+                print("finished anggrek plots")
+            
+            if self.cfg.use_flow_matching:
+                print("starting fm diagnostics for train, val and test sets")
+                self.plot_fm_diagnostics(model, ir_full_train, sar_full_train, mask_train, stats={"mean": self.mean_sar, "std": self.std_sar}, 
+                                        device=device, num_steps=self.cfg.fm_num_inference_steps, n_rows=5, set="train", epoch=epoch,
+                                        cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir)
+                self.plot_fm_diagnostics(model, ir_full_val, sar_full_val, mask_val, stats={"mean": self.mean_sar, "std": self.std_sar}, 
+                                         device=device, num_steps=self.cfg.fm_num_inference_steps, n_rows=5, set="validation", epoch=epoch,
+                                         cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir)
+                self.plot_fm_diagnostics(model, ir_full_test, sar_full_test, mask_test, stats={"mean": self.mean_sar, "std": self.std_sar}, 
+                                         device=device, num_steps=self.cfg.fm_num_inference_steps, n_rows=8, set="test", epoch=epoch, 
+                                         cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir)  
 
+                self.anggrek_plots(model, batch_full_anggrek, epoch, device, add_mean_std_fm = True)
+            
+            #ode selver with guidance
+            ode_guidances = [];ode_reprojections = []
+            for ir, sar, mask, inf in dataloader[2]:   #test set
+                ir = ir.to(device)
+                sar = sar.to(device)
+                mask = mask.to(device)
+                fm_model = model
+                stats = {"mean": self.mean_sar, "std": self.std_sar}
+                z = torch.randn_like(sar)
+                ode_guidance_out = fm_inf.ode_solver_with_guidance(model=fm_model, z=z, ir_input=ir, obs_sar=sar, obs_mask=mask, 
+                                                                   num_steps=self.cfg.fm_num_inference_steps,
+                                                                    sar_mean_stat=self.mean_sar, sar_std_stat=self.std_sar)
+                ode_reprojectiion_out = fm_inf.ode_solver_with_reprojection(model=fm_model,z=z, ir_input=ir, obs_sar=sar, 
+                                                                            obs_mask=mask, num_steps=self.cfg.fm_num_inference_steps)
+                
+                ode_guidances.append(ode_guidance_out)
+                ode_reprojections.append(ode_reprojectiion_out)
 
-
-        
-        
-
+            ode_guidances = torch.cat(ode_guidances, dim=0)
+            ode_reprojections = torch.cat(ode_reprojections, dim=0)
+            print("wiaaaaaaaaam",sar_full_test.shape, ode_guidances.shape)
+            batch_full_test_guidance = (ir_full_test,  sar_full_test, mask_test, infos_test, ode_guidances)
+            batch_full_test_reprojection = (ir_full_test,  sar_full_test, mask_test, infos_test, ode_reprojections)
+            self.log_batch(model, batch_full_test_guidance, epoch, device, set="test_guidance",ode_pred=True)
+            self.log_batch(model, batch_full_test_reprojection, epoch, device, set="test_reprojection", ode_pred=True)
 
         # save distribution of wind speed of pred and true val to compare it
         #just in the lkast epoch
 
     
 
-    def anggrek_plots(self, model, batch, epoch, device):
+    def anggrek_plots(self, model, batch, epoch, device, add_mean_std_fm = False):
         """
         Produces ONLY:
         (1) field_plots/<YYYYmmddHHMMSS>/<YYYYmmddHHMMSS>_fields.png with IR + PRED
@@ -813,21 +945,22 @@ class LogValidationSamples:
 
         # Predict
         with torch.no_grad():
-            if not self.conditional_model:
-                if not self.cfg.use_flow_matching:
-                    pred = model(x, timestep=0).sample
-                else:
-                    B = x.shape[0]
-                    H = x.shape[2]
-                    W = x.shape[3]
-                    z = torch.randn(B, 1, H, W, device=device)
-                    pred = _euler_ode(model, z, x, self.cfg.fm_num_inference_steps, device)
-            else :
-                shear = torch.stack([
-                                        torch.as_tensor(d["shear"], dtype=torch.float32)
-                                        for d in infos
-                                    ]).to(device) 
-                pred = model(x, timestep=0, cond=shear).sample
+            if not add_mean_std_fm:
+                if not self.conditional_model:
+                    if not self.cfg.use_flow_matching:
+                        pred = model(x, timestep=0).sample
+                    else:
+                        B = x.shape[0]
+                        H = x.shape[2]
+                        W = x.shape[3]
+                        z = torch.randn(B, 1, H, W, device=device)
+                        pred = _euler_ode(model, z, x, self.cfg.fm_num_inference_steps, device)
+                else :
+                    shear = torch.stack([
+                                            torch.as_tensor(d["shear"], dtype=torch.float32)
+                                            for d in infos
+                                        ]).to(device) 
+                    pred = model(x, timestep=0, cond=shear).sample
 
         # -------------------------
         def denorm(t, mean, std):
@@ -858,119 +991,148 @@ class LogValidationSamples:
             return moment / r_safe[None, :, :]
 
         # -------------------------
-        x_np = x.detach().cpu().numpy()  # (B,C,H,W)
-        pred_np = pred.detach().squeeze().cpu().numpy()  # (B,H,W) or (H,W) if B=1
+        if not add_mean_std_fm:
+            x_np = x.detach().cpu().numpy()  # (B,C,H,W)
+            pred_np = pred.detach().squeeze().cpu().numpy()  # (B,H,W) or (H,W) if B=1
 
-        if pred_np.ndim == 2:
-            pred_np = pred_np[None, ...]  # force (B,H,W)
+            if pred_np.ndim == 2:
+                pred_np = pred_np[None, ...]  # force (B,H,W)
 
-        B = x_np.shape[0]
+            B = x_np.shape[0]
+            
+            ch = 2 if x_np.shape[1] > 4 else 0   # IR channel index
+            
+            ir = x_np[:, ch, :, :]  # (B,H,W)
+            if self.add_era5 : 
+                era5 = x_np[:,-1,:,:]
+                era5 = denorm(era5,self.mean_X[-1],self.std_X[-1])
+            pred1 = pred_np          # (B,H,W)
+
+            ir_den = denorm(ir, self.mean_X[ch], self.std_X[ch])
+
+            if self.norm == "z_score":
+                pred_den = denorm(pred1, self.mean_sar, self.std_sar)
+            elif self.norm == "annular":
+                pred_den = annular_denormalization(pred1, stats={"mean": self.mean_sar, "std": self.std_sar})
+            else:
+                # fallback: assume already denorm
+                pred_den = pred1
+            
+            if self.log_wind:
+                pred_den = np.exp(pred_den) - 1e-10
+
+            if self.output_data == "aam":
+                pred_den = moment_to_sar(pred_den)
+
+            # -------------------------
+            # Sort by time
+            # -------------------------
+            sar_time = [d.get("date") for d in infos]
+            time_parsed = pd.to_datetime(sar_time, errors="coerce")
+            order = np.argsort(time_parsed.values.astype("datetime64[ns]"))
+
+            ir_den = ir_den[order]
+            pred_den = pred_den[order]
+            infos_ord = [infos[i] for i in order]
+            time_parsed = time_parsed[order]
+
+            if self.crop_sar:
+                ir_den = ir_den[:,W//2-W//4:W//2+W//4,H//2-H//4:H//2+H//4]
+                pred_den = pred_den[:,W//2-W//4:W//2+W//4,H//2-H//4:H//2+H//4]
+                era5 = era5[:,W//2-W//4:W//2+W//4,H//2-H//4:H//2+H//4]
         
-        ch = 2 if x_np.shape[1] > 4 else 0   # IR channel index
+            os.makedirs(os.path.join(self.output_dir,'predictions_denormalisees',"anggrek"),exist_ok=True)                               # (B, H, W)
+            with open(os.path.join(self.output_dir,"predictions_denormalisees","anggrek","predictions_denormalisées.pkl"),"wb") as f:
+                pkl.dump({f"anggrek":[ir_den,pred_den,infos_ord],"model":model},f)
+
+
+            out_root = Path(self.output_dir) / "anggrek_monitoring"
+            field_dir = out_root / "field_plots"
+            field_dir.mkdir(parents=True, exist_ok=True)
         
-        ir = x_np[:, ch, :, :]  # (B,H,W)
-        if self.add_era5 : 
-            era5 = x_np[:,-1,:,:]
-            era5 = denorm(era5,self.mean_X[-1],self.std_X[-1])
-        pred1 = pred_np          # (B,H,W)
-
-        ir_den = denorm(ir, self.mean_X[ch], self.std_X[ch])
-
-        if self.norm == "z_score":
-            pred_den = denorm(pred1, self.mean_sar, self.std_sar)
-        elif self.norm == "annular":
-            pred_den = annular_denormalization(pred1, stats={"mean": self.mean_sar, "std": self.std_sar})
-        else:
-            # fallback: assume already denorm
-            pred_den = pred1
-        
-        if self.log_wind:
-            pred_den = np.exp(pred_den) - 1e-10
-
-        if self.output_data == "aam":
-            pred_den = moment_to_sar(pred_den)
-
-        # -------------------------
-        # Sort by time
-        # -------------------------
-        sar_time = [d.get("date") for d in infos]
-        time_parsed = pd.to_datetime(sar_time, errors="coerce")
-        order = np.argsort(time_parsed.values.astype("datetime64[ns]"))
-
-        ir_den = ir_den[order]
-        pred_den = pred_den[order]
-        infos_ord = [infos[i] for i in order]
-        time_parsed = time_parsed[order]
-
-        if self.crop_sar:
-            ir_den = ir_den[:,W//2-W//4:W//2+W//4,H//2-H//4:H//2+H//4]
-            pred_den = pred_den[:,W//2-W//4:W//2+W//4,H//2-H//4:H//2+H//4]
-            era5 = era5[:,W//2-W//4:W//2+W//4,H//2-H//4:H//2+H//4]
+        else : 
+            os.makedirs(os.path.join(self.output_dir,"fm_diagnostics_anggrek","anggrek_monitoring"),exist_ok=True) 
+            out_root = Path(self.output_dir) / "fm_diagnostics_anggrek" / "anggrek_monitoring"
+            os.makedirs(os.path.join(self.output_dir,"fm_diagnostics_anggrek","prediction_denormalisées"),exist_ok=True)
+            os.makedirs(os.path.join(self.output_dir,"fm_diagnostics_anggrek","anggrek_monitoring","fields_plots"),exist_ok=True)
             
 
-        # -------------------------
-        os.makedirs(os.path.join(self.output_dir,'predictions_denormalisees',"anggrek"),exist_ok=True)                               # (B, H, W)
-        with open(os.path.join(self.output_dir,"predictions_denormalisees","anggrek","predictions_denormalisées.pkl"),"wb") as f:
-            pkl.dump({f"anggrek":[ir_den,pred_den,infos_ord]},f)
+            #x contient les champs d'entrée du modèle, dont le dernier est ERA5 si add_era5=True
+            mean_ph, std_ph = [], []
+            sar_time = [d.get("date") for d in infos]
+            time_parsed = pd.to_datetime(sar_time, errors="coerce")
+            order = np.argsort(time_parsed.values.astype("datetime64[ns]"))
+            time_parsed = time_parsed[order]
+            infos_ord = [infos[i] for i in order]
+            for i,x_fm in enumerate(x):
+                ensemble = fm_inf.generate_ensemble(model=model, ir_input=x_fm,device=device)
+                mean_fm, std_fm = fm_inf.plot_ensemble_results(x_fm, sar_target=None, ensemble=ensemble,
+                                                        stats={"mean": self.mean_sar, "std": self.std_sar}, mask=None, 
+                                                    save_path=os.path.join(self.output_dir,"fm_diagnostics_anggrek","anggrek_monitoring","fields_plots",f"{time_parsed[i].strftime('%Y%m%d%H%M%S')}_ensemble.png"),
+                                                    cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir, save_pic=True,
+                                                            )
+                mean_ph.append(mean_fm); std_ph.append(std_fm)
+            mean_ph = np.array(mean_ph); std_ph = np.array(std_ph)
+            x_np = x.detach().cpu().numpy()
+            #save as a pkl 
+            with open(os.path.join(self.output_dir,"fm_diagnostics_anggrek","prediction_denormalisées","mean_std_fm.pkl"),"wb") as f:
+                pkl.dump({"mean_fm": mean_ph, "std_fm": std_ph, "time": time_parsed,"ir_norm": x_np,"model": model},f)
 
 
-        out_root = Path(self.output_dir) / "anggrek_monitoring"
-        field_dir = out_root / "field_plots"
-        field_dir.mkdir(parents=True, exist_ok=True)
+
+
 
         vmax = np.array([d.get("vmax", np.nan) for d in infos_ord], dtype=float)
+
+
         pixel_km = 2.0
 
-        for i in range(B):
-            t = time_parsed[i]
-            H, W = pred_den[i].shape
-            cx, cy = W // 2, H // 2
+        if not add_mean_std_fm:
+            for i in range(B):
+                t = time_parsed[i]
+                H, W = pred_den[i].shape
+                cx, cy = W // 2, H // 2
 
-            vmax_pred, rmax_pred = self.compute_vmax1d_rmax1d(pred_den[i])
-            
+                vmax_pred, rmax_pred = self.compute_vmax1d_rmax1d(pred_den[i])
+                
 
-            if pd.isna(t):
-                date_key = f"unknown_{i:03d}"
-                fname = f"unknown_{i:03d}_fields.png"
-                supt = f"Unknown time (idx={i})"
-            else:
-                date_key = t.strftime("%Y%m%d%H%M%S")  
-                fname = f"{date_key}_fields.png"
-                supt = (
-                            f"{t.strftime('%Y-%m-%d %H:%M:%S')}\n"
-                            f"Best Track Vmax: {vmax[i]:.2f} m/s | "
-                            f"Pred Vmax: {vmax_pred:.2f} m/s | "
-                            f"Pred RMW: {rmax_pred:.1f} km"
-                        )
-
-
-            sub = field_dir
-            sub.mkdir(parents=True, exist_ok=True)
-
-            fig, axs = plt.subplots(1, 3 if self.add_era5 else 2, figsize=(8, 4), constrained_layout=True)
-
-            distdata.plot_ir(ir_den[i], cmap=self.cmap_ir,ax=axs[0],fig=fig,x_lim=H)
-            axs[0].set_title("IRWIN")
-            axs[0].axis("off")
-            distdata.plot_sar(pred_den[i], cmap=self.cmap_sar,ax=axs[2 if self.add_era5 else 1],fig=fig, x_lim=H)
-            axs[2 if self.add_era5 else 1].set_title("Prediction")
-            axs[2 if self.add_era5 else 1].axhline(y=0, color="black", linewidth=1)
-            axs[2 if self.add_era5 else 1].axvline(x=0, color="black", linewidth=1)
-            if self.add_era5:
-                distdata.plot_sar(era5[i], cmap=self.cmap_sar,ax=axs[1],fig=fig,x_lim=H)
-                axs[1].set_title("ERA 5")
-                axs[1].axis("off")
-
-            # cercle RMW
-            axs[2 if self.add_era5 else 1].add_patch(
-                               Circle((0, 0), radius=rmax_pred, color="black", fill=False, linestyle="--")
+                if pd.isna(t):
+                    date_key = f"unknown_{i:03d}"
+                    fname = f"unknown_{i:03d}_fields.png"
+                    supt = f"Unknown time (idx={i})"
+                else:
+                    date_key = t.strftime("%Y%m%d%H%M%S")  
+                    fname = f"{date_key}_fields.png"
+                    supt = (
+                                f"{t.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                                f"Best Track Vmax: {vmax[i]:.2f} m/s | "
+                                f"Pred Vmax: {vmax_pred:.2f} m/s | "
+                                f"Pred RMW: {rmax_pred:.1f} km"
                             )
+                sub = field_dir
+                sub.mkdir(parents=True, exist_ok=True)
 
-                                        
+                fig, axs = plt.subplots(1, 3 if self.add_era5 else 2, figsize=(8, 4), constrained_layout=True)
 
-            fig.suptitle(supt)
-            fig.savefig(sub / fname, dpi=150)
-            plt.close(fig)
+                distdata.plot_ir(ir_den[i], cmap=self.cmap_ir,ax=axs[0],fig=fig,x_lim=H)
+                axs[0].set_title("IRWIN")
+                axs[0].axis("off")
+                distdata.plot_sar(pred_den[i], cmap=self.cmap_sar,ax=axs[2 if self.add_era5 else 1],fig=fig, x_lim=H)
+                axs[2 if self.add_era5 else 1].set_title("Prediction")
+                axs[2 if self.add_era5 else 1].axhline(y=0, color="black", linewidth=1)
+                axs[2 if self.add_era5 else 1].axvline(x=0, color="black", linewidth=1)
+                if self.add_era5:
+                    distdata.plot_sar(era5[i], cmap=self.cmap_sar,ax=axs[1],fig=fig,x_lim=H)
+                    axs[1].set_title("ERA 5")
+                    axs[1].axis("off")
+
+                # cercle RMW
+                axs[2 if self.add_era5 else 1].add_patch(
+                                Circle((0, 0), radius=rmax_pred, color="black", fill=False, linestyle="--")
+                                )
+                fig.suptitle(supt)
+                fig.savefig(sub / fname, dpi=150)
+                plt.close(fig)
 
         #Resample SAr from 2km to 3km
         @torch.no_grad()
@@ -997,8 +1159,17 @@ class LogValidationSamples:
                 resamples.append(x3.squeeze(0).squeeze(0).cpu().numpy())
 
             return np.stack(resamples, axis=0)
-        
-        pred_denorm_3m = resample_2km_to_3km_torch(pred_den)
+        if not add_mean_std_fm:
+            pred_denorm_3m = resample_2km_to_3km_torch(pred_den)
+            pred_vmax = np.nanmax(pred_denorm_3m.reshape(len(pred_den), -1), axis=1)
+            pred_vmax_2km = np.nanmax(pred_den.reshape(len(pred_den), -1), axis=1)
+        else : 
+            mean_fm_3m = resample_2km_to_3km_torch(mean_ph); std_fm_3m = resample_2km_to_3km_torch(std_ph)
+            pred_vmax_mean_fm_3m = np.nanmax(mean_fm_3m.reshape(len(mean_ph), -1), axis=1)
+            pred_vmax_std_fm_3m = np.nanmax(std_fm_3m.reshape(len(std_ph), -1), axis=1)
+
+
+
         vmax = np.array([d.get("vmax", np.nan) for d in infos_ord], dtype=float)
         vmax_cyclobs = np.array([d.get("vmax_cyclobs", np.nan) for d in infos_ord], dtype=float)
         analysis_vmax_cyclobs = np.array([d.get("analysis_vmax_cyclobs", np.nan) for d in infos_ord], dtype=float)
@@ -1006,11 +1177,13 @@ class LogValidationSamples:
         satcon_vmax  = np.array([d.get("satcon_vmax", np.nan) for d in infos_ord], dtype=float)
         era5_vmaxs = np.array([d.get("era5_vmax", np.nan) for d in infos_ord], dtype=float)
 
-        pred_vmax = np.nanmax(pred_denorm_3m.reshape(len(pred_den), -1), axis=1)
-        pred_vmax_2km = np.nanmax(pred_den.reshape(len(pred_den), -1), axis=1)
-
-        ok = np.isfinite(vmax) & np.isfinite(pred_vmax)
-        rmse = float(np.sqrt(np.mean((pred_vmax[ok] - vmax[ok]) ** 2))) if np.any(ok) else np.nan
+        
+        if not add_mean_std_fm:
+            ok = np.isfinite(vmax) & np.isfinite(pred_vmax)
+            rmse = float(np.sqrt(np.mean((pred_vmax[ok] - vmax[ok]) ** 2))) if np.any(ok) else np.nan
+        else:
+            ok = np.isfinite(vmax) & np.isfinite(pred_vmax_mean_fm_3m)
+            rmse = float(np.sqrt(np.mean((pred_vmax_mean_fm_3m[ok] - vmax[ok]) ** 2))) if np.any(ok) else np.nan
 
         fig, ax = plt.subplots(figsize=(11, 6))
         ax.plot(time_parsed, ibtracs_vmax, color="black", linewidth=2, label="IBTrACS (Best Track)")
@@ -1018,8 +1191,13 @@ class LogValidationSamples:
         ax.plot(time_parsed, satcon_vmax, color="blue", linewidth=2, label="SATCON")
         ax.plot(time_parsed, era5_vmaxs, color="orange", linewidth=2, label="ERA5")
 
-        ax.plot(time_parsed, pred_vmax, color="green", linewidth=2, label="UNET Res 3 km")
-        ax.plot(time_parsed, pred_vmax_2km, color="magenta", linewidth=2, label="UNET Res 2 km")
+        if not add_mean_std_fm:
+            ax.plot(time_parsed, pred_vmax, color="green", linewidth=2, label="UNET Res 3 km")
+            ax.plot(time_parsed, pred_vmax_2km, color="magenta", linewidth=2, label="UNET Res 2 km")
+        else:
+            ax.plot(time_parsed, pred_vmax_mean_fm_3m, color="green", linewidth=2, label="flow matching (mean) Res 3 km")
+            ax.plot(time_parsed, pred_vmax_std_fm_3m, color="magenta", linewidth=2, label="flow matching (std) Res 3 km")
+
         analysis_arr = np.array(analysis_vmax_cyclobs, dtype=float)
         cyclobs_arr  = np.array(vmax_cyclobs, dtype=float)
 

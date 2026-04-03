@@ -423,15 +423,11 @@ class PrepareDataSet():
             irwin_test = np.array(irwin_test)[:,:,h_sargeo//2-h_era5//2:h_sargeo//2+h_era5//2,h_sargeo//2-w_era5//2:h_sargeo//2+w_era5//2]
 
             irwin_train = np.concatenate([irwin_train,era5_train],axis=1)   # (N, 10, H, W) par ex.
-            print("abiriiiiiiiiiiiiiiiiir",irwin_train.shape)
+            
             
             
             irwin_val,irwin_test, irwin_anggrek = np.concatenate([irwin_val,era5_val],axis=1) ,np.concatenate([irwin_test,era5_test],axis=1) , np.array(irwin_anggrek) if anggrek_test else None
         self.sar_train, self.sar_val, self.sar_test = np.array(sar_train), np.array(sar_val), np.array(sar_test)
-
-        print("train size :",len(sar_train))
-        print("val_size : ",len(sar_val))
-        print("Test size: ",len(sar_test))
         
         N, _, H, W = irwin_train.shape
         
@@ -553,9 +549,7 @@ class PrepareDataSet():
         #  Convert IR from Kelvin to Celsius ===
         
         n_ir_channels = self.X_train.shape[1] - 1 if self.add_era5 else self.X_train.shape[1]
-        print(self.X_train.shape, n_ir_channels)
         for c in range(n_ir_channels) : 
-            print(f"Converting channel {c} from Kelvin to Celsius...")
             self.X_train[:, c] = self.X_train[:, c] - 273.15  
             self.X_val[:,c] = self.X_val[:,c] - 273.15
             self.X_test[:,c] = self.X_test[:,c] - 273.15
