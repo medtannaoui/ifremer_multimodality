@@ -945,30 +945,30 @@ class LogValidationSamples:
 
                     self.anggrek_plots(model, batch_full_anggrek, epoch, device, add_mean_std_fm = True)
             
-            #ode selver with guidance
-            ode_guidances = [];ode_reprojections = []
-            for ir, sar, mask, inf in dataloader[0 if self.cfg.code_test else 2]:   #test set
-                ir = ir.to(device)
-                sar = sar.to(device)
-                mask = mask.to(device)
-                fm_model = model
-                stats = {"mean": self.mean_sar, "std": self.std_sar}
-                z = torch.randn_like(sar)
-                ode_guidance_out = fm_inf.ode_solver_with_guidance(model=fm_model, z=z, ir_input=ir, obs_sar=sar, obs_mask=mask, 
-                                                                   num_steps=self.cfg.fm_num_inference_steps,
-                                                                    sar_mean_stat=self.mean_sar, sar_std_stat=self.std_sar)
-                ode_reprojectiion_out = fm_inf.ode_solver_with_reprojection(model=fm_model,z=z, ir_input=ir, obs_sar=sar, 
-                                                                            obs_mask=mask, num_steps=self.cfg.fm_num_inference_steps)
-                
-                ode_guidances.append(ode_guidance_out)
-                ode_reprojections.append(ode_reprojectiion_out)
+                #ode selver with guidance
+                ode_guidances = [];ode_reprojections = []
+                for ir, sar, mask, inf in dataloader[0 if self.cfg.code_test else 2]:   #test set
+                    ir = ir.to(device)
+                    sar = sar.to(device)
+                    mask = mask.to(device)
+                    fm_model = model
+                    stats = {"mean": self.mean_sar, "std": self.std_sar}
+                    z = torch.randn_like(sar)
+                    ode_guidance_out = fm_inf.ode_solver_with_guidance(model=fm_model, z=z, ir_input=ir, obs_sar=sar, obs_mask=mask, 
+                                                                    num_steps=self.cfg.fm_num_inference_steps,
+                                                                        sar_mean_stat=self.mean_sar, sar_std_stat=self.std_sar)
+                    ode_reprojectiion_out = fm_inf.ode_solver_with_reprojection(model=fm_model,z=z, ir_input=ir, obs_sar=sar, 
+                                                                                obs_mask=mask, num_steps=self.cfg.fm_num_inference_steps)
+                    
+                    ode_guidances.append(ode_guidance_out)
+                    ode_reprojections.append(ode_reprojectiion_out)
 
-            ode_guidances = torch.cat(ode_guidances, dim=0)
-            ode_reprojections = torch.cat(ode_reprojections, dim=0)
-            batch_full_test_guidance = (ir_full_test,  sar_full_test, mask_test, infos_test, ode_guidances) if not self.cfg.code_test else (ir_full_train,  sar_full_train, mask_train, infos_train, ode_guidances)     #
-            batch_full_test_reprojection = (ir_full_test,  sar_full_test, mask_test, infos_test, ode_reprojections) if not self.cfg.code_test else (ir_full_train,  sar_full_train, mask_train, infos_train, ode_reprojections) #
-            self.log_batch(model, batch_full_test_guidance, epoch, device, set="test_guidance",ode_pred=True)
-            self.log_batch(model, batch_full_test_reprojection, epoch, device, set="test_reprojection", ode_pred=True)
+                ode_guidances = torch.cat(ode_guidances, dim=0)
+                ode_reprojections = torch.cat(ode_reprojections, dim=0)
+                batch_full_test_guidance = (ir_full_test,  sar_full_test, mask_test, infos_test, ode_guidances) if not self.cfg.code_test else (ir_full_train,  sar_full_train, mask_train, infos_train, ode_guidances)     #
+                batch_full_test_reprojection = (ir_full_test,  sar_full_test, mask_test, infos_test, ode_reprojections) if not self.cfg.code_test else (ir_full_train,  sar_full_train, mask_train, infos_train, ode_reprojections) #
+                self.log_batch(model, batch_full_test_guidance, epoch, device, set="test_guidance",ode_pred=True)
+                self.log_batch(model, batch_full_test_reprojection, epoch, device, set="test_reprojection", ode_pred=True)
 
         # save distribution of wind speed of pred and true val to compare it
         #just in the lkast epoch
