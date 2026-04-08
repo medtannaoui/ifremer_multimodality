@@ -123,17 +123,17 @@ def plot_ensemble_results(ir_input, sar_target, ensemble, stats, mask=None, save
             if mask is not None:
                 if mask.ndim == 4: mask = mask[0, 0]
                 sar_phys = np.where(mask.cpu().numpy() > 0, sar_phys, np.nan)
-            im = axes[panel].imshow(sar_phys.squeeze(), cmap=cmap_sar or "RdBu_r")
+            im = axes[panel].imshow(sar_phys.squeeze(), cmap=cmap_sar or "RdBu_r",vmin=0,vmax=160/1.94384449)
             axes[panel].set_title("SAR target (m/s)")
             plt.colorbar(im, ax=axes[panel], fraction=0.046)
             panel += 1
 
-        im = axes[panel].imshow(ens_mean_phys, cmap=cmap_sar or "RdBu_r")
+        im = axes[panel].imshow(ens_mean_phys, cmap=cmap_sar or "RdBu_r",vmin=0,vmax=160/1.94384449)
         axes[panel].set_title(f"FM ensemble mean\n(n={ensemble.shape[0]})")
         plt.colorbar(im, ax=axes[panel], fraction=0.046)
         panel += 1
 
-        im = axes[panel].imshow(ens_std_phys, cmap=cmap_sar or "hot")
+        im = axes[panel].imshow(ens_std_phys, cmap=cmap_sar or "hot",vmin=0,vmax=160/1.94384449)
         axes[panel].set_title("FM uncertainty (std, m/s)")
         plt.colorbar(im, ax=axes[panel], fraction=0.046)
 
@@ -283,34 +283,46 @@ def ode_solver_with_reprojection(
 ):
     """
     ODE solver with hard reprojection at observation locations.
-
-    After reprojection_start_t, rescales the prediction at observed pixels
-    to match obs_sar exactly (strength=1.0) or partially (strength<1.0).
     """
-    x_t = z.clone()
-    dt  = 1.0 / num_steps
+
+    # Ensure shapes are (B,1,H,W)
+    if z.ndim == 3:
+        x_t = z.clone().unsqueeze(1)
+    elif z.ndim == 4:
+        x_t = z.clone()
+    else:
+        raise ValueError(f"Unexpected z shape: {z.shape}")
+
+    if obs_sar.ndim == 3:
+        obs_sar = obs_sar.unsqueeze(1)
+    elif obs_sar.ndim != 4:
+        raise ValueError(f"Unexpected obs_sar shape: {obs_sar.shape}")
+
+    if obs_mask.ndim == 3:
+        obs_mask = obs_mask.unsqueeze(1)
+    elif obs_mask.ndim != 4:
+        raise ValueError(f"Unexpected obs_mask shape: {obs_mask.shape}")
+
+    dt = 1.0 / num_steps
 
     for i in range(num_steps):
         t_val = i / num_steps
-        t     = torch.full((x_t.shape[0],), t_val, device=x_t.device)
+        t = torch.full((x_t.shape[0],), t_val, device=x_t.device)
 
-        model_input   = torch.cat([x_t, ir_input], dim=1)
+        model_input = torch.cat([x_t, ir_input], dim=1)
+        print("x_t:", x_t.shape, "ir_input:", ir_input.shape, "model_input:", model_input.shape)
+
         pred_velocity = model(model_input, t).sample
-        x_t           = x_t + pred_velocity * dt
+        x_t = x_t + pred_velocity * dt
 
         if t_val >= reprojection_start_t and obs_mask.any():
-            # Scale factor: target / current (in normalised space)
-            eps   = 1e-6
+            eps = 1e-6
             scale = obs_sar / (x_t + eps)
 
-            # Gradual application: interpolate between 1 and scale
-            # using the current time position
-            alpha = min((t_val - reprojection_start_t) /
-                        (1.0 - reprojection_start_t + eps), 1.0)
+            alpha = min((t_val - reprojection_start_t) / (1.0 - reprojection_start_t + eps), 1.0)
             alpha *= reprojection_strength
             scale_applied = (1 - alpha) + alpha * scale
 
-            # Apply only at observed locations
-            x_t = torch.where(obs_mask, x_t * scale_applied, x_t)
+            x_t = torch.where(obs_mask.bool(), x_t * scale_applied, x_t)
 
     return x_t

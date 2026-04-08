@@ -11,6 +11,7 @@ This module provides:
 
 """
 
+from fileinput import filename
 import os
 import numpy as np
 import pandas as pd
@@ -501,7 +502,7 @@ def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False
 
 
 
-def compare_sar_distribution(sar_knots, pred_knots, output_dir, set, epoch):
+def compare_sar_distribution(sar_knots, pred_knots, output_dir, set, epoch,output=None):
         if set == "train":
             return None
         plt.figure(figsize=(8, 6))
@@ -511,11 +512,14 @@ def compare_sar_distribution(sar_knots, pred_knots, output_dir, set, epoch):
         plt.xlabel("Wind Speed (m/s)")
         plt.ylabel("Count")
         plt.title(f"Global Wind Speed Distribution —_{set}")
-        os.makedirs(os.path.join(output_dir, "compare_sar_distribution",set),exist_ok=True)
-        out_path = os.path.join(output_dir, "compare_sar_distribution",set,f"wind_distribution.png")
-        plt.savefig(out_path, dpi=150)
-        plt.close('all')
-
+        if output is None:
+            os.makedirs(os.path.join(output_dir, "compare_sar_distribution",set),exist_ok=True)
+            out_path = os.path.join(output_dir, "compare_sar_distribution",set,f"wind_distribution.png")
+            plt.savefig(out_path, dpi=150)
+            plt.close('all')
+        else:
+            plt.savefig(output, dpi=150)
+            plt.close('all')
         print(f"📈 Saved global distribution")
 
 def compare_radial_vmax(
@@ -526,6 +530,7 @@ def compare_radial_vmax(
     epoch,  
     center=None, 
     dr=1, 
+    output=None,
     plot=False
 ):
     
@@ -626,8 +631,13 @@ def compare_radial_vmax(
     # --- Save
     if not plot:
         os.makedirs(os.path.join(output_dir,"compare_radial_vmax",set),exist_ok=True)
-        out_path = os.path.join(output_dir,"compare_radial_vmax",set, f"radial_vmax_{set}.png")
-        plt.savefig(out_path, dpi=150)
+        if output is None:
+            os.makedirs(os.path.join(output_dir,"compare_radial_vmax",set),exist_ok=True)
+            out_path = os.path.join(output_dir,"compare_radial_vmax",set, f"radial_vmax_{set}.png")
+            plt.savefig(out_path, dpi=150)
+        else : 
+            plt.savefig(output, dpi=150)
+        
         plt.close()
     else:
         plt.show()
@@ -645,7 +655,7 @@ def compare_radial_vmax(
 
 
 
-def compute_mae_metric(sar_true, sar_pred, output_dir, set, epoch, plot=False):
+def compute_mae_metric(sar_true, sar_pred, output_dir, set, epoch, plot=False, output=None):
     if set=="train":
         return None
     mask = np.isfinite(sar_true)
@@ -661,9 +671,12 @@ def compute_mae_metric(sar_true, sar_pred, output_dir, set, epoch, plot=False):
     plt.title(f"Mean Absolute Error Map — {set} (Epoch {epoch+1})")
     plt.axis("off")
     if not plot : 
-        os.makedirs(os.path.join(output_dir,"compute_mae_metric",set),exist_ok=True)
-        save_path = os.path.join(output_dir,"compute_mae_metric",set, f"mae_map_{set}.png")
-        plt.savefig(save_path, dpi=150)
+        if output is None:
+            os.makedirs(os.path.join(output_dir,"compute_mae_metric",set),exist_ok=True)
+            save_path = os.path.join(output_dir,"compute_mae_metric",set, f"mae_map_{set}.png")
+            plt.savefig(save_path, dpi=150)
+        else :
+            plt.savefig(output, dpi=150)
         plt.close()
 
         

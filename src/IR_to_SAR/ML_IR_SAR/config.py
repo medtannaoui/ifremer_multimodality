@@ -53,6 +53,7 @@ class IR_SAR_Config:
     use_flow_matching : bool
     fm_num_inference_steps : int
     fm_lr : float
+    code_test : bool
     @staticmethod
     def from_yaml(path: str):
         with open(path, "r") as file:

@@ -215,7 +215,7 @@ class LogValidationSamples:
         
         else : 
             pred = ode_pred.to(device)
-            print(pred.shape)
+            print("no ode pred",pred.shape)
             
 
         def denorm(t, mean, std):
@@ -632,8 +632,8 @@ class LogValidationSamples:
             plt.close(fig)
 
         print(f"💾 Saved {num} sample images.")
-        
-        if set == "test" and self.cfg.use_flow_matching:
+        set_compare = "train" if self.cfg.code_test else "test"
+        if set == set_compare and self.cfg.use_flow_matching:
             os.makedirs(os.path.join(self.output_dir,f"fm_diagnostics_{set}","rank_hist_and_samples"), exist_ok=True)
             rank_smple_path = os.path.join(self.output_dir,f"fm_diagnostics_{set}","rank_hist_and_samples")
             
@@ -681,7 +681,7 @@ class LogValidationSamples:
                 set=set,
                 epoch=epoch,
                 y_label= "Vmax Mean ensemble fm (m/s)",
-                output = os.path.join(self.output_dir,f"fm_diagnostics_{set}","mean_std_plots", f"mean_vmax_epoch_{epoch+1}.png")
+                output = os.path.join(self.output_dir,f"fm_diagnostics_{set}","mean_std_plots", f"mean_vmax.png")
             )
             distdata.rmax_compare(
                 analysis_rmax,
@@ -690,7 +690,7 @@ class LogValidationSamples:
                 set=set,
                 epoch=epoch,
                 y_label= "Rmax Mean ensemble fm (km)",
-                output= os.path.join(self.output_dir,f"fm_diagnostics_{set}","mean_std_plots", f"mean_rmax_epoch_{epoch+1}.png")
+                output= os.path.join(self.output_dir,f"fm_diagnostics_{set}","mean_std_plots", f"mean_rmax_epoch.png")
             )
             # Stabdard deviation plots
             distdata.vmax_compare(
@@ -700,7 +700,7 @@ class LogValidationSamples:
                 set=set,
                 epoch=epoch,
                 y_label= "Vmax Std ensemble fm (m/s)",
-                output = os.path.join(self.output_dir,f"fm_diagnostics_{set}","mean_std_plots", f"std_vmax_epoch_{epoch+1}.png")
+                output = os.path.join(self.output_dir,f"fm_diagnostics_{set}","mean_std_plots", f"std_vmax.png")
             )
             distdata.rmax_compare(
                 analysis_rmax,
@@ -709,12 +709,63 @@ class LogValidationSamples:
                 set=set,
                 epoch=epoch,
                 y_label= "Rmax Std ensemble fm (km)",
-                output= os.path.join(self.output_dir,f"fm_diagnostics_{set}","mean_std_plots", f"std_rmax_epoch_{epoch+1}.png")
+                output= os.path.join(self.output_dir,f"fm_diagnostics_{set}","mean_std_plots", f"std_rmax.png")
             )
 
-       
-            
-            
+            distdata.compare_radial_vmax(
+                sar_2d,
+                mean_ph*mask_2d,
+                output_dir=self.output_dir,
+                set=set,
+                epoch=epoch,
+                output = os.path.join(self.output_dir,f"fm_diagnostics_{set}","mean_std_plots", f"Mean_radial_vmax.png"),
+                plot=False
+            )
+
+            # mae 
+            distdata.compute_mae_metric(
+                sar_2d,
+                mean_ph*mask_2d,
+                output_dir=self.output_dir,
+                set=set,
+                epoch=epoch,
+                output = os.path.join(self.output_dir,f"fm_diagnostics_{set}","mean_std_plots", f"Mean_mae.png"),
+                plot=False
+            )
+
+            distdata.compare_radial_vmax(
+                sar_2d,
+                std_ph*mask_2d,
+                output_dir=self.output_dir,
+                set=set,
+                epoch=epoch,
+                output = os.path.join(self.output_dir,f"fm_diagnostics_{set}","mean_std_plots", f"Std_radial_vmax.png"),
+                plot=False
+            )
+
+            # mae 
+            distdata.compute_mae_metric(
+                sar_2d,
+                std_ph*mask_2d,
+                output_dir=self.output_dir,
+                set=set,
+                epoch=epoch,
+                output = os.path.join(self.output_dir,f"fm_diagnostics_{set}","mean_std_plots", f"Std_mae.png"),
+                plot=False
+            )
+            # create flatten data
+            sar_flat = sar_2d.flatten()
+            mean_ph_flat = mean_ph.flatten()
+            std_ph_flat = std_ph.flatten()
+            mask_flat = mask_2d.flatten()
+            valid = mask_flat == 1
+            sar_valid = sar_flat[valid]
+            mean_ph_valid = mean_ph_flat[valid]
+            std_ph_valid = std_ph_flat[valid]
+            distdata.compare_sar_distribution(sar_valid, mean_ph_valid, self.output_dir, set, epoch,
+                            output=os.path.join(self.output_dir,f"fm_diagnostics_{set}","mean_std_plots", f"mean_distribution.png"))
+            distdata.compare_sar_distribution(sar_valid, std_ph_valid, self.output_dir, set, epoch,
+                            output=os.path.join(self.output_dir,f"fm_diagnostics_{set}","mean_std_plots", f"std_distribution.png"))
 
 
             
@@ -763,10 +814,11 @@ class LogValidationSamples:
             im_fm  = fm_out[i, 0].cpu().numpy()  * sar_std + sar_mean
             im_vel = vel05[i, 0].cpu().numpy()
 
-            axes[i, 0].imshow(im_ir,  cmap=cmap_ir or "gray");         axes[i, 0].set_title("IR (ch 0)")
-            axes[i, 1].imshow(im_tgt, cmap=cmap_sar or "RdBu_r");       axes[i, 1].set_title("SAR target")
-            axes[i, 2].imshow(im_fm,  cmap=cmap_sar or "RdBu_r");       axes[i, 2].set_title("FM sample")
-            axes[i, 3].imshow(im_vel, cmap=cmap_sar or "seismic");       axes[i, 3].set_title("Velocity @ t=0.5")
+            
+            distdata.plot_ir(im_ir, fig=fig, ax=axes[i,0], cmap=cmap_ir);         axes[i, 0].set_title("IR (ch 0)")
+            distdata.plot_sar(im_tgt, fig=fig, ax=axes[i,1], cmap=cmap_sar or "RdBu_r");       axes[i, 1].set_title("SAR target")
+            distdata.plot_sar(im_fm, fig=fig, ax=axes[i,2], cmap=cmap_sar or "RdBu_r");       axes[i, 2].set_title("FM sample")
+            distdata.plot_sar(im_vel, fig=fig, ax=axes[i,3], cmap=cmap_sar or "seismic");       axes[i, 3].set_title("Velocity @ t=0.5")
 
             
 
@@ -855,10 +907,10 @@ class LogValidationSamples:
             batch_full_val = (ir_full_val, sar_full_val, mask_val, infos_val)
             batch_full_train = (ir_full_train, sar_full_train, mask_train, infos_train)
             batch_full_test = (ir_full_test, sar_full_test, mask_test, infos_test)
-            
-            self.log_batch(model, batch_full_train, epoch, device, set="train")
-            self.log_batch(model, batch_full_val, epoch, device)
-            self.log_batch(model, batch_full_test, epoch, device, set="test")
+            if not self.cfg.code_test : 
+                self.log_batch(model, batch_full_train, epoch, device, set="train")
+                self.log_batch(model, batch_full_val, epoch, device)
+                self.log_batch(model, batch_full_test, epoch, device, set="test")
              
             if not  self.conditional_model: 
 
@@ -880,21 +932,22 @@ class LogValidationSamples:
             
             if self.cfg.use_flow_matching:
                 print("starting fm diagnostics for train, val and test sets")
-                self.plot_fm_diagnostics(model, ir_full_train, sar_full_train, mask_train, stats={"mean": self.mean_sar, "std": self.std_sar}, 
-                                        device=device, num_steps=self.cfg.fm_num_inference_steps, n_rows=5, set="train", epoch=epoch,
-                                        cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir)
-                self.plot_fm_diagnostics(model, ir_full_val, sar_full_val, mask_val, stats={"mean": self.mean_sar, "std": self.std_sar}, 
-                                         device=device, num_steps=self.cfg.fm_num_inference_steps, n_rows=5, set="validation", epoch=epoch,
-                                         cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir)
-                self.plot_fm_diagnostics(model, ir_full_test, sar_full_test, mask_test, stats={"mean": self.mean_sar, "std": self.std_sar}, 
-                                         device=device, num_steps=self.cfg.fm_num_inference_steps, n_rows=8, set="test", epoch=epoch, 
-                                         cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir)  
+                if not self.cfg.code_test :
+                    self.plot_fm_diagnostics(model, ir_full_train, sar_full_train, mask_train, stats={"mean": self.mean_sar, "std": self.std_sar}, 
+                                            device=device, num_steps=self.cfg.fm_num_inference_steps, n_rows=5, set="train", epoch=epoch,
+                                            cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir)
+                    self.plot_fm_diagnostics(model, ir_full_val, sar_full_val, mask_val, stats={"mean": self.mean_sar, "std": self.std_sar}, 
+                                            device=device, num_steps=self.cfg.fm_num_inference_steps, n_rows=5, set="validation", epoch=epoch,
+                                            cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir)
+                    self.plot_fm_diagnostics(model, ir_full_test, sar_full_test, mask_test, stats={"mean": self.mean_sar, "std": self.std_sar}, 
+                                            device=device, num_steps=self.cfg.fm_num_inference_steps, n_rows=8, set="test", epoch=epoch, 
+                                            cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir)  
 
-                self.anggrek_plots(model, batch_full_anggrek, epoch, device, add_mean_std_fm = True)
+                    self.anggrek_plots(model, batch_full_anggrek, epoch, device, add_mean_std_fm = True)
             
             #ode selver with guidance
             ode_guidances = [];ode_reprojections = []
-            for ir, sar, mask, inf in dataloader[2]:   #test set
+            for ir, sar, mask, inf in dataloader[0 if self.cfg.code_test else 2]:   #test set
                 ir = ir.to(device)
                 sar = sar.to(device)
                 mask = mask.to(device)
@@ -912,9 +965,8 @@ class LogValidationSamples:
 
             ode_guidances = torch.cat(ode_guidances, dim=0)
             ode_reprojections = torch.cat(ode_reprojections, dim=0)
-            print("wiaaaaaaaaam",sar_full_test.shape, ode_guidances.shape)
-            batch_full_test_guidance = (ir_full_test,  sar_full_test, mask_test, infos_test, ode_guidances)
-            batch_full_test_reprojection = (ir_full_test,  sar_full_test, mask_test, infos_test, ode_reprojections)
+            batch_full_test_guidance = (ir_full_test,  sar_full_test, mask_test, infos_test, ode_guidances) if not self.cfg.code_test else (ir_full_train,  sar_full_train, mask_train, infos_train, ode_guidances)     #
+            batch_full_test_reprojection = (ir_full_test,  sar_full_test, mask_test, infos_test, ode_reprojections) if not self.cfg.code_test else (ir_full_train,  sar_full_train, mask_train, infos_train, ode_reprojections) #
             self.log_batch(model, batch_full_test_guidance, epoch, device, set="test_guidance",ode_pred=True)
             self.log_batch(model, batch_full_test_reprojection, epoch, device, set="test_reprojection", ode_pred=True)
 
