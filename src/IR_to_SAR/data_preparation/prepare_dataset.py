@@ -548,7 +548,7 @@ class PrepareDataSet():
 
         #  Convert IR from Kelvin to Celsius ===
         
-        n_ir_channels = self.X_train.shape[1] - 1 if self.add_era5 else self.X_train.shape[1]
+        n_ir_channels = self.X_train.shape[1]
         for c in range(n_ir_channels) : 
             self.X_train[:, c] = self.X_train[:, c] - 273.15  
             self.X_val[:,c] = self.X_val[:,c] - 273.15
@@ -589,6 +589,11 @@ class PrepareDataSet():
             # self.sar_anggrek = dataprep.create_moment_sar(self.sar_anggrek)
 
             # self.sar_anggrek = dataprep.create_moment_sar(self.sar_anggrek)
+
+        with open("test_ir.pkl","wb") as f:
+            pkl.dump(self.X_test,f)
+        with open("anggrek_ir.pkl","wb") as f:
+            pkl.dump(self.X_anggrek,f)
 
 
         if self.augmentation:

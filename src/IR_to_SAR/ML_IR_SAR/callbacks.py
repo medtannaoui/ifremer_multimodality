@@ -1340,8 +1340,16 @@ class LogValidationSamples:
             ax.plot(time_parsed, pred_vmax, color="green", linewidth=2, label="UNET Res 3 km")
             ax.plot(time_parsed, pred_vmax_2km, color="magenta", linewidth=2, label="UNET Res 2 km")
         else:
-            ax.plot(time_parsed, pred_vmax_mean_fm_3m, color="green", linewidth=2, label="flow matching (mean) Res 3 km")
-            ax.plot(time_parsed, pred_vmax_std_fm_3m, color="magenta", linewidth=2, label="flow matching (std) Res 3 km")
+            ax.plot(time_parsed, pred_vmax_mean_fm_3m, color="green", linewidth=2, label="flow matching (mean n=20) Res 3 km")
+            ax.fill_between(
+                    time_parsed,
+                    pred_vmax_mean_fm_3m - pred_vmax_std_fm_3m,
+                    pred_vmax_mean_fm_3m + pred_vmax_std_fm_3m,
+                    color="magenta",
+                    alpha=0.10,
+                    label="Residual FM ± std"
+                )
+            
 
         analysis_arr = np.array(analysis_vmax_cyclobs, dtype=float)
         cyclobs_arr  = np.array(vmax_cyclobs, dtype=float)
