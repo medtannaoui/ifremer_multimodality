@@ -59,7 +59,7 @@ import src.IR_to_SAR.ML_IR_SAR.model as model_ir_sar
 import src.IR_to_SAR.ML_IR_SAR.callbacks as callbacks
 reload(model_ir_sar)
 reload(callbacks)
-from src.IR_to_SAR.ML_IR_SAR.model import create_model,create_fm_model_direct
+from src.IR_to_SAR.ML_IR_SAR.model import create_model,create_fm_model_direct,load_regression_model,create_fm_residual_model
 from src.IR_to_SAR.ML_IR_SAR.callbacks import EarlyStopping,ModelCheckpoint,LogValidationSamples
 
 import src.IR_to_SAR.ML_IR_SAR.config as config
@@ -67,6 +67,8 @@ reload(config)
 from src.IR_to_SAR.ML_IR_SAR.config import IR_SAR_Config
 import src.IR_to_SAR.data_preparation.prepare_dataset as prep_dataset
 reload(prep_dataset)
+
+from src.IR_to_SAR.data_preparation.data_preprocessing import compute_residual_stats,load_residual_stats,save_residual_stats
 
 
 
@@ -374,7 +376,162 @@ def validate_fm_direct(fabric, model, dataloader, stats, num_inference_steps=50)
     n = max(n_batches, 1)
     return total_loss / n
    
+def train_fm_residual_epoch(
+    fabric,
+    fm_model,
+    regression_model,
+    dataloader,
+    optimizer,
+    residual_mean: float,
+    residual_std: float,
+    scheduler=None,
+    scheduler_name=None,
+):
+    """
+    One training epoch for residual FM.
 
+    Args:
+        fabric:           Lightning Fabric
+        fm_model:         residual FM UNet (in_channels=2)
+        regression_model: frozen regression UNet
+        dataloader:       returns (x, sar, mask, infos)
+        optimizer:        for fm_model only (regression is frozen)
+        residual_mean:    pre-computed mean of (SAR - regression) on training set
+        residual_std:     pre-computed std  of (SAR - regression) on training set
+    """
+    fm_model.train()
+    regression_model.eval()
+    total_loss = 0.0
+
+    resid_mean_t = torch.tensor(residual_mean, dtype=torch.float32)
+    resid_std_t  = torch.tensor(residual_std,  dtype=torch.float32)
+
+    for x, sar, mask, infos in tqdm(dataloader, desc="Resid-FM train", leave=False):
+        x    = x.to(fabric.device)
+        sar  = sar.to(fabric.device)
+        mask = mask.to(fabric.device)
+
+        if sar.ndim == 3:
+            sar  = sar.unsqueeze(1)
+        if mask.ndim == 3:
+            mask = mask.unsqueeze(1)
+
+        # ── Step 1: frozen regression (mean field) ─────────────────────
+        with torch.no_grad():
+            t0        = torch.zeros(x.shape[0], device=fabric.device)
+            mean_pred = regression_model(x, t0).sample   # (B, 1, H, W)
+
+        # ── Step 2: normalised residual ────────────────────────────────
+        rm = resid_mean_t.to(fabric.device)
+        rs = resid_std_t.to(fabric.device)
+
+        residual = (sar - mean_pred).nan_to_num(0.0)
+        x_1      = (residual - rm) / rs     # normalised residual ∈ ~N(0, 1)
+
+        # ── Step 3: FM interpolation in residual space ─────────────────
+        B   = x_1.shape[0]
+        z   = torch.randn_like(x_1)
+        t   = torch.rand(B, device=fabric.device)
+        x_t = t.view(-1,1,1,1) * x_1 + (1 - t.view(-1,1,1,1)) * z
+
+        # Model input: [noisy residual, mean prediction]
+        model_input   = torch.cat([x_t, mean_pred], dim=1)   # (B, 2, H, W)
+
+        optimizer.zero_grad()
+
+        pred_velocity = fm_model(model_input, t).sample
+        true_velocity = x_1 - z
+
+        # Mask: valid SAR pixels only
+        valid = (mask > 0) & sar.isfinite()
+        valid = valid.expand_as(pred_velocity)
+        loss  = F.mse_loss(pred_velocity[valid], true_velocity[valid])
+
+        fabric.backward(loss)
+        fabric.clip_gradients(fm_model, optimizer, max_norm=1.0)
+        optimizer.step()
+
+        if scheduler is not None and scheduler_name == "onecycle":
+            scheduler.step()
+
+        total_loss += loss.item()
+
+    if scheduler is not None and scheduler_name not in (None, "onecycle"):
+        scheduler.step()
+
+    return total_loss / max(len(dataloader), 1)
+
+def validate_fm_residual_epoch(
+    fabric,
+    fm_model,
+    regression_model,
+    dataloader,
+    residual_mean: float,
+    residual_std: float,
+):
+    """
+    One validation epoch for residual FM.
+
+    Args:
+        fabric:           Lightning Fabric
+        fm_model:         residual FM UNet (in_channels=2)
+        regression_model: frozen regression UNet
+        dataloader:       returns (x, sar, mask, infos)
+        residual_mean:    mean of (SAR - regression prediction) on training set
+        residual_std:     std  of (SAR - regression prediction) on training set
+
+    Returns:
+        mean validation loss over the epoch (float)
+    """
+    fm_model.eval()
+    regression_model.eval()
+    total_loss = 0.0
+    n_batches = 0
+
+    resid_mean_t = torch.tensor(residual_mean, dtype=torch.float32, device=fabric.device)
+    resid_std_t  = torch.tensor(residual_std, dtype=torch.float32, device=fabric.device)
+
+    with torch.no_grad():
+        for x, sar, mask, infos in tqdm(dataloader, desc="Resid-FM val", leave=False):
+            x    = x.to(fabric.device)
+            sar  = sar.to(fabric.device)
+            mask = mask.to(fabric.device)
+
+            if sar.ndim == 3:
+                sar = sar.unsqueeze(1)
+            if mask.ndim == 3:
+                mask = mask.unsqueeze(1)
+
+            # ── Step 1: frozen regression prediction ───────────────────
+            t0 = torch.zeros(x.shape[0], device=fabric.device)
+            mean_pred = regression_model(x, t0).sample   # (B, 1, H, W)
+
+            # ── Step 2: normalised residual target ─────────────────────
+            residual = (sar - mean_pred).nan_to_num(0.0)
+            x_1 = (residual - resid_mean_t) / resid_std_t
+
+            # ── Step 3: FM interpolation in residual space ─────────────
+            B = x_1.shape[0]
+            z = torch.randn_like(x_1)
+            t = torch.rand(B, device=fabric.device)
+            x_t = t.view(-1, 1, 1, 1) * x_1 + (1 - t.view(-1, 1, 1, 1)) * z
+
+            # Model input: [noisy residual, mean prediction]
+            model_input = torch.cat([x_t, mean_pred], dim=1)   # (B, 2, H, W)
+
+            pred_velocity = fm_model(model_input, t).sample
+            true_velocity = x_1 - z
+
+            # Valid pixels only
+            valid = (mask > 0) & sar.isfinite()
+            valid = valid.expand_as(pred_velocity)
+
+            loss = F.mse_loss(pred_velocity[valid], true_velocity[valid])
+
+            total_loss += loss.item()
+            n_batches += 1
+
+    return total_loss / max(n_batches, 1)
 
 # =============================
 # 🚀 3) Main Training Lightning Fabric
@@ -436,14 +593,18 @@ def main(cfg: IR_SAR_Config,test=False):
 
     # --- Fabric init with callbacks ---   #QUentin
     
-    
+    ckpt_filename = (
+                        "best_fm_resid_model.pt" if cfg.use_residu
+                        else "best_fm_model.pt" if cfg.use_flow_matching
+                        else "best_regression_model.pt"
+                    )
     fabric = L.Fabric(
         accelerator=cfg.accelerator,
         devices= cfg.devices,
         strategy= "auto",
         callbacks=[
             EarlyStopping(patience=cfg.early_stop_patience, min_delta=cfg.early_stop_delta),
-            ModelCheckpoint(cfg.save_dir, filename="best_fm_model.pt" if cfg.use_flow_matching else "best_regression_model.pt", target_dir= target_dir),
+            ModelCheckpoint(cfg.save_dir, filename=ckpt_filename, target_dir= target_dir),
             LogValidationSamples(
                 base_dir= cfg.save_dir,
                 mean_X=full_data.dataset.mean_X,
@@ -475,7 +636,10 @@ def main(cfg: IR_SAR_Config,test=False):
     # --- Model & Optimizer & Scheduler ---
     in_channels = train_ds.X.shape[1] if isinstance(train_ds.X, np.ndarray) else train_ds.X[0].shape[0]
     if cfg.use_flow_matching:
-        model = create_fm_model_direct(cfg, in_channels_ir=in_channels)
+        if not cfg.use_residu:
+            model = create_fm_model_direct(cfg, in_channels_ir=in_channels)
+        else :
+            model = create_fm_residual_model(cfg)
         
     else : 
         model = create_model(
@@ -538,18 +702,35 @@ def main(cfg: IR_SAR_Config,test=False):
     pix2pix_loss_history = []
     gradient_loss_history = []
     radial_loss_history = []
+    best_reg_model = None
+    if cfg.use_residu and cfg.use_flow_matching:
+        best_reg_model = load_regression_model(cfg.best_regression_model_pt,cfg=cfg)
+        best_reg_model = best_reg_model.to(fabric.device)
+        
+        path_resid_stats = "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/flow_matching_residual/residual_stats.json" if not cfg.code_test else "residual_stats.json"
+        if os.path.exists(path_resid_stats):
+            resid_stats = load_residual_stats(path_resid_stats)
+        else : 
+            stats = compute_residual_stats(train_loader=train_loader, regression_model=best_reg_model,device=fabric.device)
+            save_residual_stats(stats,path_resid_stats)
+            resid_stats  = stats
 
     for epoch in range(cfg.num_epochs):
         logger.info(f"===== Epoch {epoch+1}/{cfg.num_epochs} =====")
-        if cfg.use_flow_matching:                                     
-            train_loss = train_fm_epoch_direct(                       
-                fabric, model, train_loader, optimizer,               
-                scheduler, cfg.scheduler,                              
-            )                                                         
-            val_loss = validate_fm_direct(
-                                fabric, model, val_loader, 0, cfg.fm_num_inference_steps
-                            ) 
-
+        if cfg.use_flow_matching:
+            if not cfg.use_residu:                                     
+                train_loss = train_fm_epoch_direct(                       
+                    fabric, model, train_loader, optimizer,               
+                    scheduler, cfg.scheduler,                              
+                )                                                         
+                val_loss = validate_fm_direct(
+                                    fabric, model, val_loader, 0, cfg.fm_num_inference_steps
+                                ) 
+            else : 
+                train_loss = train_fm_residual_epoch(fabric=fabric,fm_model=model,regression_model=best_reg_model,dataloader=train_loader,
+                                                     optimizer=optimizer,residual_mean=resid_stats["mean"],residual_std=resid_stats["std"],
+                                                     scheduler=scheduler,scheduler_name=cfg.scheduler)
+                val_loss = validate_fm_residual_epoch(fabric,model,best_reg_model,val_loader,resid_stats["mean"],resid_stats["std"])
         else:
             train_loss, train_metrics,l_pix, l_grad, l_radial = train_one_epoch(fabric, model, train_loader, optimizer, metrics,
                                                         scheduler=scheduler,
@@ -591,7 +772,9 @@ def main(cfg: IR_SAR_Config,test=False):
                 model=model,
                 epoch=epoch,
                 dataloader= [train_loader, val_loader, test_loader] if not cfg.anggrek_test else   [train_loader, val_loader, test_loader, anggrek_loader],
-                device=fabric.device
+                device=fabric.device,
+                reg_model = best_reg_model if cfg.use_residu else None,
+                resid_stats = resid_stats if cfg.use_residu else None
             )
             print("----- plots saved")
 
@@ -615,7 +798,11 @@ def main(cfg: IR_SAR_Config,test=False):
                 break
 
         if stop_training or epoch == cfg.num_epochs - 1:
-            ckpt_name = "best_fm_model.pt" if cfg.use_flow_matching else "best_regression_model.pt"
+            ckpt_name = (
+                            "best_fm_resid_model.pt" if cfg.use_residu
+                            else "best_fm_model.pt" if cfg.use_flow_matching
+                            else "best_regression_model.pt"
+                        )
             best_ckpt_path = target_dir / ckpt_name
 
             if best_ckpt_path.exists():
@@ -632,7 +819,10 @@ def main(cfg: IR_SAR_Config,test=False):
                 model=model,
                 epoch=epoch,   # dernier epoch
                 dataloader=[train_loader, val_loader, test_loader, anggrek_loader] if cfg.anggrek_test else [train_loader, val_loader, test_loader],
-                device=fabric.device
+                device=fabric.device,
+                reg_model = best_reg_model if cfg.use_residu else None,
+                resid_stats = resid_stats if cfg.use_residu else None
+
             )
             break
         

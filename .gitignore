@@ -25,6 +25,7 @@ __pycache__/
 *.npz
 *.npy
 *.vscode
+.nfs*
 # Dossiers internes à ignorer
 donnees_sar/
 donnees_sar_changes/
@@ -50,7 +51,8 @@ era5
 *era5_single_levels*
 regridded_era5
 introdution_flow_matching
-flow_matching
+flow_matching*
+*mnt*
 
 # ==========================
 #   TEMPORARY & LOG FILES
@@ -84,3 +86,4 @@ introduction_flow_matching/05_residual_flow_matching.py
 introduction_flow_matching/04_conditioning.py
 introduction_flow_matching/01_flow_matching_concepts.ipynb
 introduction_flow_matching/02_flow_matching_training_direct.ipynb
+.nfs00000000898ed337002138bc

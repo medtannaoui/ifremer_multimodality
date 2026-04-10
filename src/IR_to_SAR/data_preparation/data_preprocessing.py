@@ -15,6 +15,8 @@ warnings.filterwarnings("ignore")
 
 
 import os
+import json
+from tqdm import tqdm
 import numpy as np
 import random
 import xarray as xr
@@ -1107,7 +1109,65 @@ def build_irwin_channels(irwin_train, n_channels):
     return np.array(output)
 
 
+def compute_residual_stats(train_loader, regression_model, device="cpu"):
+    """
+    Compute mean and std of residuals (SAR - regression) over the training set.
 
+    Args:
+        train_loader:       DataLoader returning (x, sar, mask, infos)
+        regression_model:   frozen regression UNet
+        device:             torch device
+
+    Returns:
+        dict: {"mean": float, "std": float, "n_pixels": int}
+    """
+    regression_model.eval()
+    sum_vals  = 0.0
+    sum_sq    = 0.0
+    n_pixels  = 0
+
+    with torch.no_grad():
+        for x, sar, mask, infos in tqdm(train_loader, desc="Computing residual stats"):
+            x    = x.to(device)
+            sar  = sar.to(device)
+            mask = mask.to(device)
+
+            if sar.ndim == 3:
+                sar  = sar.unsqueeze(1)
+            if mask.ndim == 3:
+                mask = mask.unsqueeze(1)
+
+            # Regression prediction (mean field)
+            t0 = torch.zeros(x.shape[0], device=device)
+            mean_pred = regression_model(x, t0).sample   # (B, 1, H, W)
+
+            # Residual at valid pixels
+            residual = sar - mean_pred
+            valid    = (mask > 0) & sar.isfinite()
+
+            r_valid = residual[valid]
+            sum_vals += r_valid.sum().item()
+            sum_sq   += (r_valid ** 2).sum().item()
+            n_pixels += r_valid.numel()
+
+    mean = sum_vals / n_pixels
+    var  = sum_sq   / n_pixels - mean ** 2
+    std  = max(var, 1e-8) ** 0.5
+
+    stats = {"mean": mean, "std": std, "n_pixels": n_pixels}
+    print(f"Residual stats: mean={mean:.4f}, std={std:.4f} (n_pixels={n_pixels:,})")
+    return stats
+
+
+def save_residual_stats(stats: dict, path: str):
+    with open(path, "w") as f:
+        json.dump(stats, f, indent=2)
+    print(f"Saved residual stats to {path}")
+
+
+def load_residual_stats(path: str) -> dict:
+    with open(path) as f:
+        return json.load(f)
 
 if __name__ =="__main__":
     create_coloc_pkl()

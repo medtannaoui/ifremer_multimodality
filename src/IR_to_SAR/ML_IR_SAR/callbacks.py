@@ -171,7 +171,7 @@ class LogValidationSamples:
         return vmax1d_knots, rmax1d_km
     
 
-    def log_batch(self, model, batch, epoch, device, set="validation",ode_pred=None):
+    def log_batch(self, model, batch, epoch, device, set="validation",ode_pred=None,reg_model=None,resid_stats=None):
         """
         Log l'ensemble d'un batch : images + distributions pixel-par-pixel.
         Compatible avec un batch normal ou avec 'toute la validation concaténée'.
@@ -200,12 +200,32 @@ class LogValidationSamples:
                 if not self.conditional_model:
                     if not self.cfg.use_flow_matching:
                         pred = model(x, timestep=0).sample
-                    else:
+                    elif not self.cfg.use_residu:
                         B = x.shape[0]
                         H = x.shape[2]
                         W = x.shape[3]
                         z = torch.randn(B, 1, H, W, device=device)
                         pred = _euler_ode(model, z, x, self.cfg.fm_num_inference_steps, device)
+                    else:
+                        B, _, H, W = x.shape
+                        z = torch.randn(B, 1, H, W, device=device)
+
+                        mean_pred = reg_model(x, timestep=0).sample
+
+                        resid_norm = fm_inf.ode_solver_residual(
+                            fm_model=model,
+                            z=z,
+                            mean_pred=mean_pred,
+                            num_steps=self.cfg.fm_num_inference_steps
+                        )
+
+                        pred = fm_inf.reconstruct_from_residual(
+                            resid_norm,
+                            mean_pred,
+                            resid_stats["mean"],
+                            resid_stats["std"]
+                        )
+
                 else:
                     shear = torch.stack([
                         torch.as_tensor(d["shear"], dtype=torch.float32)
@@ -356,7 +376,7 @@ class LogValidationSamples:
 
         # ---------------------------------------------------------------------------------------------------------------------------------------------------
         # On ne visualise que le canal IRWIN (canal 0)
-        ch = 2 if x.shape[1] >3 else 0
+        ch = 4 if x.shape[1] >4 else 0
         ir = x[:, ch, :, :]
         ir = ir.squeeze().cpu().numpy()
         sar = sar.squeeze().cpu().numpy()
@@ -647,7 +667,14 @@ class LogValidationSamples:
                 mask = mask.unsqueeze(0).to(device)
                 fm_model = model
                 stats = {"mean": self.mean_sar, "std": self.std_sar}
-                ensemble = fm_inf.generate_ensemble(model=fm_model, ir_input=x_ir, n_members=20, device=device)
+                if not self.cfg.use_residu : 
+                    ensemble = fm_inf.generate_ensemble(model=fm_model, ir_input=x_ir, n_members=20, device=device)
+                else : 
+                    mean_pred = reg_model(x_ir,timestep=0).sample
+                    ensemble = fm_inf.generate_residual_ensemble(fm_model,mean_pred,
+                                                                 residual_mean=resid_stats["mean"],
+                                                                 residual_std=resid_stats["std"])
+                    
                 if i%10==0 : 
                     os.makedirs(os.path.join(rank_smple_path, f"{cyclone_id[i]}_{sar_time[i]}"), exist_ok=True)
                     
@@ -775,7 +802,8 @@ class LogValidationSamples:
         
     
     def plot_fm_diagnostics(self, model, x_ir, sar_target, mask, stats, device="cpu",
-                        num_steps=20, n_rows=5, set="validation", epoch=0, cmap_sar="viridis", cmap_ir="gray"):
+                        num_steps=20, n_rows=5, set="validation", epoch=0, cmap_sar="viridis", cmap_ir="gray",
+                        reg_model=None,resid_stats=None):
         """
         Quick validation figure: IR | SAR target | FM sample | velocity at t=0.5.
         Call this from LogValidationSamples.on_validation_plots() with use_flow_matching=True.
@@ -792,13 +820,33 @@ class LogValidationSamples:
 
         with torch.no_grad():
             # One FM sample
-            z      = torch.randn(B, 1, x_ir.shape[2], x_ir.shape[3], device=device)
-            fm_out = _euler_ode(model, z, x_ir, num_steps, device)
+            if not self.cfg.use_residu:
+                z      = torch.randn(B, 1, x_ir.shape[2], x_ir.shape[3], device=device)
+                fm_out = _euler_ode(model, z, x_ir, num_steps, device)
+                # Velocity at midpoint t=0.5 (diagnostic: should be near x₁−z)
+                t_mid = torch.full((B,), 0.5, device=device)
+                mi    = torch.cat([z, x_ir], dim=1)
+                vel05 = model(mi, t_mid).sample
 
-            # Velocity at midpoint t=0.5 (diagnostic: should be near x₁−z)
-            t_mid = torch.full((B,), 0.5, device=device)
-            mi    = torch.cat([z, x_ir], dim=1)
-            vel05 = model(mi, t_mid).sample
+            else : 
+                B,_,H,W = x_ir.shape
+                z      = torch.randn(B, 1, x_ir.shape[2], x_ir.shape[3], device=device)
+                mean_pred = reg_model(x_ir, timestep=0).sample
+
+                resid_norm = fm_inf.ode_solver_residual(
+                    fm_model=model,
+                    z=z,
+                    mean_pred=mean_pred,
+                    num_steps=self.cfg.fm_num_inference_steps
+                )
+                fm_out = fm_inf.reconstruct_from_residual(
+                    resid_norm,
+                    mean_pred,
+                    resid_stats["mean"],
+                    resid_stats["std"]
+                )
+
+
 
         sar_mean = stats["mean"]
         sar_std  = stats["std"]
@@ -812,28 +860,39 @@ class LogValidationSamples:
             im_ir  = x_ir[i, 0].cpu().numpy()          # first IR channel
             im_tgt = sar_tgt[i, 0].cpu().numpy() * sar_std + sar_mean
             im_fm  = fm_out[i, 0].cpu().numpy()  * sar_std + sar_mean
-            im_vel = vel05[i, 0].cpu().numpy()
+            im_vel = vel05[i, 0].cpu().numpy() if not self.cfg.use_residu else (resid_norm[i,0]*sar_std + sar_mean).cpu().numpy()
 
             
             distdata.plot_ir(im_ir, fig=fig, ax=axes[i,0], cmap=cmap_ir);         axes[i, 0].set_title("IR (ch 0)")
             distdata.plot_sar(im_tgt, fig=fig, ax=axes[i,1], cmap=cmap_sar or "RdBu_r");       axes[i, 1].set_title("SAR target")
             distdata.plot_sar(im_fm, fig=fig, ax=axes[i,2], cmap=cmap_sar or "RdBu_r");       axes[i, 2].set_title("FM sample")
-            distdata.plot_sar(im_vel, fig=fig, ax=axes[i,3], cmap=cmap_sar or "seismic");       axes[i, 3].set_title("Velocity @ t=0.5")
-
-            
-
-
+            distdata.plot_sar(im_vel, fig=fig, ax=axes[i,3], cmap= "seismic");       axes[i, 3].set_title("Velocity @ t=0.5" if not self.cfg.use_residu else "Residu")
+       
         for ax in axes.flat:
             ax.axis("off")
         plt.tight_layout()
         os.makedirs(os.path.join(self.output_dir,f"fm_diagnostics_{set}"),exist_ok=True)
-        save_path = os.path.join(self.output_dir, f"fm_diagnostics_{set}", f"fm_diagnostics_{epoch+1}.png")
+        save_path = os.path.join(self.output_dir, f"fm_diagnostics_{set}", f"fm_diagnostics.png")
         plt.savefig(save_path, dpi=150)
-        return fig
+        
+    
+        if self.cfg.use_residu : 
+            for i in range(B) :
+                im_ir  = x_ir[i, 0].cpu().numpy()          # first IR channel
+                im_tgt = sar_tgt[i, 0].cpu().numpy() * sar_std + sar_mean
+                im_fm  = fm_out[i, 0].cpu().numpy()  * sar_std + sar_mean
+
+                reg_pred = reg_model(x_ir[i,:,:,:].unsqueeze(0),timestep=0).sample
+                direct_ensemble = fm_inf.generate_residual_ensemble(model,reg_pred,20,self.cfg.fm_num_inference_steps,resid_stats["mean"],resid_stats["std"]).cpu().numpy()
+                residual_ensemble = direct_ensemble - im_tgt
+
+                fig2 = distdata.plot_comparison(im_ir,im_tgt,mask[i,0].cpu().numpy(),stats,reg_pred.cpu().numpy(),direct_ensemble,residual_ensemble)
+        
+                plt.savefig(os.path.join(self.output_dir,f"fm_diagnostics_{set}",f"plot_comparison_residual_sample_{i}.png"))
 
     
 
-    def on_validation_plots(self, model, epoch, dataloader, device):
+    def on_validation_plots(self, model, epoch, dataloader, device, reg_model=None, resid_stats=None):
             print(f"📸 Logging validation samples at epoch {epoch +1}")
 
             all_ir_val = []
@@ -907,10 +966,10 @@ class LogValidationSamples:
             batch_full_val = (ir_full_val, sar_full_val, mask_val, infos_val)
             batch_full_train = (ir_full_train, sar_full_train, mask_train, infos_train)
             batch_full_test = (ir_full_test, sar_full_test, mask_test, infos_test)
+            self.log_batch(model, batch_full_train, epoch, device, set="train",reg_model=reg_model,resid_stats=resid_stats)
             if not self.cfg.code_test : 
-                self.log_batch(model, batch_full_train, epoch, device, set="train")
-                self.log_batch(model, batch_full_val, epoch, device)
-                self.log_batch(model, batch_full_test, epoch, device, set="test")
+                self.log_batch(model, batch_full_val, epoch, device,reg_model=reg_model,resid_stats=resid_stats)
+                self.log_batch(model, batch_full_test, epoch, device, set="test",reg_model=reg_model,resid_stats=resid_stats)
              
             if not  self.conditional_model: 
 
@@ -927,55 +986,57 @@ class LogValidationSamples:
                 batch_full_anggrek = (ir_full_anggrek, sar_full_anggrek, mask_anggrek, infos_anggrek)
                 
 
-                self.anggrek_plots(model, batch_full_anggrek, epoch, device)
+                self.anggrek_plots(model, batch_full_anggrek, epoch, device,reg_model=reg_model, resid_stats= resid_stats)
                 print("finished anggrek plots")
             
             if self.cfg.use_flow_matching:
                 print("starting fm diagnostics for train, val and test sets")
-                if not self.cfg.code_test :
-                    self.plot_fm_diagnostics(model, ir_full_train, sar_full_train, mask_train, stats={"mean": self.mean_sar, "std": self.std_sar}, 
+                self.plot_fm_diagnostics(model, ir_full_train, sar_full_train, mask_train, stats={"mean": self.mean_sar, "std": self.std_sar}, 
                                             device=device, num_steps=self.cfg.fm_num_inference_steps, n_rows=5, set="train", epoch=epoch,
-                                            cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir)
+                                            cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir,reg_model=reg_model,resid_stats=resid_stats)
+                if not self.cfg.code_test :
+                    
                     self.plot_fm_diagnostics(model, ir_full_val, sar_full_val, mask_val, stats={"mean": self.mean_sar, "std": self.std_sar}, 
                                             device=device, num_steps=self.cfg.fm_num_inference_steps, n_rows=5, set="validation", epoch=epoch,
-                                            cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir)
+                                            cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir,reg_model=reg_model,resid_stats=resid_stats)
                     self.plot_fm_diagnostics(model, ir_full_test, sar_full_test, mask_test, stats={"mean": self.mean_sar, "std": self.std_sar}, 
                                             device=device, num_steps=self.cfg.fm_num_inference_steps, n_rows=8, set="test", epoch=epoch, 
-                                            cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir)  
+                                            cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir,reg_model=reg_model,resid_stats=resid_stats)  
 
-                    self.anggrek_plots(model, batch_full_anggrek, epoch, device, add_mean_std_fm = True)
+                self.anggrek_plots(model, batch_full_anggrek, epoch, device, add_mean_std_fm = True, reg_model=reg_model,resid_stats=resid_stats)
             
                 #ode selver with guidance
-                ode_guidances = [];ode_reprojections = []
-                for ir, sar, mask, inf in dataloader[0 if self.cfg.code_test else 2]:   #test set
-                    ir = ir.to(device)
-                    sar = sar.to(device)
-                    mask = mask.to(device)
-                    fm_model = model
-                    stats = {"mean": self.mean_sar, "std": self.std_sar}
-                    z = torch.randn_like(sar)
-                    ode_guidance_out = fm_inf.ode_solver_with_guidance(model=fm_model, z=z, ir_input=ir, obs_sar=sar, obs_mask=mask, 
-                                                                    num_steps=self.cfg.fm_num_inference_steps,
-                                                                        sar_mean_stat=self.mean_sar, sar_std_stat=self.std_sar)
-                    ode_reprojectiion_out = fm_inf.ode_solver_with_reprojection(model=fm_model,z=z, ir_input=ir, obs_sar=sar, 
-                                                                                obs_mask=mask, num_steps=self.cfg.fm_num_inference_steps)
-                    
-                    ode_guidances.append(ode_guidance_out)
-                    ode_reprojections.append(ode_reprojectiion_out)
+                if not self.cfg.use_residu : 
+                    ode_guidances = [];ode_reprojections = []
+                    for ir, sar, mask, inf in dataloader[0 if self.cfg.code_test else 2]:   #test set
+                        ir = ir.to(device)
+                        sar = sar.to(device)
+                        mask = mask.to(device)
+                        fm_model = model
+                        stats = {"mean": self.mean_sar, "std": self.std_sar}
+                        z = torch.randn_like(sar)
+                        ode_guidance_out = fm_inf.ode_solver_with_guidance(model=fm_model, z=z, ir_input=ir, obs_sar=sar, obs_mask=mask, 
+                                                                        num_steps=self.cfg.fm_num_inference_steps,
+                                                                            sar_mean_stat=self.mean_sar, sar_std_stat=self.std_sar)
+                        ode_reprojectiion_out = fm_inf.ode_solver_with_reprojection(model=fm_model,z=z, ir_input=ir, obs_sar=sar, 
+                                                                                    obs_mask=mask, num_steps=self.cfg.fm_num_inference_steps)
+                        
+                        ode_guidances.append(ode_guidance_out)
+                        ode_reprojections.append(ode_reprojectiion_out)
 
-                ode_guidances = torch.cat(ode_guidances, dim=0)
-                ode_reprojections = torch.cat(ode_reprojections, dim=0)
-                batch_full_test_guidance = (ir_full_test,  sar_full_test, mask_test, infos_test, ode_guidances) if not self.cfg.code_test else (ir_full_train,  sar_full_train, mask_train, infos_train, ode_guidances)     #
-                batch_full_test_reprojection = (ir_full_test,  sar_full_test, mask_test, infos_test, ode_reprojections) if not self.cfg.code_test else (ir_full_train,  sar_full_train, mask_train, infos_train, ode_reprojections) #
-                self.log_batch(model, batch_full_test_guidance, epoch, device, set="test_guidance",ode_pred=True)
-                self.log_batch(model, batch_full_test_reprojection, epoch, device, set="test_reprojection", ode_pred=True)
+                    ode_guidances = torch.cat(ode_guidances, dim=0)
+                    ode_reprojections = torch.cat(ode_reprojections, dim=0)
+                    batch_full_test_guidance = (ir_full_test,  sar_full_test, mask_test, infos_test, ode_guidances) if not self.cfg.code_test else (ir_full_train,  sar_full_train, mask_train, infos_train, ode_guidances)     #
+                    batch_full_test_reprojection = (ir_full_test,  sar_full_test, mask_test, infos_test, ode_reprojections) if not self.cfg.code_test else (ir_full_train,  sar_full_train, mask_train, infos_train, ode_reprojections) #
+                    self.log_batch(model, batch_full_test_guidance, epoch, device, set="test_guidance",ode_pred=True,reg_model=reg_model,resid_stats=resid_stats)
+                    self.log_batch(model, batch_full_test_reprojection, epoch, device, set="test_reprojection", ode_pred=True,reg_model=reg_model,resid_stats=resid_stats)
 
         # save distribution of wind speed of pred and true val to compare it
         #just in the lkast epoch
 
     
 
-    def anggrek_plots(self, model, batch, epoch, device, add_mean_std_fm = False):
+    def anggrek_plots(self, model, batch, epoch, device, add_mean_std_fm = False,reg_model=None,resid_stats=None):
         """
         Produces ONLY:
         (1) field_plots/<YYYYmmddHHMMSS>/<YYYYmmddHHMMSS>_fields.png with IR + PRED
@@ -1001,12 +1062,33 @@ class LogValidationSamples:
                 if not self.conditional_model:
                     if not self.cfg.use_flow_matching:
                         pred = model(x, timestep=0).sample
-                    else:
+                    elif not self.cfg.use_residu:
                         B = x.shape[0]
                         H = x.shape[2]
                         W = x.shape[3]
                         z = torch.randn(B, 1, H, W, device=device)
                         pred = _euler_ode(model, z, x, self.cfg.fm_num_inference_steps, device)
+                    else : 
+                        B, _, H, W = x.shape
+                        z = torch.randn(B, 1, H, W, device=device)
+                        mean_pred = reg_model(x, timestep=0).sample
+
+                        resid_norm = fm_inf.ode_solver_residual(
+                            fm_model=model,
+                            z=z,
+                            mean_pred=mean_pred,
+                            num_steps=self.cfg.fm_num_inference_steps
+                        )
+
+                        pred = fm_inf.reconstruct_from_residual(
+                            resid_norm,
+                            mean_pred,
+                            resid_stats["mean"],
+                            resid_stats["std"]
+                        )
+
+                        
+
                 else :
                     shear = torch.stack([
                                             torch.as_tensor(d["shear"], dtype=torch.float32)
@@ -1117,7 +1199,15 @@ class LogValidationSamples:
             time_parsed = time_parsed[order]
             infos_ord = [infos[i] for i in order]
             for i,x_fm in enumerate(x):
-                ensemble = fm_inf.generate_ensemble(model=model, ir_input=x_fm,device=device)
+                if not self.cfg.use_residu:
+                    ensemble = fm_inf.generate_ensemble(model=model, ir_input=x_fm,device=device)
+                else : 
+                    if x_fm.ndim == 3 :
+                        x_fm = x_fm.unsqueeze(0)
+                    mean_pred = reg_model(x_fm,timestep=0).sample
+                    ensemble = fm_inf.generate_residual_ensemble(model,mean_pred,num_steps=self.cfg.fm_num_inference_steps,residual_mean=resid_stats["mean"],
+                                                                 residual_std=resid_stats["std"])
+                    
                 mean_fm, std_fm = fm_inf.plot_ensemble_results(x_fm, sar_target=None, ensemble=ensemble,
                                                         stats={"mean": self.mean_sar, "std": self.std_sar}, mask=None, 
                                                     save_path=os.path.join(self.output_dir,"fm_diagnostics_anggrek","anggrek_monitoring","fields_plots",f"{time_parsed[i].strftime('%Y%m%d%H%M%S')}_ensemble.png"),

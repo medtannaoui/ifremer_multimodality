@@ -77,3 +77,42 @@ class ConditionalUNet(nn.Module):
             encoder_hidden_states=cond_embed,
         )
 
+#Use Residu 
+def load_regression_model(checkpoint_path, cfg, 
+                           device = "cpu"):
+    """
+    Load the existing regression model from best_regression_model.pt.
+    Returns it frozen (requires_grad=False).
+    """
+    model = create_model(
+        in_channels=cfg.in_channels,
+        cfg=cfg,
+        conditional_model=False,
+
+    )
+
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    state_dict = ckpt.get("model", ckpt)
+    model.load_state_dict(state_dict)
+
+    # Freeze all parameters — this model will NOT be trained
+    model.eval()
+    for p in model.parameters():
+        p.requires_grad_(False)
+
+    return model.to(device)
+
+def create_fm_residual_model(cfg):
+    """
+    Create FM model for residual learning.
+
+    in_channels = 2:
+      channel 0 = x_t   (noisy normalised residual)
+      channel 1 = mean_prediction  (regression output, the conditioning signal)
+    out_channels = 1: predicted velocity in residual space
+    """
+    return create_model(
+        in_channels=2,         # x_t_resid (1) + mean_pred (1)
+        cfg=cfg,
+        conditional_model=False,
+    )

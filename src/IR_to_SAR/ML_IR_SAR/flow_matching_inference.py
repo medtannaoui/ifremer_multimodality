@@ -326,3 +326,78 @@ def ode_solver_with_reprojection(
             x_t = torch.where(obs_mask.bool(), x_t * scale_applied, x_t)
 
     return x_t
+
+
+
+@torch.no_grad()
+def ode_solver_residual(fm_model, z, mean_pred, num_steps=50):   #1 example
+    """
+    Euler ODE solver in residual space.
+
+    Args:
+        fm_model:   residual FM UNet (in_channels=2)
+        z:          (B, 1, H, W) initial noise (normalised residual space)
+        mean_pred:  (B, 1, H, W) regression mean field (frozen)
+        num_steps:  Euler steps
+
+    Returns:
+        (B, 1, H, W) predicted normalised residual x_1
+    """
+    x_t = z.clone()
+    dt  = 1.0 / num_steps
+
+    for i in range(num_steps):
+        t = torch.full((x_t.shape[0],), i / num_steps, device=x_t.device)
+        model_input   = torch.cat([x_t, mean_pred], dim=1)
+        pred_velocity = fm_model(model_input, t).sample
+        x_t           = x_t + pred_velocity * dt
+
+    return x_t   # normalised residual x_1
+
+def reconstruct_from_residual(x_1_norm, mean_pred, residual_mean, residual_std):  #sar pred
+    """
+    Convert normalised residual back to physical wind speed.
+
+    Args:
+        x_1_norm:      (B, 1, H, W) normalised residual from ODE solver
+        mean_pred:     (B, 1, H, W) regression mean field (in normalised SAR space)
+        residual_mean: pre-computed residual mean (scalar)
+        residual_std:  pre-computed residual std  (scalar)
+
+    Returns:
+        (B, 1, H, W) SAR prediction in normalised SAR space
+    """
+    residual = x_1_norm * residual_std + residual_mean
+    return mean_pred + residual
+
+
+def generate_residual_ensemble(
+    fm_model, mean_pred, n_members=20, num_steps=50,
+    residual_mean=0.0, residual_std=1.0,
+):
+    """
+    Generate ensemble of SAR predictions using residual FM.
+
+    Args:
+        fm_model:       residual FM UNet
+        mean_pred:      (1, 1, H, W) regression mean field
+        n_members:      ensemble size
+        num_steps:      Euler steps
+        residual_mean:  float
+        residual_std:   float
+
+    Returns:
+        ensemble: (n_members, 1, H, W)
+    """
+    device = mean_pred.device
+    H, W   = mean_pred.shape[2], mean_pred.shape[3]
+
+    # Broadcast mean_pred to all ensemble members
+    mean_batch = mean_pred.expand(n_members, -1, -1, -1)   # (n, 1, H, W)
+    z          = torch.randn(n_members, 1, H, W, device=device)
+
+    with torch.no_grad():
+        x_1_norm = ode_solver_residual(fm_model, z, mean_batch, num_steps)
+        ensemble = reconstruct_from_residual(x_1_norm, mean_batch, residual_mean, residual_std)
+
+    return ensemble   # (n_members, 1, H, W)

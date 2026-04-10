@@ -824,5 +824,63 @@ def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False
 
     
 
-    
+def plot_comparison(ir_input, sar_target, mask, stats,
+                    reg_pred,
+                    direct_ensemble,
+                    residual_ensemble,
+                    title=""
+                    ):
+    """
+    5-panel comparison: IR | SAR | Regression | Direct FM | Residual FM
+    plus uncertainty maps for both FM variants.
+    """
+    sar_mean = stats["mean"]
+    sar_std  = stats["std"]
+
+    def denorm(x):
+        return x.squeeze() * sar_std + sar_mean
+
+    def stdmap(ens):
+        return ens.std(0).squeeze() * sar_std  # std scales with std
+
+    # Apply mask
+    valid_np = (mask.squeeze() > 0) if mask is not None else None
+
+    def apply_mask(arr):
+        if valid_np is not None:
+            return np.where(valid_np, arr, np.nan)
+        return arr
+
+    tgt_np   = apply_mask(denorm(sar_target))
+    reg_np   = denorm(reg_pred)
+    dir_np   = denorm(direct_ensemble.mean(0))
+    res_np   = denorm(residual_ensemble.mean(0))
+    dir_std  = stdmap(direct_ensemble)
+    res_std  = stdmap(residual_ensemble)
+    ir_np    = ir_input.squeeze()
+
+    fig, axes = plt.subplots(2, 4, figsize=(20, 10))
+
+    # Top row: predictions
+    axes[0, 0].imshow(ir_np,  cmap=cmap_ir);      axes[0, 0].set_title("IR (ch 0)")
+    axes[0, 1].imshow(tgt_np, cmap=cmap_sar, vmin=0, vmax=80);        axes[0, 1].set_title("SAR target (m/s)")
+    axes[0, 2].imshow(reg_np, cmap=cmap_sar, vmin=0, vmax=80);        axes[0, 2].set_title("Deterministic regression")
+    axes[0, 3].axis("off")
+
+    # Bottom row: FM means and uncertainties
+    axes[1, 0].axis("off")
+    im1 = axes[1, 1].imshow(dir_np, cmap=cmap_sar, vmin=0, vmax=80);  axes[1, 1].set_title("Direct FM mean")
+    im2 = axes[1, 2].imshow(res_np, cmap=cmap_sar, vmin=0, vmax=80);  axes[1, 2].set_title("Residual FM mean")
+    im3 = axes[1, 3].imshow(res_std - dir_std, cmap="RdBu_r")
+    axes[1, 3].set_title("Residual std − Direct std\n(neg = residual is less uncertain)")
+
+    for ax in axes.flat: ax.axis("off")
+    plt.colorbar(im1, ax=axes[1, 1], fraction=0.046)
+    plt.colorbar(im2, ax=axes[1, 2], fraction=0.046)
+    plt.colorbar(im3, ax=axes[1, 3], fraction=0.046)
+
+    if title: fig.suptitle(title, fontsize=12)
+    plt.tight_layout()
+    return fig
+
 
