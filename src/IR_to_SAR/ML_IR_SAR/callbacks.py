@@ -883,12 +883,15 @@ class LogValidationSamples:
                 im_fm  = fm_out[i, 0].cpu().numpy()  * sar_std + sar_mean
 
                 reg_pred = reg_model(x_ir[i,:,:,:].unsqueeze(0),timestep=0).sample
-                direct_ensemble = fm_inf.generate_residual_ensemble(model,reg_pred,20,self.cfg.fm_num_inference_steps,resid_stats["mean"],resid_stats["std"]).cpu().numpy()
-                residual_ensemble = direct_ensemble - im_tgt
+                residual_ensemble = fm_inf.generate_residual_ensemble(model,reg_pred,20,
+                                                                    self.cfg.fm_num_inference_steps,
+                                                                    resid_stats["mean"],
+                                                                    resid_stats["std"]).cpu().numpy()
 
-                fig2 = distdata.plot_comparison(im_ir,im_tgt,mask[i,0].cpu().numpy(),stats,reg_pred.cpu().numpy(),direct_ensemble,residual_ensemble)
+                fig2 = distdata.plot_comparison(im_ir,im_tgt,mask_v[i,0].cpu().numpy(),stats,reg_pred.cpu().numpy(),residual_ensemble)
         
                 plt.savefig(os.path.join(self.output_dir,f"fm_diagnostics_{set}",f"plot_comparison_residual_sample_{i}.png"))
+                plt.close(fig2)
 
     
 
