@@ -660,7 +660,7 @@ class LogValidationSamples:
             print(f"starting fm diagnostics for {set} set")
             #loop over thye batch with tqdm to see the progress
             mean_ph, std_ph = [], []
-            
+            check_indices = [len(x_fm) // k for k in [8, 7, 6, 5, 4, 3, 2]]
             for i, (x_ir, sar_target, mask, infos) in enumerate(zip(x_fm, sar_fm, mask_fm, infos_fm)):
                 x_ir = x_ir.unsqueeze(0).to(device)
                 sar_target = sar_target.unsqueeze(0).to(device)
@@ -675,20 +675,23 @@ class LogValidationSamples:
                                                                  residual_mean=resid_stats["mean"],
                                                                  residual_std=resid_stats["std"])
                     
-                if i%10==0 : 
+                
+
+                if i in check_indices:
                     os.makedirs(os.path.join(rank_smple_path, f"{cyclone_id[i]}_{sar_time[i]}"), exist_ok=True)
                     
                     save_path_samples = os.path.join(rank_smple_path, f"{cyclone_id[i]}_{sar_time[i]}", "samples.png")
                     save_path_rank =    os.path.join(rank_smple_path, f"{cyclone_id[i]}_{sar_time[i]}", "rank_histogram.png")
                     ens_mean_phys, ens_std_phys = fm_inf.plot_ensemble_results(x_ir,sar_target=sar_target, ensemble=ensemble, stats=stats, mask=mask, save_path= save_path_samples,
-                                                cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir,save_pic=i%10==0)
+                                                cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir,save_pic=True)
                     mean_ph.append(ens_mean_phys); std_ph.append(ens_std_phys)
 
                     #rank histogram of the analysis in the ensemble
                     ranks , n_members= fm_inf.rank_histogram(ensemble, sar_target.unsqueeze(0), mask)
                     fm_inf.plot_rank_histogram(ranks, n_members=n_members, save_pth=save_path_rank)
                 else : 
-                    ens_mean_phys, ens_std_phys = fm_inf.plot_ensemble_results(x_ir,sar_target=sar_target, ensemble=ensemble, stats=stats, mask=mask, save_path= save_path_samples,
+                    ens_mean_phys, ens_std_phys = fm_inf.plot_ensemble_results(x_ir,sar_target=sar_target, ensemble=ensemble, 
+                                                                               stats=stats, mask=mask, save_path= None,
                                                 cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir,save_pic=False)
                     mean_ph.append(ens_mean_phys); std_ph.append(ens_std_phys)
 

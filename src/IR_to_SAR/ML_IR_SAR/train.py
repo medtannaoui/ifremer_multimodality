@@ -708,8 +708,18 @@ def main(cfg: IR_SAR_Config,test=False):
     if cfg.use_residu and cfg.use_flow_matching:
         best_reg_model = load_regression_model(cfg.best_regression_model_pt,cfg=cfg)
         best_reg_model = best_reg_model.to(fabric.device)
-        
-        path_resid_stats = "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/flow_matching_residual/residual_stats.json" if not cfg.code_test else "residual_stats.json"
+        json_file_name = (
+            f"residual_stats_{cfg.irwin_channels}"
+            if cfg.channel_splitting
+            else "residual_stats"
+        )
+
+        path_resid_stats = (
+            f"/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/flow_matching_residual/{json_file_name}.json"
+            if not cfg.code_test
+            else "residual_stats.json"
+        )
+
         if os.path.exists(path_resid_stats):
             resid_stats = load_residual_stats(path_resid_stats)
         else : 
