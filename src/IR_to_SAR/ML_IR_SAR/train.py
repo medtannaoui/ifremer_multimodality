@@ -554,6 +554,7 @@ def custom_collate(batch):
 
 
 def main(cfg: IR_SAR_Config,test=False):
+    cfg.use_residu = cfg.use_residu if cfg.use_flow_matching else False
     import matplotlib.pyplot as plt
     logger.info(f"Starting training with config:\n{cfg.__dict__}")
     stop_training = False
@@ -644,7 +645,8 @@ def main(cfg: IR_SAR_Config,test=False):
     else : 
         model = create_model(
             cfg=cfg,
-            conditional_model=cfg.conditional_model
+            conditional_model=cfg.conditional_model,
+            in_channels=in_channels
         ).to(fabric.device)
         
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.fm_lr if cfg.use_flow_matching else cfg.learning_rate, weight_decay=1e-3)   #add regularisation
@@ -727,8 +729,10 @@ def main(cfg: IR_SAR_Config,test=False):
                                     fabric, model, val_loader, 0, cfg.fm_num_inference_steps
                                 ) 
             else : 
-                train_loss = train_fm_residual_epoch(fabric=fabric,fm_model=model,regression_model=best_reg_model,dataloader=train_loader,
-                                                     optimizer=optimizer,residual_mean=resid_stats["mean"],residual_std=resid_stats["std"],
+                train_loss = train_fm_residual_epoch(fabric=fabric,fm_model=model,regression_model=best_reg_model,
+                                                     dataloader=train_loader,
+                                                     optimizer=optimizer,residual_mean=resid_stats["mean"],
+                                                     residual_std=resid_stats["std"],
                                                      scheduler=scheduler,scheduler_name=cfg.scheduler)
                 val_loss = validate_fm_residual_epoch(fabric,model,best_reg_model,val_loader,resid_stats["mean"],resid_stats["std"])
         else:

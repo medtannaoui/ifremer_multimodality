@@ -407,9 +407,15 @@ class PrepareDataSet():
             print(f"✅ Kept rows that open correctly: {len(data)}")
             print(f"❌ Dropped rows that failed: {len(bad_rows)}")
 
-        self.infos_train = infos_train
-        self.infos_val = infos_val
-        self.infos_test = infos_test
+        if self.cfg.channel_splitting : 
+            self.infos_train = [info for info in infos_train for _ in range(9)]
+            self.infos_val = [info for info in infos_val for _ in range(9)]
+            self.infos_test = [info for info in infos_test for _ in range(9)]
+            
+        else : 
+            self.infos_train = infos_train
+            self.infos_val = infos_val
+            self.infos_test = infos_test
         self.infos_anggrek = infos_anggrek if anggrek_test else None
 
         image_channels_train, image_channels_val, image_channels_test, image_channels_anggrek = [], [], [], []
@@ -534,17 +540,6 @@ class PrepareDataSet():
         self.sar_train = self.sar_train[:, H_sar//2-size//2:H_sar//2+size//2, W_sar//2-size//2:W_sar//2+size//2]
         self.sar_val = self.sar_val[:, H_sar//2-size//2:H_sar//2+size//2, W_sar//2-size//2:W_sar//2+size//2]
         self.sar_test = self.sar_test[:, H_sar//2-size//2:H_sar//2+size//2, W_sar//2-size//2:W_sar//2+size//2]
-        # self.sar_anggrek = self.sar_anggrek[:, H_sar//2-size//2:H_sar//2+size//2, W_sar//2-size//2:W_sar//2+size//2]
-
-        print("Final Shape of train Input is ",self.X_train.shape)
-        print("Final Shape of train Output is ",self.sar_train.shape)
-        print("Final Shape of Validation Input is ",self.X_val.shape)
-        print("Final Shape of Validation Output is ",self.sar_val.shape)
-        print("Final Shape of Test Input is ",self.X_test.shape)
-        print("Final Shape of Test Output is ",self.sar_test.shape)
-
-
-
 
         #  Convert IR from Kelvin to Celsius ===
         
@@ -555,6 +550,23 @@ class PrepareDataSet():
             self.X_test[:,c] = self.X_test[:,c] - 273.15
             if anggrek_test:
                 self.X_anggrek[:,c] = self.X_anggrek[:,c] - 273.15
+        
+        if self.cfg.channel_splitting : 
+            self.X_train, self.sar_train = dataprep.split_ir_channels_and_repeat_sar(self.X_train, self.sar_train)
+            self.X_val, self.sar_val     = dataprep.split_ir_channels_and_repeat_sar(self.X_val, self.sar_val)
+            self.X_test, self.sar_test   = dataprep.split_ir_channels_and_repeat_sar(self.X_test, self.sar_test)
+            if anggrek_test:
+                self.X_anggrek= self.X_anggrek[:,n_ir_channels//2,:,:]
+                N,H,W = self.X_anggrek.shape
+                self.X_anggrek = self.X_anggrek.reshape((N,1,W,H))
+
+        print("Final Shape of train Input is ",self.X_train.shape)
+        print("Final Shape of train Output is ",self.sar_train.shape)
+        print("Final Shape of Validation Input is ",self.X_val.shape)
+        print("Final Shape of Validation Output is ",self.sar_val.shape)
+        print("Final Shape of Test Input is ",self.X_test.shape)
+        print("Final Shape of Test Output is ",self.sar_test.shape)
+        print("Final Shape of Anggrek Input is ",self.X_anggrek.shape)
 
 
         #  Create SAR valid pixel mask ===

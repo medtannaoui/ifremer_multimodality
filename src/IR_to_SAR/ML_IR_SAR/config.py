@@ -56,6 +56,7 @@ class IR_SAR_Config:
     code_test : bool
     use_residu : bool
     best_regression_model_pt : str
+    channel_splitting : bool
     @staticmethod
     def from_yaml(path: str):
         with open(path, "r") as file:

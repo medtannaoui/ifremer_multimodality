@@ -53,6 +53,7 @@ regridded_era5
 introdution_flow_matching
 flow_matching*
 *mnt*
+regression
 
 # ==========================
 #   TEMPORARY & LOG FILES

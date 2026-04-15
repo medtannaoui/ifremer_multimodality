@@ -1169,5 +1169,27 @@ def load_residual_stats(path: str) -> dict:
     with open(path) as f:
         return json.load(f)
 
+
+def split_ir_channels_and_repeat_sar(X, y):
+    """
+    X: IR data of shape (N, 9, H, W)
+    y: SAR data of shape (N, ...) matching the same N samples
+
+    Returns:
+        X_new: (N*9, H, W)
+        y_new: repeated SAR targets with shape (N*9, ...)
+    """
+    N, C, H, W = X.shape
+    assert C >= 2, f"Expected more than 1 IR channels, but got {C}"
+
+    # (N, 9, H, W) -> (N*9, H, W)
+    X_new = X.reshape(N * C, 1, H, W)
+
+    # Repeat SAR target 9 times for each original sample
+    y_new = np.repeat(y, C, axis=0) if y is not None else None
+    
+
+    return X_new, y_new
+
 if __name__ =="__main__":
     create_coloc_pkl()

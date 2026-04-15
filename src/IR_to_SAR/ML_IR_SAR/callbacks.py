@@ -969,7 +969,7 @@ class LogValidationSamples:
             batch_full_val = (ir_full_val, sar_full_val, mask_val, infos_val)
             batch_full_train = (ir_full_train, sar_full_train, mask_train, infos_train)
             batch_full_test = (ir_full_test, sar_full_test, mask_test, infos_test)
-            self.log_batch(model, batch_full_train, epoch, device, set="train",reg_model=reg_model,resid_stats=resid_stats)
+            # self.log_batch(model, batch_full_train, epoch, device, set="train",reg_model=reg_model,resid_stats=resid_stats)
             if not self.cfg.code_test : 
                 self.log_batch(model, batch_full_val, epoch, device,reg_model=reg_model,resid_stats=resid_stats)
                 self.log_batch(model, batch_full_test, epoch, device, set="test",reg_model=reg_model,resid_stats=resid_stats)
@@ -1064,6 +1064,7 @@ class LogValidationSamples:
             if not add_mean_std_fm:
                 if not self.conditional_model:
                     if not self.cfg.use_flow_matching:
+                        print(x.shape)
                         pred = model(x, timestep=0).sample
                     elif not self.cfg.use_residu:
                         B = x.shape[0]
@@ -1267,7 +1268,7 @@ class LogValidationSamples:
                 axs[2 if self.add_era5 else 1].axhline(y=0, color="black", linewidth=1)
                 axs[2 if self.add_era5 else 1].axvline(x=0, color="black", linewidth=1)
                 if self.add_era5:
-                    distdata.plot_sar(era5[i], cmap=self.cmap_sar,ax=axs[1],fig=fig,x_lim=H)
+                    distdata.plot_sar(era5[i]*self.std_sar + self.mean_sar , cmap=self.cmap_sar,ax=axs[1],fig=fig,x_lim=H)
                     axs[1].set_title("ERA 5")
                     axs[1].axis("off")
 
