@@ -997,7 +997,8 @@ class LogValidationSamples:
             
             if self.cfg.use_flow_matching:
                 print("starting fm diagnostics for train, val and test sets")
-                self.plot_fm_diagnostics(model, ir_full_train, sar_full_train, mask_train, stats={"mean": self.mean_sar, "std": self.std_sar}, 
+                if self.cfg.code_test : 
+                    self.plot_fm_diagnostics(model, ir_full_train, sar_full_train, mask_train, stats={"mean": self.mean_sar, "std": self.std_sar}, 
                                             device=device, num_steps=self.cfg.fm_num_inference_steps, n_rows=5, set="train", epoch=epoch,
                                             cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir,reg_model=reg_model,resid_stats=resid_stats)
                 if not self.cfg.code_test :

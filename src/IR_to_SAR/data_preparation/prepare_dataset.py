@@ -407,7 +407,7 @@ class PrepareDataSet():
             print(f"✅ Kept rows that open correctly: {len(data)}")
             print(f"❌ Dropped rows that failed: {len(bad_rows)}")
 
-        if self.cfg.channel_splitting : 
+        if self.cfg.channel_splitting and False : 
             self.infos_train = [info for info in infos_train for _ in range(9)]
             self.infos_val = [info for info in infos_val for _ in range(9)]
             self.infos_test = [info for info in infos_test for _ in range(9)]
@@ -553,12 +553,17 @@ class PrepareDataSet():
         
         if self.cfg.channel_splitting : 
             self.X_train, self.sar_train = dataprep.split_ir_channels_and_repeat_sar(self.X_train, self.sar_train)
-            self.X_val, self.sar_val     = dataprep.split_ir_channels_and_repeat_sar(self.X_val, self.sar_val)
-            self.X_test, self.sar_test   = dataprep.split_ir_channels_and_repeat_sar(self.X_test, self.sar_test)
             if anggrek_test:
                 self.X_anggrek= self.X_anggrek[:,n_ir_channels//2,:,:]
-                N,H,W = self.X_anggrek.shape
-                self.X_anggrek = self.X_anggrek.reshape((N,1,W,H))
+
+            self.X_val, self.sar_val     = self.X_val[:,n_ir_channels//2,:,:],self.sar_val
+            self.X_test, self.sar_test   = self.X_test[:,n_ir_channels//2,:,:],self.sar_test
+            N,H,W = self.X_anggrek.shape
+            self.X_anggrek = self.X_anggrek.reshape((N,1,W,H))
+            N_val = self.X_val.shape[0]
+            N_test = self.X_test.shape[0]
+            self.X_val = self.X_val.reshape((N_val,1,W,H))
+            self.X_test = self.X_test.reshape((N_test,1,W,H))
 
         print("Final Shape of train Input is ",self.X_train.shape)
         print("Final Shape of train Output is ",self.sar_train.shape)
