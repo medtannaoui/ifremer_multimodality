@@ -89,11 +89,17 @@ class IRSARDataset(Dataset):
                  ir_smoothing=False,add_era5=False,cfg=None):
         self.norm = norm
         
-        dataset = prep_dataset.PrepareDataSet(size=size, norm= norm, barycenter= barycenter, drop_nan_100=drop_nan_100,input_channels=input_channels,
-                                              pkl_file=data_path,train_split=train_split,val_split=val_split,test_split=test_split,
-                                              augmentation=augmentation,target_dir = target_dir, input_data=input_data, output_data=output_data,
-                                              conditional_model=conditional_model,anggrek_test=anggrek_test,log_wind=log_wind,irwin_channels=irwin_channels,
-                                              regrid_ir=regrid_ir,ir_smoothing=ir_smoothing,add_era5=add_era5,cfg=cfg)
+        dataset = prep_dataset.PrepareDataSet(size=size, norm= norm, barycenter= barycenter, 
+                                              drop_nan_100=drop_nan_100,
+                                              input_channels=input_channels,
+                                              pkl_file=data_path,train_split=train_split,
+                                              val_split=val_split,test_split=test_split,
+                                              augmentation=augmentation,target_dir = target_dir,
+                                              input_data=input_data, output_data=output_data,
+                                              conditional_model=conditional_model,anggrek_test=anggrek_test,
+                                              log_wind=log_wind,irwin_channels=irwin_channels,
+                                              regrid_ir=regrid_ir,ir_smoothing=ir_smoothing,
+                                              add_era5=add_era5,cfg=cfg)
          
         self.dataset = dataset     
         print("Data preparation finished")
@@ -555,6 +561,7 @@ def custom_collate(batch):
 
 def main(cfg: IR_SAR_Config,test=False):
     cfg.use_residu = cfg.use_residu if cfg.use_flow_matching else False
+    cfg.in_channels = cfg.in_channels if not cfg.channel_splitting else 1
     import matplotlib.pyplot as plt
     logger.info(f"Starting training with config:\n{cfg.__dict__}")
     stop_training = False
@@ -571,17 +578,34 @@ def main(cfg: IR_SAR_Config,test=False):
 
     # --- Dataset full ---
     
-    full_data = IRSARDataset(test=test, size=cfg.img_size, norm=cfg.norm, barycenter=cfg.barycenter, drop_nan_100=cfg.drop_nan_sar,
+    full_data = IRSARDataset(test=test, 
+                             size=cfg.img_size, 
+                             norm=cfg.norm, 
+                             barycenter=cfg.barycenter, 
+                             drop_nan_100=cfg.drop_nan_sar,
                              input_channels=cfg.input_channels,
                              data_path = cfg.data_path,
-                             train_split=cfg.train_split,val_split=cfg.val_split,test_split=cfg.test_split,
-                             target_dir = target_dir,augmentation=cfg.augmentation,input_data=cfg.input_data,output_data=cfg.output_data,
-                             conditional_model = cfg.conditional_model,anggrek_test=cfg.anggrek_test,log_wind=cfg.log_wind,irwin_channels=cfg.irwin_channels,
-                             regrid_ir=cfg.regrid_ir,ir_smoothing=cfg.ir_smoothing,add_era5=cfg.add_era5,cfg=cfg)
+                             train_split=cfg.train_split,
+                             val_split=cfg.val_split,
+                             test_split=cfg.test_split,
+                             target_dir = target_dir,
+                             augmentation=cfg.augmentation,
+                             input_data=cfg.input_data,
+                             output_data=cfg.output_data,
+                             conditional_model = cfg.conditional_model,
+                             anggrek_test=cfg.anggrek_test,
+                             log_wind=cfg.log_wind,
+                             irwin_channels=cfg.irwin_channels,
+                             regrid_ir=cfg.regrid_ir,
+                             ir_smoothing=cfg.ir_smoothing,
+                             add_era5=cfg.add_era5,cfg=cfg)
     # X_all, sar_all = full_data.dataset.X, full_data.dataset.sar
 
     
-    train_ds = PairedDataset(*(full_data.dataset.X_train,full_data.dataset.sar_train),full_data.dataset.mask_train, full_data.dataset.infos_train)  #X (multi-channel input), SAR target
+    train_ds = PairedDataset(*(full_data.dataset.X_train,
+                               full_data.dataset.sar_train),
+                               full_data.dataset.mask_train, 
+                               full_data.dataset.infos_train)  #X (multi-channel input), SAR target
     val_ds   = PairedDataset(*(full_data.dataset.X_val,full_data.dataset.sar_val),full_data.dataset.mask_val, full_data.dataset.infos_val)
     test_ds   = PairedDataset(*(full_data.dataset.X_test,full_data.dataset.sar_test),full_data.dataset.mask_test, full_data.dataset.infos_test)
     
@@ -604,8 +628,11 @@ def main(cfg: IR_SAR_Config,test=False):
         devices= cfg.devices,
         strategy= "auto",
         callbacks=[
-            EarlyStopping(patience=cfg.early_stop_patience, min_delta=cfg.early_stop_delta),
-            ModelCheckpoint(cfg.save_dir, filename=ckpt_filename, target_dir= target_dir),
+            EarlyStopping(patience=cfg.early_stop_patience, 
+                          min_delta=cfg.early_stop_delta),
+            ModelCheckpoint(cfg.save_dir, 
+                            filename=ckpt_filename, 
+                            target_dir= target_dir),
             LogValidationSamples(
                 base_dir= cfg.save_dir,
                 mean_X=full_data.dataset.mean_X,
@@ -706,7 +733,7 @@ def main(cfg: IR_SAR_Config,test=False):
     radial_loss_history = []
     best_reg_model = None
     if cfg.use_residu and cfg.use_flow_matching:
-        best_reg_model = load_regression_model(cfg.best_regression_model_pt,cfg=cfg)
+        best_reg_model = load_regression_model(cfg.best_regression_model_pt,cfg=cfg) 
         best_reg_model = best_reg_model.to(fabric.device)
         json_file_name = (
             f"residual_stats_{cfg.irwin_channels}"

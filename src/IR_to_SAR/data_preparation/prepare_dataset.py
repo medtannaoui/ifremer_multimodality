@@ -79,7 +79,7 @@ class PrepareDataSet():
         # data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_v3_split_by_year.csv")
         if not  conditional_model : 
             if not self.regrid_ir:
-                data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_v3_split_by_year.csv")[:50 if self.cfg.code_test else None]
+                data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_v3_split_by_year.csv")[:30 if self.cfg.code_test else None]
             else : 
                 data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/tcva_matched_sargeo_4km_resolution.csv")[:]
         else :
@@ -525,11 +525,14 @@ class PrepareDataSet():
             print("shape with 4 km resolution is ",self.X_train.shape)
 
         N, C, H, W = self.X_train.shape
+        print(N,C,H,W)
+
         if anggrek_test:
             self.X_anggrek = self.X_anggrek
             
             N,C,h_anggrek,W_anggrek= self.X_anggrek.shape
         N,H_sar,W_sar = self.sar_train.shape
+        print(N,H_sar,W_sar)
         self.X_train = self.X_train[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2] if not self.ir_smoothing else dataprep.build_irwin_channels(self.X_train[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2],9)
         self.X_val = self.X_val[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2] if not self.ir_smoothing else dataprep.build_irwin_channels(self.X_val[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2],9)
         self.X_test = self.X_test[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2] if not self.ir_smoothing else dataprep.build_irwin_channels(self.X_test[:, :, H//2-size//2:H//2+size//2, W//2-size//2:W//2+size//2],9)

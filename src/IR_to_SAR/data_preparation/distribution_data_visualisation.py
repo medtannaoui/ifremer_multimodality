@@ -376,7 +376,7 @@ def plot_aam(tensor, fig=None, ax=None,title=None,x_lim=300):
     ax.set_aspect('equal')
 
 
-def plot_ir(tensor, fig=None,x=None, y=None, ax=None, x_lim=300, cmap=cmap_ir):
+def plot_ir(tensor, fig=None,x=None, y=None, ax=None, x_lim=300, cmap=cmap_ir,vmin=-100,vmax=0):
     if ax is None:
         ax = plt.gca()
 
@@ -387,7 +387,7 @@ def plot_ir(tensor, fig=None,x=None, y=None, ax=None, x_lim=300, cmap=cmap_ir):
         x = np.linspace(-x_lim,x_lim,tensor.shape[0])
         y = np.linspace(-x_lim,x_lim,tensor.shape[1])
 
-    im = ax.pcolormesh(x, y, tensor, cmap=cmap, shading="auto")
+    im = ax.pcolormesh(x, y, tensor, cmap=cmap, shading="auto",vmin=vmin,vmax=vmax)
     ax.set_xlim(-x_lim, x_lim)
     ax.set_ylim(-x_lim, x_lim)
     if fig is not None:
