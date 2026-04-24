@@ -57,6 +57,12 @@ class IR_SAR_Config:
     use_residu : bool
     best_regression_model_pt : str
     channel_splitting : bool
+    channel_dropout: bool
+    channel_drop_prob: float
+    min_keep_channels: int
+    protect_channels: list[int]
+    downsampling  : bool
+    target_resolution : int
     @staticmethod
     def from_yaml(path: str):
         with open(path, "r") as file:

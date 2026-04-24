@@ -116,3 +116,66 @@ def create_fm_residual_model(cfg):
         cfg=cfg,
         conditional_model=False,
     )
+
+def apply_random_channel_dropout(
+    x,
+    drop_prob=0.3,
+    min_keep_channels=4,
+    protect_channels=None,
+):
+    """
+    Randomly drops input channels for each sample in the batch.
+
+    Args:
+        x: Tensor of shape (B, C, H, W)
+        drop_prob: probability of dropping each channel
+        min_keep_channels: minimum number of channels to keep per sample
+        protect_channels: list of channel indices that must never be dropped
+
+    Returns:
+        x_dropped: Tensor of same shape
+    """
+    if drop_prob <= 0.0:
+        return x
+
+    B, C, H, W = x.shape
+    device = x.device
+
+    if protect_channels is None:
+        protect_channels = []
+
+    x_out = x.clone()
+
+    for b in range(B):
+        keep_mask = torch.ones(C, dtype=torch.bool, device=device)
+
+        # candidate channels that are allowed to be dropped
+        droppable = [c for c in range(C) if c not in protect_channels]
+
+        if len(droppable) == 0:
+            continue
+
+        rand_mask = torch.rand(len(droppable), device=device) > drop_prob
+
+        # assign random keep/drop to droppable channels
+        for i, c in enumerate(droppable):
+            keep_mask[c] = rand_mask[i]
+
+        # enforce protected channels
+        for c in protect_channels:
+            keep_mask[c] = True
+
+        # ensure enough channels remain
+        if keep_mask.sum() < min_keep_channels:
+            missing = min_keep_channels - int(keep_mask.sum().item())
+
+            dropped_candidates = [c for c in droppable if not keep_mask[c]]
+            if len(dropped_candidates) > 0:
+                perm = torch.randperm(len(dropped_candidates), device=device)
+                for idx in perm[:missing]:
+                    keep_mask[dropped_candidates[int(idx.item())]] = True
+
+        # zero dropped channels
+        x_out[b, ~keep_mask, :, :] = 0.0
+
+    return x_out

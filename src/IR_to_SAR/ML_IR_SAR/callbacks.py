@@ -1272,7 +1272,8 @@ class LogValidationSamples:
                 axs[2 if self.add_era5 else 1].axhline(y=0, color="black", linewidth=1)
                 axs[2 if self.add_era5 else 1].axvline(x=0, color="black", linewidth=1)
                 if self.add_era5:
-                    distdata.plot_sar(era5[i]*self.std_sar + self.mean_sar , cmap=self.cmap_sar,ax=axs[1],fig=fig,x_lim=H)
+                    distdata.plot_sar(annular_denormalization(era5[i], stats={"mean": self.mean_sar, "std": self.std_sar}) if self.norm == "annular" else era5[i]*self.std_sar+self.mean_sar
+                     , cmap=self.cmap_sar,ax=axs[1],fig=fig,x_lim=H)
                     axs[1].set_title("ERA 5")
                     axs[1].axis("off")
 

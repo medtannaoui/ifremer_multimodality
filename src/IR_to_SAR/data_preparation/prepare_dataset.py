@@ -516,13 +516,18 @@ class PrepareDataSet():
  
         print("Start Reshaping Data ........")
 
-        if self.regrid_ir:
-            print("start regriding infrared data to 4km resolution : ")
-            self.X_train = dataprep.regrid_batch_by_resolution(self.X_train,2,4)
-            self.X_anggrek = dataprep.regrid_batch_by_resolution(self.X_anggrek,2,4)
-            self.X_test = dataprep.regrid_batch_by_resolution(self.X_test,2,4)
-            self.X_val = dataprep.regrid_batch_by_resolution(self.X_val,2,4)
-            print("shape with 4 km resolution is ",self.X_train.shape)
+        
+        if self.cfg.downsampling:
+            print("Start downsamùpling data to 4Km :")
+            self.X_train,self.X_val =dataprep.downsample_2km_to_4km(self.X_train),dataprep.downsample_2km_to_4km(self.X_test)
+            self.X_test, self.X_anggrek = dataprep.downsample_2km_to_4km(self.X_test), dataprep.downsample_2km_to_4km(self.X_anggrek)
+            self._sar_train, self.sar_val = dataprep.downsample_2km_to_4km(self.sar_train), dataprep.downsample_2km_to_4km(self.sar_val)
+            self.sar_test                 = dataprep.downsample_2km_to_4km(self.sar_test)
+            print("Shape of the Train Input after downsampling : ",self.X_train.shape,"and the output :",self.sar_train.shape)
+            print("Shape of the Val Input after downsampling : ",self.X_val.shape,"and the output :",self.sar_val.shape)
+            print("Shape of the Test Input after downsampling : ",self.X_test.shape,"and the output :",self.sar_test.shape)
+
+
 
         N, C, H, W = self.X_train.shape
         print(N,C,H,W)

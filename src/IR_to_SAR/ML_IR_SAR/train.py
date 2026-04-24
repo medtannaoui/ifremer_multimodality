@@ -59,7 +59,7 @@ import src.IR_to_SAR.ML_IR_SAR.model as model_ir_sar
 import src.IR_to_SAR.ML_IR_SAR.callbacks as callbacks
 reload(model_ir_sar)
 reload(callbacks)
-from src.IR_to_SAR.ML_IR_SAR.model import create_model,create_fm_model_direct,load_regression_model,create_fm_residual_model
+from src.IR_to_SAR.ML_IR_SAR.model import create_model,create_fm_model_direct,load_regression_model,create_fm_residual_model,apply_random_channel_dropout
 from src.IR_to_SAR.ML_IR_SAR.callbacks import EarlyStopping,ModelCheckpoint,LogValidationSamples
 
 import src.IR_to_SAR.ML_IR_SAR.config as config
@@ -157,6 +157,13 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics, cfg, schedule
 
     for x, sar, mask, infos in tqdm(dataloader, desc="Training"):  #infos is a dictionanry
         x, sar, mask= x.to(fabric.device), sar.to(fabric.device), mask.to(fabric.device)
+        if cfg.channel_dropout:
+                        x = apply_random_channel_dropout(
+                        x,
+                        drop_prob=cfg.channel_drop_prob,
+                        min_keep_channels=cfg.min_keep_channels,
+                        protect_channels=getattr(cfg, "protect_channels", None),
+                    )
         if cfg.conditional_model:
             
             shear_infos = torch.stack([
@@ -256,7 +263,7 @@ def validate(fabric, model, dataloader, metrics, cfg):
 
     return total_loss / len(dataloader), metrics.compute(), l_pix, l_grad,l_radial
 
-def train_fm_epoch_direct(fabric, model, dataloader, optimizer, scheduler=None,
+def train_fm_epoch_direct(fabric, model, dataloader, optimizer, scheduler=None,cfg=None,
                           scheduler_name=None):
     """
     One flow matching training epoch — direct approach.
@@ -281,6 +288,13 @@ def train_fm_epoch_direct(fabric, model, dataloader, optimizer, scheduler=None,
         mask = mask.to(fabric.device)
 
         B = x.shape[0]
+        if cfg.channel_dropout:
+                        x = apply_random_channel_dropout(
+                        x,
+                        drop_prob=cfg.channel_drop_prob,
+                        min_keep_channels=cfg.min_keep_channels,
+                        protect_channels=getattr(cfg, "protect_channels", None),
+                    )
 
         # Ensure sar and mask are (B, 1, H, W)
         if sar.ndim == 3:
@@ -392,6 +406,7 @@ def train_fm_residual_epoch(
     residual_std: float,
     scheduler=None,
     scheduler_name=None,
+    cfg=None
 ):
     """
     One training epoch for residual FM.
@@ -416,6 +431,13 @@ def train_fm_residual_epoch(
         x    = x.to(fabric.device)
         sar  = sar.to(fabric.device)
         mask = mask.to(fabric.device)
+        if cfg.channel_dropout:
+                        x = apply_random_channel_dropout(
+                        x,
+                        drop_prob=cfg.channel_drop_prob,
+                        min_keep_channels=cfg.min_keep_channels,
+                        protect_channels=getattr(cfg, "protect_channels", None),
+                    )
 
         if sar.ndim == 3:
             sar  = sar.unsqueeze(1)
@@ -562,6 +584,7 @@ def custom_collate(batch):
 def main(cfg: IR_SAR_Config,test=False):
     cfg.use_residu = cfg.use_residu if cfg.use_flow_matching else False
     cfg.in_channels = cfg.in_channels if not cfg.channel_splitting else 1
+    cfg.protect_channels = cfg.protect_channels if not cfg.add_era5 else [cfg.in_channels -1 ]
     import matplotlib.pyplot as plt
     logger.info(f"Starting training with config:\n{cfg.__dict__}")
     stop_training = False
@@ -760,7 +783,8 @@ def main(cfg: IR_SAR_Config,test=False):
             if not cfg.use_residu:                                     
                 train_loss = train_fm_epoch_direct(                       
                     fabric, model, train_loader, optimizer,               
-                    scheduler, cfg.scheduler,                              
+                    scheduler, cfg.scheduler, 
+                    cfg=cfg                             
                 )                                                         
                 val_loss = validate_fm_direct(
                                     fabric, model, val_loader, 0, cfg.fm_num_inference_steps
@@ -770,7 +794,9 @@ def main(cfg: IR_SAR_Config,test=False):
                                                      dataloader=train_loader,
                                                      optimizer=optimizer,residual_mean=resid_stats["mean"],
                                                      residual_std=resid_stats["std"],
-                                                     scheduler=scheduler,scheduler_name=cfg.scheduler)
+                                                     scheduler=scheduler,
+                                                     scheduler_name=cfg.scheduler,
+                                                     cfg=cfg)
                 val_loss = validate_fm_residual_epoch(fabric,model,best_reg_model,val_loader,resid_stats["mean"],resid_stats["std"])
         else:
             train_loss, train_metrics,l_pix, l_grad, l_radial = train_one_epoch(fabric, model, train_loader, optimizer, metrics,
@@ -956,8 +982,34 @@ def main(cfg: IR_SAR_Config,test=False):
 
 if __name__ == "__main__":
     from src.IR_to_SAR.ML_IR_SAR.config import IR_SAR_Config
+    import time
+    import os
 
     config_path = "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/config.yaml"
     cfg = IR_SAR_Config.from_yaml(config_path)
+
+    file_path = cfg.best_regression_model_pt
+
+    print(f"Waiting for file: {file_path}")
+
+    last_size = -1
+    stable_count = 0
+
+    while True:
+        if os.path.exists(file_path):
+            size = os.path.getsize(file_path)
+
+            if size == last_size and size > 0:
+                stable_count += 1
+            else:
+                stable_count = 0
+                last_size = size
+
+            if stable_count >= 2:
+                print("File exists and size is stable. Starting training...")
+                break
+
+        print("Waiting for file to be ready...")
+        time.sleep(60)
 
     main(cfg, test=False)

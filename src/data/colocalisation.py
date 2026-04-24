@@ -205,5 +205,5 @@ def save_colocation_csv(
 # ============================================================
 
 if __name__ == "__main__":
-    delta = 90
-    save_colocation_csv(output_path= f"excels/colocates_sargeo_primed_{delta}min_v1.csv", delta = delta)
+    for delta in [135,165]:
+        save_colocation_csv(output_path= f"excels/colocates_sargeo_primed_{delta}min_v1.csv", delta = delta)

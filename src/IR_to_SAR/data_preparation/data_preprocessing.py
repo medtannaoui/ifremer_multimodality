@@ -1191,5 +1191,26 @@ def split_ir_channels_and_repeat_sar(X, y):
 
     return X_new, y_new
 
+
+def downsample_2km_to_4km(x):
+    """
+    Downsample a tensor from 2km to 4km resolution using average pooling.
+
+    Args:
+        x: numpy array of shape (N, C, H, W)
+
+    Returns:
+        numpy array of shape (N, C, H//2, W//2)
+    """
+    N, C, H, W = x.shape
+    assert H % 2 == 0 and W % 2 == 0, "H and W must be divisible by 2"
+    # reshape into 2x2 blocks
+    x = x.reshape(N, C, H//2, 2, W//2, 2)
+    # average over the small blocks
+    x = x.mean(axis=(3, 5))
+    return x
+
+
+
 if __name__ =="__main__":
     create_coloc_pkl()

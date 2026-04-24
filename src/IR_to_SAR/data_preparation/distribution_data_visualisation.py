@@ -347,20 +347,43 @@ def plot_quadrant_distribution(sar_tensors, ax=None, title = ""):
         )
 
 
-def plot_sar(tensor, fig=None, ax=None,cmap=cmap_sar,title=None,x_lim=300):
+def plot_sar(tensor, fig=None, ax=None, cmap=cmap_sar, title=None,
+             x_lim=300, x=None, y=None):
+
     if ax is None:
         ax = plt.gca()
-    
-    x_sar,y_sar = np.linspace(-x_lim,x_lim,tensor.shape[0]) , np.linspace(-x_lim,x_lim,tensor.shape[1])
-    im = ax.pcolormesh(x_sar, y_sar, tensor, cmap=cmap,vmin=0,vmax=160/1.94384449)
-    ax.set_xlim(-x_lim,x_lim)
-    ax.set_ylim(-x_lim,x_lim)
+
+    if x is None:
+        y_sar = np.linspace(-x_lim, x_lim, tensor.shape[0])
+        x_sar = np.linspace(-x_lim, x_lim, tensor.shape[1])
+        x_sar, y_sar = np.meshgrid(x_sar, y_sar)
+    else:
+        x_sar, y_sar = x, y   # déjà 2D, pas de meshgrid
+
+    im = ax.pcolormesh(
+        x_sar,
+        y_sar,
+        tensor,
+        cmap=cmap,
+        vmin=0,
+        vmax=160/1.94384449,
+        shading="auto"
+    )
+
+    if x is None:
+        ax.set_xlim(-x_lim, x_lim)
+        ax.set_ylim(-x_lim, x_lim)
+
     if title is not None:
         ax.set_title(title)
-    if fig is not None:
-        fig.colorbar(im,ax=ax,orientation="horizontal")
-    ax.set_aspect('equal')
 
+    if fig is not None:
+        fig.colorbar(im, ax=ax, orientation="horizontal")
+
+    ax.set_aspect("equal")
+
+
+    
 def plot_aam(tensor, fig=None, ax=None,title=None,x_lim=300):
     if ax is None:
         ax = plt.gca()
@@ -376,38 +399,58 @@ def plot_aam(tensor, fig=None, ax=None,title=None,x_lim=300):
     ax.set_aspect('equal')
 
 
-def plot_ir(tensor, fig=None,x=None, y=None, ax=None, x_lim=300, cmap=cmap_ir,vmin=-100,vmax=0):
+def plot_ir(tensor, fig=None, x=None, y=None, ax=None, x_lim=300,
+            cmap=cmap_ir, vmin=-100, vmax=50):
+
     if ax is None:
         ax = plt.gca()
 
     tensor = np.squeeze(tensor)
-    ny, nx = tensor.shape  # (rows, cols)
+    ny, nx = tensor.shape  # ny = rows, nx = cols
 
-    if x is None or y is None:
-        x = np.linspace(-x_lim,x_lim,tensor.shape[0])
-        y = np.linspace(-x_lim,x_lim,tensor.shape[1])
+    if x is None:
+        x = np.linspace(-x_lim, x_lim, nx)
 
-    im = ax.pcolormesh(x, y, tensor, cmap=cmap, shading="auto",vmin=vmin,vmax=vmax)
+    if y is None:
+        y = np.linspace(-x_lim, x_lim, ny)
+
+    im = ax.pcolormesh(
+        x, y, tensor,
+        cmap=cmap,
+        shading="nearest",
+        vmin=vmin,
+        vmax=vmax
+    )
+
     ax.set_xlim(-x_lim, x_lim)
     ax.set_ylim(-x_lim, x_lim)
-    if fig is not None:
-        fig.colorbar(im,ax=ax,orientation="horizontal")
     ax.set_aspect("equal")
 
+    if fig is not None:
+        fig.colorbar(im, ax=ax, orientation="horizontal")
 
-def plot_mw(tensor, cmap="cividis",x=None, y=None, ax=None, x_lim=300):
-  
+
+
+def plot_mw(tensor, cmap="cividis", x=None, y=None, ax=None, x_lim=300,fig=None):
+    
     if ax is None:
         ax = plt.gca()
 
-    # même domaine que IR/SAR
+    tensor = np.array(tensor)
+
     if x is None:
-        x_mw, y_mw = np.linspace(-300,300,tensor.shape[0]) , np.linspace(-300,300,tensor.shape[1])
-        ax.pcolormesh(x_mw, y_mw , tensor, cmap="cividis", shading="auto")
-    else :
-        ax.pcolormesh(x, y , tensor, cmap="cividis", shading="auto")
-    ax.set_xlim(-x_lim,x_lim)
-    ax.set_ylim(-x_lim,x_lim)
+        x_mw = np.linspace(-300, 300, tensor.shape[1])
+        y_mw = np.linspace(-300, 300, tensor.shape[0])
+
+        im = ax.pcolormesh(x_mw, y_mw, tensor, cmap=cmap, shading="nearest")
+    else:
+        im = ax.pcolormesh(x, y, tensor, cmap=cmap, shading="nearest")
+
+
+    if fig is not None:
+        fig.colorbar(im,ax=ax,orientation="horizontal")
+    ax.set_xlim(-x_lim, x_lim)
+    ax.set_ylim(-x_lim, x_lim)
     ax.set_aspect('equal')
     
 
