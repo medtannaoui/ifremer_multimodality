@@ -1299,7 +1299,7 @@ class LogValidationSamples:
                     x = x.unsqueeze(0).unsqueeze(0)
 
                 H, W = x.shape[-2:]
-                in_res = 4 if self.regrid_ir else 2
+                in_res = 4 if self.cfg.downsampling else 2
                 new_H = int(H * in_res / 3) 
                 new_W = int(W * in_res / 3)
 

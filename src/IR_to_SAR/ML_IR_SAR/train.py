@@ -585,6 +585,7 @@ def main(cfg: IR_SAR_Config,test=False):
     cfg.use_residu = cfg.use_residu if cfg.use_flow_matching else False
     cfg.in_channels = cfg.in_channels if not cfg.channel_splitting else 1
     cfg.protect_channels = cfg.protect_channels if not cfg.add_era5 else [cfg.in_channels -1 ]
+    cfg.norm = cfg.norm if not cfg.use_flow_matching else "z_score"  # FM models are trained on z-score normalised data for stability
     import matplotlib.pyplot as plt
     logger.info(f"Starting training with config:\n{cfg.__dict__}")
     stop_training = False
@@ -989,27 +990,28 @@ if __name__ == "__main__":
     cfg = IR_SAR_Config.from_yaml(config_path)
 
     file_path = cfg.best_regression_model_pt
+    print(os.path.exists(file_path))
 
-    print(f"Waiting for file: {file_path}")
+    # print(f"Waiting for file: {file_path}")
 
-    last_size = -1
-    stable_count = 0
+    # last_size = -1
+    # stable_count = 0
 
-    while True:
-        if os.path.exists(file_path):
-            size = os.path.getsize(file_path)
+    # while True:
+    #     if os.path.exists(file_path):
+    #         size = os.path.getsize(file_path)
 
-            if size == last_size and size > 0:
-                stable_count += 1
-            else:
-                stable_count = 0
-                last_size = size
+    #         if size == last_size and size > 0:
+    #             stable_count += 1
+    #         else:
+    #             stable_count = 0
+    #             last_size = size
 
-            if stable_count >= 2:
-                print("File exists and size is stable. Starting training...")
-                break
+    #         if stable_count >= 2:
+    #             print("File exists and size is stable. Starting training...")
+    #             break
 
-        print("Waiting for file to be ready...")
-        time.sleep(60)
+    #     print("Waiting for file to be ready...")
+    #     time.sleep(60)
 
     main(cfg, test=False)

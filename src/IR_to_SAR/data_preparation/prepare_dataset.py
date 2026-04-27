@@ -79,7 +79,7 @@ class PrepareDataSet():
         # data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_v3_split_by_year.csv")
         if not  conditional_model : 
             if not self.regrid_ir:
-                data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_v3_split_by_year.csv")[:30 if self.cfg.code_test else None]
+                data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/TCVA_matched_with_SARGEO_v3_split_by_year.csv")[:50 if self.cfg.code_test else None]
             else : 
                 data = pd.read_csv("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/tcva_matched_sargeo_4km_resolution.csv")[:]
         else :
@@ -518,14 +518,22 @@ class PrepareDataSet():
 
         
         if self.cfg.downsampling:
-            print("Start downsamùpling data to 4Km :")
-            self.X_train,self.X_val =dataprep.downsample_2km_to_4km(self.X_train),dataprep.downsample_2km_to_4km(self.X_test)
-            self.X_test, self.X_anggrek = dataprep.downsample_2km_to_4km(self.X_test), dataprep.downsample_2km_to_4km(self.X_anggrek)
-            self._sar_train, self.sar_val = dataprep.downsample_2km_to_4km(self.sar_train), dataprep.downsample_2km_to_4km(self.sar_val)
-            self.sar_test                 = dataprep.downsample_2km_to_4km(self.sar_test)
-            print("Shape of the Train Input after downsampling : ",self.X_train.shape,"and the output :",self.sar_train.shape)
-            print("Shape of the Val Input after downsampling : ",self.X_val.shape,"and the output :",self.sar_val.shape)
-            print("Shape of the Test Input after downsampling : ",self.X_test.shape,"and the output :",self.sar_test.shape)
+            print("Start downsampling data to 4Km:")
+
+            self.X_train = dataprep.downsample_2km_to_4km(self.X_train)
+            self.X_val   = dataprep.downsample_2km_to_4km(self.X_val)
+            self.X_test  = dataprep.downsample_2km_to_4km(self.X_test)
+
+            if anggrek_test:
+                self.X_anggrek = dataprep.downsample_2km_to_4km(self.X_anggrek)
+
+            self.sar_train = dataprep.downsample_2km_to_4km(self.sar_train)
+            self.sar_val   = dataprep.downsample_2km_to_4km(self.sar_val)
+            self.sar_test  = dataprep.downsample_2km_to_4km(self.sar_test)
+
+            print("Shape of the Train Input after downsampling:", self.X_train.shape, "and output:", self.sar_train.shape)
+            print("Shape of the Val Input after downsampling:", self.X_val.shape, "and output:", self.sar_val.shape)
+            print("Shape of the Test Input after downsampling:", self.X_test.shape, "and output:", self.sar_test.shape)
 
 
 

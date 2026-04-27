@@ -1192,6 +1192,8 @@ def split_ir_channels_and_repeat_sar(X, y):
     return X_new, y_new
 
 
+import numpy as np
+
 def downsample_2km_to_4km(x):
     """
     Downsample a tensor from 2km to 4km resolution using average pooling.
@@ -1202,14 +1204,23 @@ def downsample_2km_to_4km(x):
     Returns:
         numpy array of shape (N, C, H//2, W//2)
     """
+    if x.ndim != 4:
+        # add channel dimension if missing
+        x = x[:, np.newaxis, :, :]
     N, C, H, W = x.shape
-    assert H % 2 == 0 and W % 2 == 0, "H and W must be divisible by 2"
-    # reshape into 2x2 blocks
-    x = x.reshape(N, C, H//2, 2, W//2, 2)
-    # average over the small blocks
-    x = x.mean(axis=(3, 5))
-    return x
 
+    # Make dimensions even
+    if H % 2 != 0:
+        x = x[:, :, :-1, :]
+    if W % 2 != 0:
+        x = x[:, :, :, :-1]
+    print("Shape after correction for cropping:", np.shape(x))
+    N, C, H, W = x.shape
+    x = x.reshape(N, C, H//2, 2, W//2, 2)
+    x = x.mean(axis=(3, 5))
+
+
+    return x.squeeze(1) if C == 1 else x  # remove channel dimension if it was added
 
 
 if __name__ =="__main__":
