@@ -586,7 +586,9 @@ def main(cfg: IR_SAR_Config,test=False):
     cfg.in_channels = cfg.in_channels if not cfg.channel_splitting else 1
     cfg.protect_channels = cfg.protect_channels if not cfg.add_era5 else [cfg.in_channels -1 ]
     cfg.norm = cfg.norm if not cfg.use_flow_matching else "z_score"  # FM models are trained on z-score normalised data for stability
-    import matplotlib.pyplot as plt
+    
+    cfg.early_stop_patience = 1 if cfg.code_test else cfg.early_stop_patience
+
     logger.info(f"Starting training with config:\n{cfg.__dict__}")
     stop_training = False
 
@@ -762,7 +764,7 @@ def main(cfg: IR_SAR_Config,test=False):
         json_file_name = (
             f"residual_stats_{cfg.irwin_channels}"
             if cfg.channel_splitting
-            else "residual_stats"
+            else "residual_stats_downsampling" if cfg.downsampling else "residual_stats"
         )
 
         path_resid_stats = (

@@ -853,6 +853,7 @@ class LogValidationSamples:
 
         sar_mean = stats["mean"]
         sar_std  = stats["std"]
+        
 
         fig, axes = plt.subplots(B, 4, figsize=(16, 4 * B))
         if B == 1:
@@ -860,7 +861,7 @@ class LogValidationSamples:
         #create a folder for fm diagnostics
         
         for i in range(B):
-            im_ir  = x_ir[i, 0].cpu().numpy()          # first IR channel
+            im_ir  = x_ir[i, 0].cpu().numpy()  * self.std_X[0] + self.mean_X[0]     # first IR channel
             im_tgt = sar_tgt[i, 0].cpu().numpy() * sar_std + sar_mean
             im_fm  = fm_out[i, 0].cpu().numpy()  * sar_std + sar_mean
             im_vel = vel05[i, 0].cpu().numpy() if not self.cfg.use_residu else (resid_norm[i,0]*sar_std + sar_mean).cpu().numpy()
@@ -881,7 +882,7 @@ class LogValidationSamples:
     
         if self.cfg.use_residu : 
             for i in range(B) :
-                im_ir  = x_ir[i, 0].cpu().numpy()          # first IR channel
+                im_ir  = x_ir[i, 0].cpu().numpy() * self.std_X[0] + self.mean_X[0]        # first IR channel
                 im_tgt = sar_tgt[i, 0].cpu().numpy() * sar_std + sar_mean
                 im_fm  = fm_out[i, 0].cpu().numpy()  * sar_std + sar_mean
 

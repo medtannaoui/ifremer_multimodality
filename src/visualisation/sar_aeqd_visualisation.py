@@ -3,6 +3,7 @@
 from importlib import reload
 
 import os
+os.chdir("/scale/user/mtannaou/alternance")
 import pandas as pd
 import re
 import numpy as np
@@ -12,7 +13,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import xarray as xr
 from importlib import reload
-from src.visualisation.utils_colormap import CMAP
+from utils_colormap import CMAP
 
 #get inter path 
 def get_inter_path(path):
@@ -31,7 +32,7 @@ def get_inter_path(path):
 
 def get_geo_path(path_sar_aeqd):
     sargeo_path = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v00r00/cyclobs"
-    sargeo_df = pd.read_csv("/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v3.csv")
+    sargeo_df = pd.read_csv("/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v00r00_16_janvier_v1.csv")
 
     inter_path = get_inter_path(path_sar_aeqd)
     cyclone = sargeo_df[sargeo_df["sar_inter"].str.contains(inter_path)]["cyclone"].iloc[0]
@@ -40,7 +41,7 @@ def get_geo_path(path_sar_aeqd):
 
     return geo_path
 
-def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alternance/donnees_sar_aeqd_v2",show=True, var_vis = "owiWindSpeed"):
+def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alternance/donnees_sar_aeqd_09_janvier",show=True, var_vis = "owiWindSpeed"):
     cyc = None
     matches = [
     (cyc, f)
@@ -184,5 +185,5 @@ def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alt
         print(f"✅ Figure sauvegardée : {output_file}")
 
 if __name__ == "__main__":
-    plot_sar_ir(date="20241007t20",show=False)
+    plot_sar_ir(date="20201003t02",show=False)
 
