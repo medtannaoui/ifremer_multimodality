@@ -3,25 +3,27 @@
 import os
 import gc
 import sys
+
+
 os.chdir("/scale/user/mtannaou/alternance")
 sys.path.append(os.path.abspath(os.path.join(os.getcwd(), "")))
 sys.path.append(os.path.abspath(os.path.join(os.getcwd(), "src")))
 
+
 print("Python Path:", sys.path)
+
 
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
+
+
 from loguru import logger
 import lightning as L  # used for the callbacks
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
-
-
-
-print("---",os.getcwd())
 from importlib import reload
 import torch
 torch.set_float32_matmul_precision('high')
@@ -32,12 +34,9 @@ print("GPU name:", torch.cuda.get_device_name(0) if torch.cuda.is_available() el
 import torch.nn.functional as F
 import torchmetrics
 from torchmetrics.functional import structural_similarity_index_measure as ssim
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# print(f"🚀 Using device: {device}")
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-# import lightning as L
 import numpy as np
 from tqdm import tqdm
 import pickle as pkl
@@ -47,32 +46,27 @@ from pathlib import Path
 import shutil
 
 from src.IR_to_SAR.ML_IR_SAR.losses import *
-
 import src.IR_to_SAR.data_preparation.data_preprocessing as dataprep
 from src.visualisation.utils_colormap import CMAP
 cmap_ir , cmap_sar = CMAP.cira_ir(), CMAP.cmap_sar()
 reload(dataprep)
-from src.set_seed import set_seed
-set_seed(0)
-
 import src.IR_to_SAR.ML_IR_SAR.model as model_ir_sar
 import src.IR_to_SAR.ML_IR_SAR.callbacks as callbacks
 reload(model_ir_sar)
 reload(callbacks)
 from src.IR_to_SAR.ML_IR_SAR.model import create_model,create_fm_model_direct,load_regression_model,create_fm_residual_model,apply_random_channel_dropout
 from src.IR_to_SAR.ML_IR_SAR.callbacks import EarlyStopping,ModelCheckpoint,LogValidationSamples
-
 import src.IR_to_SAR.ML_IR_SAR.config as config
 reload(config)
 from src.IR_to_SAR.ML_IR_SAR.config import IR_SAR_Config
 import src.IR_to_SAR.data_preparation.prepare_dataset as prep_dataset
 reload(prep_dataset)
-
 from src.IR_to_SAR.data_preparation.data_preprocessing import compute_residual_stats,load_residual_stats,save_residual_stats
 
 
 
-
+from src.set_seed import set_seed
+set_seed(0)
 # ============================================================
 # ===============  DATASET  =================================
 # ============================================================
@@ -87,18 +81,28 @@ class IRSARDataset(Dataset):
                  data_path=None,train_split=None,val_split=None,test_split=None,target_dir = None, input_data="norm", output_data="sar",
                  conditional_model=None,anggrek_test = False,log_wind=None,irwin_channels=1,regrid_ir=False,
                  ir_smoothing=False,add_era5=False,cfg=None):
-        self.norm = norm
         
-        dataset = prep_dataset.PrepareDataSet(size=size, norm= norm, barycenter= barycenter, 
+        self.norm = norm
+
+        dataset = prep_dataset.PrepareDataSet(size=size, 
+                                              norm= norm, 
+                                              barycenter= barycenter, 
                                               drop_nan_100=drop_nan_100,
                                               input_channels=input_channels,
-                                              pkl_file=data_path,train_split=train_split,
-                                              val_split=val_split,test_split=test_split,
-                                              augmentation=augmentation,target_dir = target_dir,
-                                              input_data=input_data, output_data=output_data,
-                                              conditional_model=conditional_model,anggrek_test=anggrek_test,
-                                              log_wind=log_wind,irwin_channels=irwin_channels,
-                                              regrid_ir=regrid_ir,ir_smoothing=ir_smoothing,
+                                              pkl_file=data_path,
+                                              train_split=train_split,
+                                              val_split=val_split,
+                                              test_split=test_split,
+                                              augmentation=augmentation,
+                                              target_dir = target_dir,
+                                              input_data=input_data, 
+                                              output_data=output_data,
+                                              conditional_model=conditional_model,
+                                              anggrek_test=anggrek_test,
+                                              log_wind=log_wind,
+                                              irwin_channels=irwin_channels,
+                                              regrid_ir=regrid_ir,
+                                              ir_smoothing=ir_smoothing,
                                               add_era5=add_era5,cfg=cfg)
          
         self.dataset = dataset     
@@ -113,7 +117,7 @@ class IRSARDataset(Dataset):
         sar = self.sar[idx]      # (H,W)
 
         # Ensure target has channel dimension
-        sar = torch.tensor(sar, dtype=torch.float32).unsqueeze(0)
+        sar = torch.tensor(sar, dtype=torch.float32).unsqueeze(0) if sar.ndim == 2 else torch.tensor(sar, dtype=torch.float32)
 
         return torch.tensor(X, dtype=torch.float32), sar
 
@@ -135,9 +139,6 @@ class PairedDataset(Dataset):
         torch.tensor(self.mask[idx], dtype=torch.float32),
         self.infos[idx]  
     )
-
-
-
 
 
 # =============================
@@ -173,7 +174,6 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics, cfg, schedule
 
         optimizer.zero_grad()
 
-        
         # Forward pass
         if not cfg.conditional_model:
             pred = model(x, timestep=0).sample  # (B,1,H,W)
@@ -191,22 +191,27 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics, cfg, schedule
         # compute weights
 
         loss, l_pix, l_grad, l_radial = combined_sar_loss(
-                                                            sar_valid, pred_valid, mask,
-                                                            w_pix=cfg.w_pix, w_grad=cfg.w_grad, w_radial=cfg.w_radial,
-                                                            bin_edges=BIN_EDGES, bin_weights=BIN_WEIGHTS,
-                                                            use_weighted_pix=True
+                                                        sar_valid, 
+                                                        pred_valid, 
+                                                        mask,
+                                                        w_pix=cfg.w_pix, 
+                                                        w_grad=cfg.w_grad,
+                                                        w_radial=cfg.w_radial,
+                                                        bin_edges=BIN_EDGES,
+                                                        bin_weights=BIN_WEIGHTS,
+                                                        use_weighted_pix=True
                                                         )
 
         if sar_valid.ndim == 3:
             sar_valid = sar_valid.unsqueeze(1)
         if mask.ndim == 3:
             mask = mask.unsqueeze(1)
+
         # Backpropagation
         fabric.backward(loss)
         fabric.clip_gradients(model, optimizer, max_norm=1.0)
         optimizer.step()
         
-
         total_loss += loss.item()
         metrics.update(pred_valid*mask, sar_valid*mask)
 
@@ -244,15 +249,16 @@ def validate(fabric, model, dataloader, metrics, cfg):
             if cfg.crop_sar : 
                 mask = mask[:, :, hs, ws] if mask.ndim == 4 else mask[:, hs, ws]
 
-            loss,l_pix,l_grad,l_radial = combined_sar_loss(sar_valid,pred_valid,mask,
-                                     w_pix=cfg.w_pix,
-                                     w_grad= cfg.w_grad,
-                                     w_radial=cfg.w_radial,
-                                     bin_edges=BIN_EDGES, bin_weights=BIN_WEIGHTS,
-              
-                                                            use_weighted_pix=True)
-            
-
+            loss,l_pix,l_grad,l_radial = combined_sar_loss(sar_valid,
+                                                           pred_valid,
+                                                           mask,
+                                                           w_pix=cfg.w_pix,
+                                                           w_grad= cfg.w_grad,
+                                                           w_radial=cfg.w_radial,
+                                                           bin_edges=BIN_EDGES, 
+                                                           bin_weights=BIN_WEIGHTS,
+                                                           use_weighted_pix=True
+                                                           )
             if sar_valid.ndim == 3:
                 sar_valid = sar_valid.unsqueeze(1)
 
@@ -263,6 +269,9 @@ def validate(fabric, model, dataloader, metrics, cfg):
 
     return total_loss / len(dataloader), metrics.compute(), l_pix, l_grad,l_radial
 
+
+
+### Train Flow Matching
 def train_fm_epoch_direct(fabric, model, dataloader, optimizer, scheduler=None,cfg=None,
                           scheduler_name=None):
     """
@@ -702,10 +711,14 @@ def main(cfg: IR_SAR_Config,test=False):
             in_channels=in_channels
         ).to(fabric.device)
         
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.fm_lr if cfg.use_flow_matching else cfg.learning_rate, weight_decay=1e-3)   #add regularisation
+    optimizer = torch.optim.AdamW(model.parameters(), 
+                                  lr=cfg.fm_lr if cfg.use_flow_matching else cfg.learning_rate, weight_decay=1e-3
+                                  )   #add regularisation
 
     if cfg.scheduler == "cosin":
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.num_epochs, eta_min=1e-6)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 
+                                                               T_max=cfg.num_epochs, 
+                                                               eta_min=1e-6)
         
 
 
@@ -743,12 +756,17 @@ def main(cfg: IR_SAR_Config,test=False):
     model, optimizer = fabric.setup(model, optimizer)
     if cfg.anggrek_test:
         train_loader, val_loader, test_loader, anggrek_loader = fabric.setup_dataloaders(
-                                                            train_loader, val_loader, test_loader, anggrek_loader
-                                                            )
+                                                                                            train_loader, 
+                                                                                            val_loader, 
+                                                                                            test_loader, 
+                                                                                            anggrek_loader
+                                                                                )
     else : 
         train_loader, val_loader, test_loader = fabric.setup_dataloaders(
-                                                            train_loader, val_loader, test_loader
-                                                            )
+                                                                        train_loader, 
+                                                                        val_loader, 
+                                                                        test_loader
+                                                                        )
 
 
     # --- Training Loop ---
@@ -759,7 +777,11 @@ def main(cfg: IR_SAR_Config,test=False):
     radial_loss_history = []
     best_reg_model = None
     if cfg.use_residu and cfg.use_flow_matching:
-        best_reg_model = load_regression_model(cfg.best_regression_model_pt,cfg=cfg) 
+        best_reg_model = load_regression_model(
+                                               cfg.best_regression_model_pt,
+                                               cfg=cfg
+                                               ) 
+        
         best_reg_model = best_reg_model.to(fabric.device)
         json_file_name = (
             f"residual_stats_{cfg.irwin_channels}"
@@ -776,8 +798,15 @@ def main(cfg: IR_SAR_Config,test=False):
         if os.path.exists(path_resid_stats):
             resid_stats = load_residual_stats(path_resid_stats)
         else : 
-            stats = compute_residual_stats(train_loader=train_loader, regression_model=best_reg_model,device=fabric.device)
-            save_residual_stats(stats,path_resid_stats)
+            stats = compute_residual_stats(
+                                            train_loader=train_loader, 
+                                            regression_model=best_reg_model,
+                                            device=fabric.device
+                                            )
+            
+            save_residual_stats(stats,
+                                path_resid_stats
+                                )
             resid_stats  = stats
 
     for epoch in range(cfg.num_epochs):
@@ -793,22 +822,44 @@ def main(cfg: IR_SAR_Config,test=False):
                                     fabric, model, val_loader, 0, cfg.fm_num_inference_steps
                                 ) 
             else : 
-                train_loss = train_fm_residual_epoch(fabric=fabric,fm_model=model,regression_model=best_reg_model,
+                train_loss = train_fm_residual_epoch(fabric=fabric,
+                                                     fm_model=model,
+                                                     regression_model=best_reg_model,
                                                      dataloader=train_loader,
-                                                     optimizer=optimizer,residual_mean=resid_stats["mean"],
+                                                     optimizer=optimizer,
+                                                     residual_mean=resid_stats["mean"],
                                                      residual_std=resid_stats["std"],
                                                      scheduler=scheduler,
                                                      scheduler_name=cfg.scheduler,
-                                                     cfg=cfg)
-                val_loss = validate_fm_residual_epoch(fabric,model,best_reg_model,val_loader,resid_stats["mean"],resid_stats["std"])
+                                                     cfg=cfg
+                                                     )
+                
+                val_loss = validate_fm_residual_epoch(fabric,
+                                                      model,
+                                                      best_reg_model,
+                                                      val_loader,
+                                                      resid_stats["mean"],
+                                                      resid_stats["std"]
+                                                      )
         else:
-            train_loss, train_metrics,l_pix, l_grad, l_radial = train_one_epoch(fabric, model, train_loader, optimizer, metrics,
-                                                        scheduler=scheduler,
-                                                        cfg = cfg)
+            train_loss, train_metrics,l_pix, l_grad, l_radial = train_one_epoch(
+                                                                                fabric, 
+                                                                                model, 
+                                                                                train_loader, 
+                                                                                optimizer, 
+                                                                                metrics,
+                                                                                scheduler=scheduler,
+                                                                                cfg = cfg
+                                                                                )
             
-            val_loss, val_metrics, l_pix_val,l_grad_val, l_radial_val = validate(fabric, model, val_loader, metrics,
-                                                        cfg = cfg)
-
+            val_loss, val_metrics, l_pix_val,l_grad_val, l_radial_val = validate(
+                                                                                fabric, 
+                                                                                model, 
+                                                                                val_loader,
+                                                                                metrics,
+                                                                                cfg = cfg
+                                                                                )
+            
         # torch.cuda.empty_cache()
         # gc.collect()
         train_loss_history.append(train_loss)
@@ -841,7 +892,7 @@ def main(cfg: IR_SAR_Config,test=False):
                 "on_validation_plots",
                 model=model,
                 epoch=epoch,
-                dataloader= [train_loader, val_loader, test_loader] if not cfg.anggrek_test else   [train_loader, val_loader, test_loader, anggrek_loader],
+                dataloader= [test_loader if not cfg.code_test else train_loader, anggrek_loader] if cfg.anggrek_test else [test_loader if not cfg.code_test else train_loader],
                 device=fabric.device,
                 reg_model = best_reg_model if cfg.use_residu else None,
                 resid_stats = resid_stats if cfg.use_residu else None
@@ -888,7 +939,7 @@ def main(cfg: IR_SAR_Config,test=False):
                 "on_validation_plots",
                 model=model,
                 epoch=epoch,   # dernier epoch
-                dataloader=[train_loader, val_loader, test_loader, anggrek_loader] if cfg.anggrek_test else [train_loader, val_loader, test_loader],
+                dataloader=[test_loader if not cfg.code_test else train_loader, anggrek_loader] if cfg.anggrek_test else [test_loader if not cfg.code_test else train_loader],
                 device=fabric.device,
                 reg_model = best_reg_model if cfg.use_residu else None,
                 resid_stats = resid_stats if cfg.use_residu else None
@@ -990,30 +1041,4 @@ if __name__ == "__main__":
 
     config_path = "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/config.yaml"
     cfg = IR_SAR_Config.from_yaml(config_path)
-
-    file_path = cfg.best_regression_model_pt
-    print(os.path.exists(file_path))
-
-    # print(f"Waiting for file: {file_path}")
-
-    # last_size = -1
-    # stable_count = 0
-
-    # while True:
-    #     if os.path.exists(file_path):
-    #         size = os.path.getsize(file_path)
-
-    #         if size == last_size and size > 0:
-    #             stable_count += 1
-    #         else:
-    #             stable_count = 0
-    #             last_size = size
-
-    #         if stable_count >= 2:
-    #             print("File exists and size is stable. Starting training...")
-    #             break
-
-    #     print("Waiting for file to be ready...")
-    #     time.sleep(60)
-
     main(cfg, test=False)

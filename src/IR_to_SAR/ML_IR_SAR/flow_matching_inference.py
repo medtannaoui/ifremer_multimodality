@@ -164,7 +164,16 @@ def rank_histogram(ensemble, sar_target, mask):
     """
     n = ensemble.shape[0]
 
-    valid = mask.unsqueeze(0)[0, 0].bool()   # (H, W)
+    if sar_target.ndim == 3:
+        sar_target = sar_target.unsqueeze(0)  # (1, 1, H, W)
+    
+    if mask.ndim == 3:
+        mask = mask.unsqueeze(0)  # (1, 1, H, W)
+    
+    if ensemble.ndim == 3:
+        ensemble = ensemble.unsqueeze(1)  # (n_members, 1, H, W)
+
+    valid = mask[0, 0].bool()   # (H, W)
     ens_flat = ensemble[:, 0][..., valid].T   # (n_valid, n_members)
     obs_flat = sar_target[0, 0][valid]        # (n_valid,)
     # Sort each ensemble and find rank of observation

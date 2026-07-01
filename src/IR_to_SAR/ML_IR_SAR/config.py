@@ -63,6 +63,7 @@ class IR_SAR_Config:
     protect_channels: list[int]
     downsampling  : bool
     target_resolution : int
+    irar : bool
     @staticmethod
     def from_yaml(path: str):
         with open(path, "r") as file:
