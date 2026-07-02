@@ -22,6 +22,7 @@ from matplotlib.patches import Circle
 
 import src.IR_to_SAR.data_preparation.distribution_data_visualisation as distdata
 import src.IR_to_SAR.ML_IR_SAR.flow_matching_inference as fm_inf
+import src.IR_to_SAR.ML_IR_SAR.callbacks_functions as clbk_func
 import importlib
 
 importlib.reload(distdata)
@@ -137,7 +138,7 @@ class LogValidationSamples:
         self.mean_X = mean_X
         self.std_sar = std_sar
         self.std_X = std_X
-        self.norm = cfg.norm
+        self.norm = self.cfg.norm
         self.mask_train = mask_train
         self.mask_val = mask_val
         self.mask_test = mask_test
@@ -147,48 +148,16 @@ class LogValidationSamples:
         self.infos_test = infos_test
         self.vmax_bins_knots = None
         self.rmax_bins_km = None
-        self.input_data = self.cfg.input_data
         self.output_data = self.cfg.output_data
         self.conditional_model = self.cfg.conditional_model
-        self.log_wind = self.cfg.log_wind
-        self.crop_sar = self.cfg.crop_sar
         self.irwin_channels = self.cfg.irwin_channels
-        self.regrid_ir = self.cfg.regrid_ir
         self.add_era5 = self.cfg.add_era5
 
     # -------------------------------------------------------------------------
     # Helpers internes
     # -------------------------------------------------------------------------
 
-    def _create_unique_dir(self, base_dir):
-        i = 1
-        while (base_dir / f"train_ir_sar_{i}").exists():
-            i += 1
-        return base_dir / f"train_ir_sar_{i - 1}"
-
-    def compute_vmax1d_rmax1d(self, sar_2d, resolution = 2):
-        """
-        Calcule Vmax1D et Rmax1D sur un champ SAR 2D.
-            - Vmax1D : vitesse maximale du profil radial.
-            - Rmax1D : rayon correspondant à Vmax1D.
-        """
-        H, W = sar_2d.shape
-        cx, cy = W // 2, H // 2
-        Y, X = np.indices((H, W))
-        R = np.sqrt((X - cx) ** 2 + (Y - cy) ** 2)
-        Rmax = int(R.max())
-        radii = np.arange(0, Rmax)
-        vmax_profile = []
-        for R0 in radii:
-            mask = np.abs(R - R0) < 0.5
-            vmax_profile.append(np.nanmax(sar_2d[mask]) if np.sum(mask) > 0 else np.nan)
-        vmax_profile = np.array(vmax_profile)
-        valid = ~np.isnan(vmax_profile)
-        vmax_profile = vmax_profile[valid]
-        radii = radii[valid]
-        vmax1d = np.nanmax(vmax_profile)
-        rmax1d = radii[np.nanargmax(vmax_profile)]
-        return vmax1d, rmax1d * resolution  # km (résolution 2 km/pixel)
+    
 
     # -------------------------------------------------------------------------
     # log_batch : affichage principal (métriques + samples)
@@ -218,7 +187,7 @@ class LogValidationSamples:
 
         cyclone_id = [d["cyclone_id"] for d in infos]
         sar_time = [d["sar_time"] for d in infos]
-        vmax = [d["vmax"] for d in infos]
+        #vmax = [d["vmax"] for d in infos]
         analysis_vmax = [d["analysis_vmax"] for d in infos]
         analysis_rmax = [d["analysis_rmax"] for d in infos]
 
@@ -263,147 +232,48 @@ class LogValidationSamples:
             pred = ode_pred.to(device)
             print("using precomputed ode pred", pred.shape)
 
-        # -----------------------------------------------------------------
-        # Fonctions de dé-normalisation (locales, réutilisées ci-dessous)
-        # -----------------------------------------------------------------
-        def denorm(t, mean, std):
-            return t * (std + 1e-10) + mean
-
-        def annular_denormalization(images_norm, stats, bin_size=1):
-            N, H, W = images_norm.shape
-            cx, cy = H // 2, W // 2
-            y, x_idx = np.indices((H, W))
-            radius = np.sqrt((y - cy) ** 2 + (x_idx - cx) ** 2)
-            radial_bins = (radius // bin_size).astype(np.int32)
-            mean = stats["mean"]
-            std = stats["std"]
-            images = images_norm.copy()
-            for b in range(len(mean)):
-                images[:, radial_bins == b] = images[:, radial_bins == b] * std[b] + mean[b]
-            return images
-
-        def moment_to_sar(moment):
-            assert moment.ndim == 3, "moment must be (N, H, W)"
-            N, H, W = moment.shape
-            y, x_idx = np.indices((H, W))
-            cy, cx = H // 2, W // 2
-            r = np.sqrt((x_idx - cx) ** 2 + (y - cy) ** 2)
-            return moment / np.maximum(r, 1.0)[None, :, :]
-
-        def _split_bins_from_train(values_train, n_intervals=3):
-            v = np.asarray(values_train)
-            v = v[np.isfinite(v)]
-            return np.linspace(v.min(), v.max(), n_intervals + 1) if v.size > 0 else None
-
-        def _compute_stats(err):
-            bias = np.mean(err)
-            std = np.std(err)
-            rmse = np.sqrt(np.mean(err ** 2))
-            mae = np.mean(np.abs(err))
-            return bias, std, rmse, mae
-
-        def _plot_4panel_error_hist(errors, cat_values, bins, title_prefix, unit, save_path, xlim=None):
-            """Histogramme d'erreurs en 4 panneaux : global + 3 catégories."""
-            errors = np.asarray(errors)
-            cat_values = np.asarray(cat_values)
-            ok = np.isfinite(errors) & np.isfinite(cat_values)
-            errors, cat_values = errors[ok], cat_values[ok]
-
-            fig, axes = plt.subplots(1, 4, figsize=(18, 5))
-
-            def draw(ax, err_sub, cat_sub, subtitle):
-                err_sub, cat_sub = np.asarray(err_sub), np.asarray(cat_sub)
-                m = np.isfinite(err_sub) & np.isfinite(cat_sub)
-                err_sub, cat_sub = err_sub[m], cat_sub[m]
-                if err_sub.size == 0:
-                    ax.set_title(subtitle + "\n(empty)")
-                    ax.grid(True, linestyle="--", alpha=0.4)
-                    return
-                bias, std, rmse, mae = _compute_stats(err_sub)
-                med_cat = np.median(cat_sub)
-                norm_bias = bias / med_cat if med_cat != 0 else np.nan
-                ax.hist(err_sub, bins=40)
-                ax.set_title(subtitle)
-                ax.set_xlabel(f"Error ({unit})")
-                ax.set_ylabel("Count")
-                ax.grid(True, linestyle="--", alpha=0.4)
-                txt = (
-                    f"bias = {bias:.2f} {unit}\n"
-                    f"norm_bias = {norm_bias:.4f} (bias/median)\n"
-                    f"median(cat) = {med_cat:.2f}\n"
-                    f"stddev = {std:.2f} {unit}\n"
-                    f"rmse = {rmse:.2f} {unit}\n"
-                    f"mae = {mae:.2f} {unit}\n"
-                    f"n = {err_sub.size}"
-                )
-                ax.text(0.97, 0.97, txt, transform=ax.transAxes, ha="right", va="top",
-                        fontsize=10, bbox=dict(facecolor="white", alpha=0.85, edgecolor="none"))
-                if xlim is not None:
-                    ax.set_xlim(xlim)
-
-            draw(axes[0], errors, cat_values, f"{title_prefix}\nAll cases")
-            for k in range(3):
-                lo, hi = bins[k], bins[k + 1]
-                sel = (cat_values >= lo) & (cat_values <= hi if k == 2 else cat_values < hi)
-                draw(axes[k + 1], errors[sel], cat_values[sel],
-                     f"{title_prefix}\nCat{k + 1}: [{lo:.1f}, {hi:.1f}]")
-
-            plt.tight_layout()
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            plt.savefig(save_path, dpi=150)
-            plt.close(fig)
-
+        
         # -----------------------------------------------------------------
         # Dé-normalisation des sorties
         # -----------------------------------------------------------------
-        ch = 4 if x.shape[1] > 4 else 0
+        
+        ch = x.shape[1] // 2 if x.shape[1] > 4 else 0
         ir = x[:, ch, :, :].squeeze().cpu().numpy()
         sar = sar.squeeze().cpu().numpy() if sar.ndim == 4 else sar.cpu().numpy()
         pred = pred.squeeze().cpu().numpy() if pred.ndim == 4 else pred.cpu().numpy()
 
 
-        ir_denorm = denorm(ir, self.mean_X[ch], self.std_X[ch])
+        ir_denorm = clbk_func.denorm(ir, self.mean_X[ch], self.std_X[ch])
 
         if self.norm == "z_score":
-            sar_denorm = denorm(sar, self.mean_sar, self.std_sar)
-            pred_denorm = denorm(pred, self.mean_sar, self.std_sar)
+            sar_denorm = clbk_func.denorm(sar, self.mean_sar, self.std_sar)
+            pred_denorm = clbk_func.denorm(pred, self.mean_sar, self.std_sar)
         elif self.norm == "annular":
-            sar_denorm = annular_denormalization(sar, stats={"mean": self.mean_sar, "std": self.std_sar})
-            pred_denorm = annular_denormalization(pred, stats={"mean": self.mean_sar, "std": self.std_sar})
+            sar_denorm = clbk_func.annular_denormalization(sar, stats={"mean": self.mean_sar, "std": self.std_sar})
+            pred_denorm = clbk_func.annular_denormalization(pred, stats={"mean": self.mean_sar, "std": self.std_sar})
 
-        if self.log_wind:
-            sar_denorm = np.exp(sar_denorm) - 1e-10
-            pred_denorm = np.exp(pred_denorm) - 1e-10
 
         if self.output_data == "aam":
-            sar_denorm = moment_to_sar(sar_denorm)
-            pred_denorm = moment_to_sar(pred_denorm)
+            sar_denorm = clbk_func.moment_to_sar(sar_denorm)
+            pred_denorm = clbk_func.moment_to_sar(pred_denorm)
+
 
         B, H, W = sar_denorm.shape
-
-        if self.crop_sar:
-            ir_denorm = ir_denorm[:, W // 2 - W // 4 : W // 2 + W // 4, H // 2 - H // 4 : H // 2 + H // 4]
-            sar_denorm = sar_denorm[:, W // 2 - W // 4 : W // 2 + W // 4, H // 2 - H // 4 : H // 2 + H // 4]
-            pred_denorm = pred_denorm[:, W // 2 - W // 4 : W // 2 + W // 4, H // 2 - H // 4 : H // 2 + H // 4]
-
         ir_np = ir_denorm
         sar_np = sar_denorm
         pred_np = pred_denorm
         mask_np = mask.cpu().numpy() if isinstance(mask, torch.Tensor) else mask
         infos_np = infos.cpu().numpy() if isinstance(infos, torch.Tensor) else infos
 
-        if self.crop_sar:
-            mask_np = mask_np[:, W // 2 - W // 4 : W // 2 + W // 4, H // 2 - H // 4 : H // 2 + H // 4]
 
         B, H, W = pred_np.shape
-
         # -----------------------------------------------------------------
         # Calcul des métriques Vmax / Rmax par échantillon
         # -----------------------------------------------------------------
         pred_vmax = np.full(B, np.nan, dtype=np.float32)
         pred_rmax_km = np.full(B, np.nan, dtype=np.float32)
         for i in range(B):
-            pred_vmax[i], pred_rmax_km[i] = self.compute_vmax1d_rmax1d(pred_np[i])
+            pred_vmax[i], pred_rmax_km[i] = clbk_func.compute_vmax1d_rmax1d(pred_np[i])
 
         analysis_vmax = np.array(analysis_vmax, dtype=np.float32)
         analysis_rmax = np.array(analysis_rmax, dtype=np.float32)
@@ -417,16 +287,16 @@ class LogValidationSamples:
         cat_rmax = analysis_rmax_km[ok_rmax]
 
         if set == "train":
-            self.vmax_bins_knots = _split_bins_from_train(cat_vmax, n_intervals=3)
-            self.rmax_bins_km = _split_bins_from_train(cat_rmax, n_intervals=3)
+            self.vmax_bins_knots = clbk_func._split_bins_from_train(cat_vmax, n_intervals=3)
+            self.rmax_bins_km = clbk_func._split_bins_from_train(cat_rmax, n_intervals=3)
 
         if self.vmax_bins_knots is None:
-            self.vmax_bins_knots = _split_bins_from_train(cat_vmax, n_intervals=3)
+            self.vmax_bins_knots = clbk_func._split_bins_from_train(cat_vmax, n_intervals=3)
         if self.rmax_bins_km is None:
-            self.rmax_bins_km = _split_bins_from_train(cat_rmax, n_intervals=3)
+            self.rmax_bins_km = clbk_func._split_bins_from_train(cat_rmax, n_intervals=3)
 
         if self.vmax_bins_knots is not None and err_vmax.size > 0:
-            _plot_4panel_error_hist(
+            clbk_func._plot_4panel_error_hist(
                 errors=err_vmax,
                 cat_values=cat_vmax,
                 bins=[0, 32, 49, 80],
@@ -436,7 +306,7 @@ class LogValidationSamples:
             )
 
         if self.rmax_bins_km is not None and err_rmax.size > 0:
-            _plot_4panel_error_hist(
+            clbk_func._plot_4panel_error_hist(
                 errors=err_rmax,
                 cat_values=cat_rmax,
                 bins=self.rmax_bins_km,
@@ -502,8 +372,8 @@ class LogValidationSamples:
             if rmax is None or np.isnan(rmax):
                 rmax = 99999
 
-            vmax1d_pred, rmax1d_pred = self.compute_vmax1d_rmax1d(pred_np[i])
-            vmax_sar, rmax_sar = self.compute_vmax1d_rmax1d(sar_np[i])
+            vmax1d_pred, rmax1d_pred = clbk_func.compute_vmax1d_rmax1d(pred_np[i])
+            vmax_sar, rmax_sar = clbk_func.compute_vmax1d_rmax1d(sar_np[i])
 
             distdata.plot_ir(ir_np[i], cmap=self.cmap_ir, ax=axes[0], fig=fig, x_lim=H)
             axes[0].set_title("IRWIN (°C)")
@@ -762,7 +632,7 @@ class LogValidationSamples:
         # -----------------------------------------------------------------
         # Diagnostics FM + plots Anggrek
         # -----------------------------------------------------------------
-        if not self.conditional_model or self.cfg.anggrek_test:
+        if (not self.conditional_model or self.cfg.anggrek_test) and epoch > 0 :
             ir_anggrek, sar_anggrek, mask_anggrek, infos_anggrek = [], [], [], []
             for ir, sar, mask, inf in dataloader[-1]:
                 ir_anggrek.append(ir)
@@ -795,14 +665,14 @@ class LogValidationSamples:
                 reg_model=reg_model,
                 resid_stats=resid_stats,
             )
-
-            self.anggrek_plots(model, batch_anggrek, epoch, device,
+            if epoch > 0 and (not self.conditional_model or self.cfg.anggrek_test):
+                self.anggrek_plots(model, batch_anggrek, epoch, device,
                                add_mean_std_fm=True, reg_model=reg_model, resid_stats=resid_stats)
 
             # ODE avec guidance et reprojection (uniquement sans résidu)
             if not self.cfg.use_residu:
                 ode_guidances, ode_reprojections = [], []
-                loader_idx = 0 if self.cfg.code_test else 2
+                loader_idx = 0 
                 for ir, sar, mask, inf in dataloader[loader_idx]:
                     ir = ir.to(device)
                     sar = sar.to(device)
@@ -935,20 +805,12 @@ class LogValidationSamples:
                 pred_den = annular_denormalization(pred_np, stats={"mean": self.mean_sar, "std": self.std_sar})
             else:
                 pred_den = pred_np
-            if self.log_wind:
-                pred_den = np.exp(pred_den) - 1e-10
+
             if self.output_data == "aam":
                 pred_den = moment_to_sar(pred_den)
 
             ir_den = ir_den[order]
             pred_den = pred_den[order]
-
-            if self.crop_sar:
-                _, H, W = pred_den.shape
-                ir_den = ir_den[:, W // 2 - W // 4 : W // 2 + W // 4, H // 2 - H // 4 : H // 2 + H // 4]
-                pred_den = pred_den[:, W // 2 - W // 4 : W // 2 + W // 4, H // 2 - H // 4 : H // 2 + H // 4]
-                if self.add_era5:
-                    era5 = era5[:, W // 2 - W // 4 : W // 2 + W // 4, H // 2 - H // 4 : H // 2 + H // 4]
 
             os.makedirs(os.path.join(self.output_dir, "predictions_denormalisees", "anggrek"), exist_ok=True)
             with open(os.path.join(self.output_dir, "predictions_denormalisees", "anggrek",
@@ -1043,7 +905,7 @@ class LogValidationSamples:
         if not add_mean_std_fm:
             for i in range(B):
                 t = time_parsed[i]
-                vmax_pred, rmax_pred = self.compute_vmax1d_rmax1d(pred_den[i])
+                vmax_pred, rmax_pred = clbk_func.compute_vmax1d_rmax1d(pred_den[i])
                 date_key = t.strftime("%Y%m%d%H%M%S") if not pd.isna(t) else f"unknown_{i:03d}"
                 fname = f"{date_key}_fields.png"
                 supt = (

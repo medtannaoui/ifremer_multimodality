@@ -15,6 +15,7 @@ warnings.filterwarnings("ignore")
 
 
 import os
+import re
 import json
 from tqdm import tqdm
 import numpy as np
@@ -24,12 +25,16 @@ import pandas as pd
 import pickle as pkl
 from scipy.ndimage import zoom
 import matplotlib.pyplot as plt
+from datetime import datetime, timedelta    
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import KBinsDiscretizer
 import torch
 from torchvision import transforms
 from torchvision.transforms import functional as TF
 import torchvision.transforms as T
+import pyresample
+import pyproj
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -1221,6 +1226,126 @@ def downsample_2km_to_4km(x):
 
 
     return x.squeeze(1) if C == 1 else x  # remove channel dimension if it was added
+
+
+
+
+def shift_ir_path(ir_path: str, idx: int, step_minutes: int = 30) -> str:
+    """
+    Décale le timestamp contenu dans le nom d'un fichier IR (format
+    "IR_YYYYMMDDHHMMSS.nc") d'un certain nombre de pas de temps.
+
+    Args:
+        ir_path: chemin complet du fichier IR de référence.
+        idx: nombre de pas de temps à décaler (peut être négatif).
+        step_minutes: durée en minutes d'un pas de temps (30 min par défaut).
+
+    Returns:
+        Le chemin du fichier IR correspondant au timestamp décalé, dans le
+        même dossier que le fichier d'origine.
+    """
+    m = re.search(r"(IR_)(\d{14})(\.nc)$", ir_path)
+    if not m:
+        raise ValueError(f"Format inattendu pour ir_path: {ir_path}")
+
+    prefix, dt_str, suffix = m.group(1), m.group(2), m.group(3)
+    dt = datetime.strptime(dt_str, "%Y%m%d%H%M%S")
+    dt_shifted = dt + timedelta(minutes=idx * step_minutes)
+
+    new_name = f"{prefix}{dt_shifted.strftime('%Y%m%d%H%M%S')}{suffix}"
+    return ir_path[: m.start()] + new_name  # garde le même dossier
+
+
+
+
+def build_storm_centered_dataset(
+    ds,
+    half_size=500,
+    dxy=2.0,
+    kind="nearest"
+):
+    """
+    Construit un dataset centré cyclone sur grille régulière [-500, 500] km.
+
+    Returns
+    -------
+    xr.Dataset
+    """
+
+    ir = ds["brightness_temperature"].values
+    ir_lon = ((ds["longitude"].values+180)%360)-180
+    ir_lat = ds["latitude"].values
+    center_lat = ds["storm_latitude"].values[0]
+    center_lon = ((ds["storm_longitude"][0].values + 180)%360)-180
+
+    nx = ny = int(2 * half_size / dxy) + 1
+
+    x = np.linspace(-half_size, half_size, nx)
+    y = np.linspace(half_size, -half_size, ny)  # nord en haut
+
+    proj = pyproj.Proj(              #place le cyclone au centre (0,0), et je mesure tout en km autou
+        proj="aeqd",
+        lat_0=center_lat,
+        lon_0=center_lon,
+        ellps="WGS84",
+        units="km"
+    )
+
+
+    longitude, latitude = pyresample.utils.check_and_wrap(ir_lon, ir_lat)
+    lon2d, lat2d = np.meshgrid(longitude, latitude)
+
+    swath_ir = pyresample.SwathDefinition(
+        lon2d,
+        lat2d
+    )
+
+    area_def = pyresample.geometry.AreaDefinition(
+        "storm",
+        "storm centered grid",
+        "storm",
+        proj.srs,
+        nx,
+        ny,
+        (x[0] - dxy/2, y[-1] - dxy/2, x[-1] + dxy/2, y[0] + dxy/2)
+    )
+
+    if kind == "nearest":
+        ir_grid = pyresample.kd_tree.resample_nearest(
+            swath_ir,
+            ir,
+            area_def,
+            radius_of_influence=100000,
+            fill_value=np.nan
+        )
+    else:
+        ir_grid = pyresample.kd_tree.resample_gauss(
+            swath_ir,
+            ir,
+            area_def,
+            radius_of_influence=100000,
+            sigmas=25000
+        )
+
+   
+
+    ds["ir_aeqd"] = xr.DataArray(
+            ir_grid,
+            dims=("y", "x"),
+            coords={
+                "x": x,
+                "y": y,
+            },
+            attrs={
+                "units": ds["brightness_temperature"].attrs.get("units", ""),
+                "description": "Brightness temperature projected onto storm-centered AEQD grid",
+            },
+        )
+
+    ds["center_lat"] = center_lat
+    ds["center_lon"] = center_lon
+
+    return ds
 
 
 if __name__ =="__main__":

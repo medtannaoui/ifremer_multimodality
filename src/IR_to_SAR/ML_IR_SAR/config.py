@@ -9,9 +9,6 @@ class IR_SAR_Config:
     batch_size: int
     learning_rate: float
     num_epochs: int
-    train_split: float
-    val_split: float
-    test_split: float
     data_path: str
     save_dir: str
     early_stop_patience: int
@@ -23,17 +20,13 @@ class IR_SAR_Config:
     scheduler_every_n_epochs: int
     norm : str
     num_val_exemples : int
-    barycenter : str
     augmentation : bool
-    drop_nan_sar : bool
     dropout : float
     in_channels : int
     out_channels : int
-    input_channels: list[str]
     w_pix : float
     w_grad:float
     w_radial: float
-    input_data:str
     output_data : str
     block_out_channels : list[int]
     down_block_types : list[str]
@@ -44,11 +37,7 @@ class IR_SAR_Config:
     cross_attention_dim:int
     combined_loss : bool
     cond_dim : int
-    log_wind : bool
-    crop_sar : bool
     irwin_channels : int
-    regrid_ir : bool
-    ir_smoothing : bool
     add_era5 : bool
     use_flow_matching : bool
     fm_num_inference_steps : int
@@ -56,13 +45,10 @@ class IR_SAR_Config:
     code_test : bool
     use_residu : bool
     best_regression_model_pt : str
-    channel_splitting : bool
     channel_dropout: bool
     channel_drop_prob: float
     min_keep_channels: int
     protect_channels: list[int]
-    downsampling  : bool
-    target_resolution : int
     irar : bool
     @staticmethod
     def from_yaml(path: str):

@@ -21,6 +21,7 @@ os.environ["OMP_NUM_THREADS"] = "1"
 
 from loguru import logger
 import lightning as L  # used for the callbacks
+from lightning.fabric.strategies import DDPStrategy    
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -77,36 +78,25 @@ class IRSARDataset(Dataset):
     IR shape:  (N, H_ir, W_ir)
     SAR shape: (N, H_ir, W_ir)
     """
-    def __init__(self,test=False,size=256, norm = "z_score", barycenter = "no" ,augmentation = False, drop_nan_100 = True,input_channels=None,
-                 data_path=None,train_split=None,val_split=None,test_split=None,target_dir = None, input_data="norm", output_data="sar",
-                 conditional_model=None,anggrek_test = False,log_wind=None,irwin_channels=1,regrid_ir=False,
-                 ir_smoothing=False,add_era5=False,cfg=None):
+    def __init__(self,test=False,size=256, norm = "z_score",augmentation = False,
+                 data_path=None,target_dir = None, output_data="sar",
+                 conditional_model=None,anggrek_test = False,irwin_channels=1
+                 ,add_era5=False,cfg=None):
         
         self.norm = norm
 
         dataset = prep_dataset.PrepareDataSet(size=size, 
                                               norm= norm, 
-                                              barycenter= barycenter, 
-                                              drop_nan_100=drop_nan_100,
-                                              input_channels=input_channels,
                                               pkl_file=data_path,
-                                              train_split=train_split,
-                                              val_split=val_split,
-                                              test_split=test_split,
                                               augmentation=augmentation,
                                               target_dir = target_dir,
-                                              input_data=input_data, 
                                               output_data=output_data,
                                               conditional_model=conditional_model,
                                               anggrek_test=anggrek_test,
-                                              log_wind=log_wind,
                                               irwin_channels=irwin_channels,
-                                              regrid_ir=regrid_ir,
-                                              ir_smoothing=ir_smoothing,
                                               add_era5=add_era5,cfg=cfg)
          
         self.dataset = dataset     
-        print("Data preparation finished")
 
 
     def __len__(self):    #number of observations
@@ -184,11 +174,8 @@ def train_one_epoch(fabric, model, dataloader, optimizer, metrics, cfg, schedule
         hs = slice(H//2 - H//4, H//2 + H//4)
         ws = slice(W//2 - W//4, W//2 + W//4)
 
-        sar_valid  = sar.nan_to_num()[:, hs, ws] if cfg.crop_sar else sar.nan_to_num()
-        pred_valid = pred[:, :, hs, ws] if cfg.crop_sar else pred
-        if cfg.crop_sar:
-            mask = mask[:, :, hs, ws] if mask.ndim == 4 else mask[:, hs, ws] 
-        # compute weights
+        sar_valid  = sar.nan_to_num()
+        pred_valid = pred
 
         loss, l_pix, l_grad, l_radial = combined_sar_loss(
                                                         sar_valid, 
@@ -244,10 +231,8 @@ def validate(fabric, model, dataloader, metrics, cfg):
             hs = slice(H//2 - H//4, H//2 + H//4)
             ws = slice(W//2 - W//4, W//2 + W//4)
 
-            sar_valid  = sar.nan_to_num()[:, hs, ws] if cfg.crop_sar else sar.nan_to_num()
-            pred_valid = pred[:, :, hs, ws] if cfg.crop_sar else pred
-            if cfg.crop_sar : 
-                mask = mask[:, :, hs, ws] if mask.ndim == 4 else mask[:, hs, ws]
+            sar_valid  = sar.nan_to_num()
+            pred_valid = pred
 
             loss,l_pix,l_grad,l_radial = combined_sar_loss(sar_valid,
                                                            pred_valid,
@@ -592,7 +577,6 @@ def custom_collate(batch):
 
 def main(cfg: IR_SAR_Config,test=False):
     cfg.use_residu = cfg.use_residu if cfg.use_flow_matching else False
-    cfg.in_channels = cfg.in_channels if not cfg.channel_splitting else 1
     cfg.protect_channels = cfg.protect_channels if not cfg.add_era5 else [cfg.in_channels -1 ]
     cfg.norm = cfg.norm if not cfg.use_flow_matching else "z_score"  # FM models are trained on z-score normalised data for stability
     
@@ -616,25 +600,17 @@ def main(cfg: IR_SAR_Config,test=False):
     full_data = IRSARDataset(test=test, 
                              size=cfg.img_size, 
                              norm=cfg.norm, 
-                             barycenter=cfg.barycenter, 
-                             drop_nan_100=cfg.drop_nan_sar,
-                             input_channels=cfg.input_channels,
                              data_path = cfg.data_path,
-                             train_split=cfg.train_split,
-                             val_split=cfg.val_split,
-                             test_split=cfg.test_split,
                              target_dir = target_dir,
                              augmentation=cfg.augmentation,
-                             input_data=cfg.input_data,
                              output_data=cfg.output_data,
                              conditional_model = cfg.conditional_model,
                              anggrek_test=cfg.anggrek_test,
-                             log_wind=cfg.log_wind,
                              irwin_channels=cfg.irwin_channels,
-                             regrid_ir=cfg.regrid_ir,
-                             ir_smoothing=cfg.ir_smoothing,
                              add_era5=cfg.add_era5,cfg=cfg)
     # X_all, sar_all = full_data.dataset.X, full_data.dataset.sar
+
+    cfg.in_channels = full_data.dataset.X_train.shape[1]
 
     
     train_ds = PairedDataset(*(full_data.dataset.X_train,
@@ -661,7 +637,7 @@ def main(cfg: IR_SAR_Config,test=False):
     fabric = L.Fabric(
         accelerator=cfg.accelerator,
         devices= cfg.devices,
-        strategy= "auto",
+        strategy= DDPStrategy(find_unused_parameters=False) if len(cfg.devices) > 1 else "auto",
         callbacks=[
             EarlyStopping(patience=cfg.early_stop_patience, 
                           min_delta=cfg.early_stop_delta),
@@ -784,9 +760,7 @@ def main(cfg: IR_SAR_Config,test=False):
         
         best_reg_model = best_reg_model.to(fabric.device)
         json_file_name = (
-            f"residual_stats_{cfg.irwin_channels}"
-            if cfg.channel_splitting
-            else "residual_stats_downsampling" if cfg.downsampling else "residual_stats"
+            f"residual_stats_{cfg.irwin_channels}"   
         )
 
         path_resid_stats = (
