@@ -17,11 +17,11 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
-
+from datetime import datetime, timedelta
 
 from loguru import logger
 import lightning as L  # used for the callbacks
-from lightning.fabric.strategies import DDPStrategy    
+from lightning.fabric.strategies import DDPStrategy   
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -580,7 +580,8 @@ def main(cfg: IR_SAR_Config,test=False):
     cfg.protect_channels = cfg.protect_channels if not cfg.add_era5 else [cfg.in_channels -1 ]
     cfg.norm = cfg.norm if not cfg.use_flow_matching else "z_score"  # FM models are trained on z-score normalised data for stability
     
-    cfg.early_stop_patience = 1 if cfg.code_test else cfg.early_stop_patience
+    cfg.early_stop_patience = 2 if cfg.code_test else cfg.early_stop_patience
+    cfg.batch_size = cfg.batch_size if not cfg.code_test else 8
 
     logger.info(f"Starting training with config:\n{cfg.__dict__}")
     stop_training = False
@@ -637,7 +638,7 @@ def main(cfg: IR_SAR_Config,test=False):
     fabric = L.Fabric(
         accelerator=cfg.accelerator,
         devices= cfg.devices,
-        strategy= DDPStrategy(find_unused_parameters=False) if len(cfg.devices) > 1 else "auto",
+        strategy= DDPStrategy(start_method="spawn", process_group_backend="gloo", timeout=timedelta(minutes=120)) if len(cfg.devices) > 1 else "auto",
         callbacks=[
             EarlyStopping(patience=cfg.early_stop_patience, 
                           min_delta=cfg.early_stop_delta),

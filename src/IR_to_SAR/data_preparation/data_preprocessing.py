@@ -1,182 +1,42 @@
-"""
-Data preprocessing utilities for IR → SAR learning.
-
-This module provides:
-    - Loading IR/SAR tensors from pkl
-    - Resampling IR to SAR spatial resolution
-    - SAR missing-value handling (mask or fill)
-    - Adding channel dimension (N → N,1,H,W)
-    - Normalizing tensors
-
-
-"""
 import warnings
 warnings.filterwarnings("ignore")
 
-
 import os
 import re
+import copy
 import json
 from tqdm import tqdm
+
 import numpy as np
-import random
 import xarray as xr
-import pandas as pd
-import pickle as pkl
+
 from scipy.ndimage import zoom
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta    
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import KBinsDiscretizer
 import torch
-from torchvision import transforms
 from torchvision.transforms import functional as TF
 import torchvision.transforms as T
 import pyresample
 import pyproj
 
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
-from src.visualisation.utils_colormap import CMAP
-from src.IR_to_SAR.data_preparation.distribution_data_visualisation import detect_sar_quadrants
-from src.IR_to_SAR.data_preparation.distribution_data_visualisation import plot_ir, plot_sar,plot_ir_hist,plot_sar_hist
+from src.IR_to_SAR.data_preparation.distribution_data_visualisation import *
 
 
-
-# ============================================================
-# ============== IR RESAMPLING TO SAR RESOLUTION =============
-# ============================================================
-
-def resize_ir_to_sar(
-    ir_tensor: np.ndarray,
-    max_radius_km: int = 300,
-    sar_resolution_km: float = 0.5,
-    plot: bool = False
-):
-    """
-    Resamples IR image to SAR AEQD grid resolution.
-
-    Inputs:
-        ir_tensor          : (H, W) original IR image
-        max_radius_km      : radius in km to crop (final image spans [-R,+R])
-        sar_resolution_km  : desired SAR resolution (ex: 0.5 km)
-        plot               : show before/after comparison
-
-    Returns:
-        ir_resized    : (H_sar, W_sar) IR resized to match SAR resolution
-    """
-
-    cmap = CMAP.cira_ir()
-
-    # Center and crop the IR image to match SAR diameter (600 km)
-    center_idx = np.array(ir_tensor).shape[0] // 2
-    half_size  = max_radius_km // 2
-
-    ir_crop = np.array(ir_tensor)[
-        center_idx - half_size : center_idx + half_size,
-        center_idx - half_size : center_idx + half_size
-    ]  # shape = (300,300)
-
-    # Compute scaling factor: original ~ 2 km/pixel → target sar_resolution (km/pixel)
-    zoom_factor = 2.0 / sar_resolution_km
-    ir_resized = zoom(ir_crop, zoom=zoom_factor, order=1)   # bilinear interpolation
-
-    # Optional visualization
-    if plot:
-        fig, ax = plt.subplots(1, 2, figsize=(12, 5))
-
-        # Original crop
-        ax[0].set_title("Original IR (cropped)")
-        p0 = ax[0].imshow(ir_crop, cmap=cmap, origin="lower")
-        plt.colorbar(p0, ax=ax[0])
-
-        # Resized IR
-        ax[1].set_title(f"IR resampled: {ir_resized.shape[0]}×{ir_resized.shape[1]} (resolution={sar_resolution_km} km)")
-        p1 = ax[1].imshow(ir_resized, cmap=cmap, origin="lower")
-        plt.colorbar(p1, ax=ax[1])
-
-        plt.tight_layout()
-        plt.show()
-
-    return ir_resized
-
-
-# ============================================================
-# =================== SAR MISSING VALUE HANDLING =============
-# ============================================================
-
-def process_sar_missing_values(
-    sar_tensor: np.ndarray,
-    mode: str = "mask",
-    fill_value: float = -1.0
-):
-    """
-    Handles missing values (NaN) in SAR tensor.
-
-    Inputs:
-        sar_tensor : (H, W)
-        mode       : "mask" → return tensor + mask
-                      "fill" → fill NaN with a constant
-        fill_value : value used if mode="fill"
-
-    Returns:
-        If mode="mask": (sar_tensor, sar_mask)
-        If mode="fill": (sar_filled, sar_mask)
-
-        sar_mask is boolean array of shape (H, W)
-    """
-
-    sar_mask = ~np.isnan(sar_tensor)
-
-    if mode == "mask":
-        return sar_tensor, sar_mask
-
-    elif mode == "fill":
-        sar_filled = sar_tensor.copy()
-        sar_filled[np.isnan(sar_filled)] = fill_value
-        return sar_filled, sar_mask
-
-    else:
-        raise ValueError("mode must be 'mask' or 'fill'")
-
-
-# ============================================================
 # ======================== NORMALIZATION ======================
-# ============================================================
-
-
 def min_max(tensor, eps = 1e-10):
-    """
-    Min-Max normalization of a NumPy tensor (N, H, W),
-    mapping values to [0, 1] while preserving NaN values.
-    
-    Args:
-        tensor (numpy.ndarray): Input tensor of shape (N, H, W)
-    
-    Returns:
-        normalized_tensor (numpy.ndarray)
-        min_val (float)
-        max_val (float)
-    """
     min_val = np.nanmin(tensor)
     max_val = np.nanmax(tensor)
-
-    
-
     normalized_tensor = (tensor - min_val) / (max_val - min_val + eps)
-
     return normalized_tensor, min_val, max_val
+
 
 def z_score(tensor, eps = 1e-10,mean_value=None,std_value=None):
     if mean_value is None:
         mean_value = np.mean(tensor)
         std_value = np.std(tensor)
-
     normalized_tensor = (tensor - mean_value)/(std_value + eps)
-    
-
     return normalized_tensor, mean_value, std_value
             
 
@@ -219,7 +79,6 @@ def annular_normalization(
     return images_norm, stats
 
 
-
 def annular_denormalization(
             images_norm,
             stats,
@@ -239,620 +98,29 @@ def annular_denormalization(
                 ) + mean[b]
             return images
 
-
-def subtract_radial_mean(
-    images, 
-    bin_size=1, 
-    use_median=False, 
-    mask=None,
-    radial_profil = None
-):
-   
-    N, H, W = images.shape
-    cy, cx = H // 2, W // 2
-
-    y, x = np.indices((H, W))
-    radius = np.sqrt((y - cy)**2 + (x - cx)**2)
-    radial_bins = (radius // bin_size).astype(np.int32)
-
-    n_bins = radial_bins.max() + 1
-
-    if mask is None:
-        mask = np.isfinite(images)
-    radial_profile = radial_profil
-    if radial_profil is None:
-        radial_profile = np.zeros(n_bins)
-        for b in range(n_bins):
-            pixels = images[:, radial_bins == b][mask[:, radial_bins == b]]
-            if pixels.size > 0:
-                if use_median:
-                    radial_profile[b] = np.median(pixels)
-                else:
-                    radial_profile[b] = np.mean(pixels)
-    
-    images_anom = images.copy()
-    for b in range(n_bins):
-        images_anom[:, radial_bins == b] -= radial_profile[b]
-
-    return images_anom, radial_profile
-
-
-
-# ============================================================
-# ======================== split 3 sets ======================
-# ============================================================
-from collections import Counter
-
-
-
-import numpy as np
-from sklearn.model_selection import train_test_split
-from collections import Counter
-
-
-
-def train_val_test_split(
-    X_array,
-    sar_array,
-    mask_sar,
-    infos,
-    train_size=0.7,
-    val_size=0.15,
-    test_size=0.15,
-    augmentation=True,
-    target_dir=None,
-    n_bins=2,  
-    csv=None
-):
-
-    N = len(X_array)
-    all_indices = np.arange(N)
-
-    # --- stratification variables ---
-    analysis_rmax = np.array([d["analysis_rmax"] for d in infos], dtype=float)
-    basin = np.array([str(d["cyclone_id"][:2]).lower() for d in infos])
-
-    # --- quantile bins ---
-    def quantile_bins(x, n_bins):
-        q = np.nanquantile(x, np.linspace(0, 1, n_bins + 1)[1:-1])
-        return np.digitize(x, q) 
-
-    rmax_bin = quantile_bins(analysis_rmax, n_bins)
-
-    stratify_key = basin.astype(str) + "_" + rmax_bin.astype(str)
-
-    
-    counts = Counter(stratify_key)
-    valid_mask = np.array([counts[k] >= 2 for k in stratify_key])
-
-    all_indices = all_indices[valid_mask]
-    stratify_key = stratify_key[valid_mask]
-
-    print(f"📊 Stratification classes kept: {len(set(stratify_key))}")
-
-    # --- train vs temp ---
-    train_idx, temp_idx = train_test_split(
-        all_indices,
-        test_size=(1 - train_size),
-        random_state=0,
-        shuffle=True,
-        stratify=stratify_key
-    )
-
-    # --- val vs test ---
-    stratify_temp = stratify_key[np.isin(all_indices, temp_idx)]
-    val_rel_size = val_size / (val_size + test_size)
-
-    val_idx, test_idx = train_test_split(
-        temp_idx,
-        test_size=(1 - val_rel_size),
-        random_state=0,
-        shuffle=True,
-        stratify=stratify_temp
-    )
-
-    # --------------------------------------------------
-    # 7) Convert arrays
-    # --------------------------------------------------
-    X_array = np.asarray(X_array, dtype=float)
-    sar_array = np.asarray(sar_array, dtype=float)
-    mask_sar = np.asarray(mask_sar)
-
-    # --------------------------------------------------
-    # 8) Build datasets
-    # --------------------------------------------------
-    ir_train   = X_array[train_idx]
-    sar_train  = sar_array[train_idx]
-    
-    mask_train = mask_sar[train_idx]
-    infos_train = [infos[i] for i in train_idx]
-
-    val_idx = np.array(val_idx)
-    analysis_rmax_val = np.array([infos[i]["analysis_rmax"] for i in val_idx])
-    valid_mask = analysis_rmax_val < 181000
-    val_idx_filtered = val_idx[valid_mask]
-    ir_val   = X_array[val_idx_filtered]
-    sar_val  = sar_array[val_idx_filtered]
-    mask_val = mask_sar[val_idx_filtered]
-    infos_val = [infos[i] for i in val_idx_filtered]
-
-
-    test_idx = np.array(test_idx)
-    analysis_rmax_test = np.array([infos[i]["analysis_rmax"] for i in test_idx])
-    test_mask = analysis_rmax_test < 181000
-    test_idx_filtered = test_idx[test_mask]
-    ir_test   = X_array[test_idx_filtered]
-    sar_test  = sar_array[test_idx_filtered]
-    mask_test = mask_sar[test_idx_filtered]
-    infos_test = [infos[i] for i in test_idx_filtered]
-
-    # --------------------------------------------------
-    # 9) Data augmentation (TRAIN ONLY)
-    # --------------------------------------------------
-    if augmentation:
-        print("Start Data Augmentation for train set : ----------")
-        ir_train, sar_train, mask_train, infos_train = data_augmentation(
-            ir_train, sar_train, mask_train, infos_train
-        )
-    print("Plot Data distribution : --------------------")
-    plot_metric_scatter(
-        true_values=[d["vmax"] for d in infos_train],
-        pred_values=[d["analysis_vmax"] for d in infos_train],
-        output_path=target_dir,
-        file_name="analysis_vmax_and_vmax_comparaison_train",
-        title="analysis vmax and vmax comparaison in the train set",
-        xlabel="vmax",
-        ylabel="analysis_vmax"
-    )
-    plot_metric_scatter(
-        true_values=[d["vmax"] for d in infos_val],
-        pred_values=[d["analysis_vmax"] for d in infos_val],
-        output_path=target_dir,
-        file_name="analysis_vmax_and_vmax_comparaison_val",
-        title="analysis vmax and vmax comparaison in the val set",
-        xlabel="vmax",
-        ylabel="analysis_vmax"
-    )
-    plot_metric_scatter(
-        true_values=[d["vmax"] for d in infos_test],
-        pred_values=[d["analysis_vmax"] for d in infos_test],
-        output_path=target_dir,
-        file_name="analysis_vmax_and_vmax_comparaison_test",
-        title="analysis vmax and vmax comparaison in the test set",
-        xlabel="vmax",
-        ylabel="analysis_vmax"
-    )
-    plot_rmax_distribution(
-        infos_train=infos_train,
-        infos_val=infos_val,
-        output_path=target_dir,
-        file_name="analysis_rmax_distribution_train_vs_val.png"
-    )
-
-
-    return {
-        "train": (ir_train, sar_train),
-        "val":   (ir_val, sar_val),
-        "test":  (ir_test, sar_test),
-
-        "mask_sar_train": mask_train,
-        "mask_sar_val":   mask_val,
-        "mask_sar_test":  mask_test,
-
-        "train_index": train_idx,
-        "val_index":   val_idx,
-        "test_index":  test_idx,
-
-        "infos_train": infos_train,
-        "infos_val":   infos_val,
-        "infos_test":  infos_test,
-        
-    }
-
-
-
-def plot_rmax_distribution(infos_train, infos_val, output_path, file_name):
-    import matplotlib.pyplot as plt
-    import numpy as np
-
-    rmax_train = np.array([d["analysis_rmax"] for d in infos_train if d["analysis_rmax"] is not None])
-    rmax_val   = np.array([d["analysis_rmax"] for d in infos_val if d["analysis_rmax"] is not None])
-
-    # Convert to km if needed
-    rmax_train = rmax_train / 1000.0
-    rmax_val   = rmax_val / 1000.0
-
-    plt.figure(figsize=(7, 5))
-
-    plt.hist(
-        rmax_train, bins=30, alpha=0.6,
-        label="Train", color="tab:blue", density=False
-    )
-    plt.hist(
-        rmax_val, bins=30, alpha=0.6,
-        label="Validation", color="tab:orange", density=False
-    )
-
-    plt.xlabel("Analysis Rmax (km)")
-    plt.ylabel("Count")
-    plt.title("Distribution of Analysis Rmax (Train vs Validation)")
-    plt.legend()
-    plt.grid(True, linestyle="--", alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig(f"{output_path}/{file_name}", dpi=150)
-    plt.close()
-
-def plot_metric_scatter(
-    true_values,            # liste ou array des valeurs vraies
-    pred_values,            # liste ou array des valeurs prédites
-    output_path,            # chemin complet fichier .png
-    file_name,
-    title="Metric Comparison",
-    xlabel="True Values",
-    ylabel="Predicted Values",
-    stats_title="Statistics"
-):
-    """
-    Generic scatter plot comparing true vs predicted metrics.
-    """
-
-    true_values = np.array(true_values, dtype=float)
-    pred_values = np.array(pred_values, dtype=float)
-
-    errors = pred_values - true_values
-    mae = np.nanmean(np.abs(errors))
-    rmse = np.sqrt(np.nanmean(errors**2))
-    bias = np.nanmean(errors)
-    textstr = (
-        f"MAE  : {mae:.2f} m\s\n"
-        f"RMSE : {rmse:.2f} m\s\n"
-        f"Bias : {bias:.2f} m\s\n"
-    )
-
-
-    # Create figure
-    plt.figure(figsize=(7, 7))
-    plt.scatter(true_values, pred_values, alpha=0.5, color="#1f77b4", edgecolors="none")
-
-    # Identity line
-    min_v = min(true_values.min(), pred_values.min())
-    max_v = max(true_values.max(), pred_values.max())
-    plt.plot([min_v, max_v], [min_v, max_v], "r--", linewidth=2)
-
-    # Labels & title
-    plt.xlabel(xlabel, fontsize=12)
-    plt.ylabel(ylabel, fontsize=12)
-    plt.title(title, fontsize=14)
-
-    ax = plt.gca()
-    ax.text(0.02, 0.98, textstr,
-            transform=ax.transAxes,
-            fontsize=11,
-            verticalalignment="top",
-            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
-
-    plt.grid(True, linestyle="--", alpha=0.5)
-
-    # Save
-    
-    plt.savefig(os.path.join(output_path,file_name+"png"), dpi=150)
-    plt.close()
-
-def crop_ir_to_sar(ir):
-          
-    H, W = ir.shape
-    target = 301  # as  SAR data
-    start_h = (H - target) // 2
-    start_w = (W - target) // 2
-
-    return ir[start_h:start_h+target, start_w:start_w+target]
-
-def create_coloc_pkl(output_folder="/scale/user/mtannaou/alternance/src/IR_to_SAR/data_sar_ir_pkl", tcprimed = False):
-    import pandas as pd
-    import numpy as np
-    import xarray as xr
-    import os
-    import pickle as pkl
-
-    df = pd.read_csv("/scale/user/mtannaou/alternance/excels/SARGEO_SAR_09_janvier_v1_add_cyclobs_data.csv")
-    SARGEO_PATH = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v00r00/cyclobs"
-    SARAEQD_PATH = "/scale/user/mtannaou/alternance/donnees_sar_aeqd_09_janvier"
-
-    CANAL = "IRWIN"
-
-    data_pkl = {
-        "cyclone_id": [],
-        "sar_time": [],
-        "env_time": [],
-        "irwin": [],               
-        "owiwindspeed": [],         
-        "shear_magnitude": [],
-        "shear_direction": [],
-        "cyclone_phase_space_symmetry": [],
-        "cyclone_phase_space_depth": [],
-        "u_wind_mean": [],
-        "v_wind_mean": [],
-        "t_wind": [],
-        "vorticity": []
-    } if tcprimed else {
-        "cyclone_id": [],
-        "sar_time": [],
-        "irwin": [],               
-        "owiwindspeed": [], 
-        "analysis_rmax":[],
-        "analysis_vmax":[],
-        "vmax":[],
-        "analysis_center_quality_flag":[]  }     
-        
-
-
-    for i, row in df[df["canal"] == CANAL].iterrows():
-        cyclone = row["cyclone"]
-
-        if tcprimed : 
-            if cyclone not in os.listdir(SARAEQD_PATH):
-                continue
-        else :
-            for cyc in os.listdir(SARAEQD_PATH):
-                if cyc[:8] == cyclone:
-                    cyclone = cyc[:8]
-                    break
-        
-
-        nc_sargeo_path = os.path.join(SARGEO_PATH, cyclone, CANAL, row["fichier"])
-        nc_aeqd_path = row["sar_xy"]
-        
-        if pd.isna(nc_aeqd_path):
-            print(f"[SKIP] sar_xy is NaN for cyclone={cyclone} file={row.get('fichier')}")
-            continue
-            
-        nc_aeqd_path = str(nc_aeqd_path)
-        if not os.path.isfile(nc_aeqd_path):
-            print(f"[SKIP] missing AEQD file: {nc_aeqd_path}")
-            continue
-        ds_aeqd = xr.open_dataset(nc_aeqd_path)
-        ds_sargeo = xr.open_dataset(nc_sargeo_path)
-
-        # Load data
-        irwins = []
-        for rel in [-4,-3,-2,-1,0,1,2,3,4]:
-            irwin = crop_ir_to_sar(ds_sargeo["IRWIN"].sel(t_rel=rel).values)
-            irwins.append(irwin)
-        wind = ds_aeqd["owiWindSpeed"].values
-
-        timestamp_str = os.path.basename(nc_aeqd_path).split("-")[4]
-        sar_time = pd.to_datetime(timestamp_str, format="%Y%m%dT%H%M%S")
-        # Find associated environmental file
-        if tcprimed : 
-            env_file = next((f for f in os.listdir(os.path.join(SARAEQD_PATH, cyclone)) if "TCPRIMED" in f), None)
-            if not env_file:
-                continue
-
-            with xr.open_dataset(os.path.join(SARAEQD_PATH, cyclone, env_file), group="diagnostics") as ds_env:
-                
-
-                env_times = ds_env["time"].values
-                idx = np.abs(env_times - np.datetime64(sar_time)).argmin()
-
-                # Append values
-                if tcprimed : 
-                    data_pkl["cyclone_id"].append(cyclone)
-                    data_pkl["sar_time"].append(sar_time)
-                    data_pkl["env_time"].append(env_times[idx])
-                    data_pkl["irwin"].append(irwins)
-                    data_pkl["owiwindspeed"].append(wind)
-                    data_pkl["shear_magnitude"].append(ds_env["shear_magnitude"].values[idx])
-                    data_pkl["shear_direction"].append(ds_env["shear_direction"].values[idx])
-                    data_pkl["cyclone_phase_space_symmetry"].append(ds_env["cyclone_phase_space_symmetry"].values[idx])
-                    data_pkl["cyclone_phase_space_depth"].append(ds_env["cyclone_phase_space_depth"].values[idx])
-                    data_pkl["u_wind_mean"].append(ds_env["u_wind_mean"].values[idx])
-                    data_pkl["v_wind_mean"].append(ds_env["v_wind_mean"].values[idx])
-                    data_pkl["t_wind"].append(ds_env["t_wind"].values[idx])
-                    data_pkl["vorticity"].append(ds_env["vorticity"].values[idx])
-        else :
-                data_pkl["cyclone_id"].append(cyclone)
-                data_pkl["sar_time"].append(sar_time)
-                data_pkl["irwin"].append(irwins)
-                data_pkl["owiwindspeed"].append(wind)
-                data_pkl["analysis_center_quality_flag"].append(row["analysis_center_quality_flag"])
-                data_pkl["vmax"].append(row["vmax"])
-                data_pkl["analysis_vmax"].append(row["analysis_vmax"])
-                data_pkl["analysis_rmax"].append(row["analysis_rmax"])
-    # Save to file
-    output_path = os.path.join(output_folder, "ir_sargeo_09_janvier.pkl")
-    with open(output_path, "wb") as f:
-        pkl.dump(data_pkl, f)
-
-    print(f"🎯 PKL file created: {output_path}")
-
-
-
-
-# recentring the sar data around their barycenter
-
-def recenter_sar_around_barycenter(sars):
-    """
-    Recentre l'image SAR par translation (shift) sans interpolation.
-    - sar : tableau 2D (H, W) contenant des NaN pour les valeurs invalides.
-    Retourne :
-    - sar_shifted : image translatée, même shape
-    - barycenter (x, y) en pixels
-    - shift (dx, dy) appliqué
-    """
-    sars_recenter = []
-    # get the valid pixel valeus
-    for sar in sars:
-        mask = ~np.isnan(sar)
-        if not np.any(mask):
-            sars_recenter.append((sar.copy(), 0, 0))
-            continue
-
-        ys, xs = np.where(mask)
-
-        x_center = xs.mean()
-        y_center = ys.mean()
-        barycenter = (x_center, y_center)
-
-        H, W = sar.shape
-        target_x = W // 2
-        target_y = H // 2
-
-        dx = int(target_x - x_center)
-        dy = int(target_y - y_center)
-
-        sar_shifted = np.roll(sar, shift=(dy, dx), axis=(0, 1))
-        sars_recenter.append((sar_shifted,dx,dy))
-
-    return sars_recenter
-
-
-def get_mask_of_nan_values(tensor, invalid_values=None):
-    mask = (~torch.isnan(tensor)) & (~torch.isinf(tensor))
-    
-    # Gestion des valeurs spécifiques invalides (ex: -999, 0)
-    if invalid_values is not None:
-        for val in invalid_values:
-            mask &= tensor != val
-    
-    return mask.float()
-
-
-def get_nan_coverage(sar_batch, radius=100, km_per_pixel=2):
-    results = []
-    radius_pix = int(radius / km_per_pixel)
-
-    for idx, sar in enumerate(sar_batch):
-        H, W = sar.shape
-        x0, y0 = W // 2, H // 2  # centre de l’image
-
-        y, x = np.ogrid[:H, :W]
-        mask = (x - x0) ** 2 + (y - y0) ** 2 <= radius_pix ** 2
-
-        total_pixels = mask.sum()
-        nan_pixels = np.isnan(sar[mask]).sum()
-
-        nan_ratio = nan_pixels / total_pixels
-        results.append((idx, nan_ratio))
-
-        print(f"Image {idx}: {nan_ratio*100:.2f}% de NaN dans r ≤ {radius} km")
-
-    return results
-
-
-def remove_sar_nan(X_batch, sar_batch, radius_km=100, km_per_pixel=2, threshold=0.5,infos=None):
-    """
-    X_batch : numpy array (N, C, H, W) or (N, 1, H, W)
-    sar_batch : numpy array (N, H, W)
-    Returns:
-      - X_filtered (N_filtered, C, H, W)
-      - sar_filtered (N_filtered, H, W)
-      - kept_indices (list of indices kept)
-    """
-
-    # Convert tensors to numpy
-    if isinstance(X_batch, torch.Tensor):
-        X_batch = X_batch.cpu().numpy()
-    if isinstance(sar_batch, torch.Tensor):
-        sar_batch = sar_batch.cpu().numpy()
-
-    N, C, H, W = X_batch.shape
-    print(sar_batch.shape)
-    assert sar_batch.shape == (N, H, W), "Shapes do not match"
-
-    # Create circular mask
-    x0, y0 = W // 2, H // 2
-    radius_pix = int(radius_km / km_per_pixel)
-
-    y, x = np.ogrid[:H, :W]
-    mask = (x - x0)**2 + (y - y0)**2 <= radius_pix**2
-
-    X_filtered = []
-    sar_filtered = []
-    kept_indices = []
-    infos_kept = []
-
-    for i in range(N):
-        total = mask.sum()
-        nan_pixels = np.isnan(sar_batch[i][mask]).sum()
-        nan_ratio = nan_pixels / total
-
-        if nan_ratio < threshold:
-            X_filtered.append(X_batch[i])
-            sar_filtered.append(sar_batch[i])
-            kept_indices.append(i)
-            infos_kept.append(infos[i])
-
-    return np.array(X_filtered), np.array(sar_filtered),np.array(infos_kept)
-
-
-
-
-
+##### AUgmentation #######################
 def augmentation_sar_safe(ir, sar, mask, angle=None, flip=None):
    
     ir_t = torch.tensor(ir, dtype=torch.float32).unsqueeze(0)
     sar_t = torch.tensor(sar, dtype=torch.float32).unsqueeze(0)
     mask_t = torch.tensor(mask, dtype=torch.float32).unsqueeze(0)
-
     if angle is not None:
         ir_t = TF.rotate(ir_t, angle)
         sar_t = TF.rotate(sar_t, angle)
         mask_t = TF.rotate(mask_t, angle)
-
     if flip == "h":
         ir_t = TF.hflip(ir_t)
         sar_t = TF.hflip(sar_t)
         mask_t = TF.hflip(mask_t)
-
     elif flip == "v":
         ir_t = TF.vflip(ir_t)
         sar_t = TF.vflip(sar_t)
         mask_t = TF.vflip(mask_t)
-
     return (
         ir_t.squeeze(0).numpy(),
         sar_t.squeeze(0).numpy(),
         mask_t.squeeze(0).numpy(),
     )
-
-def create_moment_sar(sar):
-    '''
-    sar with shape (n,w,h)
-    '''
-    assert sar.ndim == 3, "sar must be (N, H, W)"
-
-    N, H, W = sar.shape
-
-    # Coordonnées spatiales
-    y, x = np.indices((H, W))
-    cy, cx = H // 2, W // 2
-
-    # Rayon (H, W)
-    r = np.sqrt((x - cx)**2 + (y - cy)**2)
-
-    # Broadcast sur le batch
-    moment = sar * r[None, :, :]
-
-    return moment
-
-
-def moment_to_sar(moment):
-    assert moment.ndim == 3, "moment must be (N, H, W)"
-
-    N, H, W = moment.shape
-
-    y, x = np.indices((H, W))
-    cy, cx = H // 2, W // 2
-
-    r = np.sqrt((x - cx)**2 + (y - cy)**2)
-
-    r_safe = np.maximum(r, 1.0)
-
-    sar = moment / r_safe[None, :, :]
-
-    return sar
-
 
 def add_white_noise(img, sigma):
     noise = np.random.normal(0, sigma, img.shape)
@@ -860,61 +128,59 @@ def add_white_noise(img, sigma):
 
 def add_salt_pepper_noise(img, amount=0.01, salt_vs_pepper=0.5):
     noisy = img.copy()
-
-    # Number of pixels to corrupt
     num_pixels = int(amount * img.size)
-
-    # Salt (white pixels)
     num_salt = int(num_pixels * salt_vs_pepper)
     coords = tuple(
         np.random.randint(0, i, num_salt)
         for i in img.shape
     )
     noisy[coords] = np.max(img)
-
-    # Pepper (black pixels)
     num_pepper = int(num_pixels * (1.0 - salt_vs_pepper))
     coords = tuple(
         np.random.randint(0, i, num_pepper)
         for i in img.shape
     )
     noisy[coords] = np.min(img)
-
     return noisy
 
-import copy
-import numpy as np
+def create_moment_sar(sar):
+    assert sar.ndim == 3, "sar must be (N, H, W)"
+    N, H, W = sar.shape
+    y, x = np.indices((H, W))
+    cy, cx = H // 2, W // 2
+    r = np.sqrt((x - cx)**2 + (y - cy)**2)
+    moment = sar * r[None, :, :]
+    return moment
+
+def moment_to_sar(moment):
+    assert moment.ndim == 3, "moment must be (N, H, W)"
+    N, H, W = moment.shape
+    y, x = np.indices((H, W))
+    cy, cx = H // 2, W // 2
+    r = np.sqrt((x - cx)**2 + (y - cy)**2)
+    r_safe = np.maximum(r, 1.0)
+    sar = moment / r_safe[None, :, :]
+    return sar
 
 def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
-    
     out_ir, out_sar, out_mask, out_infos = [], [], [], []
-
     for ir, sar, mask, inf in zip(ir_tensor, sar_tensor, mask_tensor, infos):
-
-        # ---------- Original sample (augmentation = 0)
         inf0 = copy.deepcopy(inf)
         inf0["augmentation"] = 0
-
         out_ir.append(ir)
         out_sar.append(sar)
         out_mask.append(mask)
         out_infos.append(inf0)
-
         rmax = inf.get("analysis_rmax", np.nan)
         rmax = np.nanmax(rmax) if np.ndim(rmax) > 0 else float(rmax)
-
         vmax = inf.get("analysis_vmax", np.nan)
         vmax = np.nanmax(vmax) if np.ndim(vmax) > 0 else float(vmax)
-
-        # ---------- Geometric augmentations (rmax-based)
         if np.isfinite(rmax) and (rmax > 0):
             for flip in ["h","v"]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
-
                 inf_aug = copy.deepcopy(inf)
                 inf_aug["augmentation"] = 1
                 inf_aug["aug_type"] = f"flip_{flip}"
-
                 out_ir.append(ir_r)
                 out_sar.append(sar_r)
                 out_mask.append(mask_r)
@@ -922,11 +188,9 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
 
             for angle in [90,270,180]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
-
                 inf_aug = copy.deepcopy(inf)
                 inf_aug["augmentation"] = 1
                 inf_aug["aug_type"] = f"rot_{angle}"
-
                 out_ir.append(ir_r)
                 out_sar.append(sar_r)
                 out_mask.append(mask_r)
@@ -935,28 +199,23 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
         if np.isfinite(rmax) and (rmax > 0):
             for sigma in [0.05]:
                 ir_r = add_white_noise(ir, sigma)
-
                 inf_aug = copy.deepcopy(inf)
                 inf_aug["augmentation"] = 1
                 inf_aug["aug_type"] = f"white_noise_{sigma}"
-
                 out_ir.append(ir_r)
-                out_sar.append(sar)      # unchanged
+                out_sar.append(sar)   
                 out_mask.append(mask)
                 out_infos.append(inf_aug)
         if np.isfinite(rmax) and (vmax < 10000):
             for amount in [0.04]:
                 ir_r = add_salt_pepper_noise(ir, amount)
-
                 inf_aug = copy.deepcopy(inf)
                 inf_aug["augmentation"] = 1
                 inf_aug["aug_type"] = f"saltpepper_{amount}"
-
                 out_ir.append(ir_r)
                 out_sar.append(sar)      # unchanged
                 out_mask.append(mask)
                 out_infos.append(inf_aug)
-
     return (
         np.stack(out_ir, axis=0),
         np.stack(out_sar, axis=0),
@@ -964,201 +223,47 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
         out_infos
     )
 
-
-
-def visualize_dataset_statistics(dictio, target_dir, mask=None):
-    """
-    Génère une figure 4x2 :
-        1) Moyenne IR   (train / val)
-        2) Moyenne SAR  (train / val)
-        3) Histogrammes IR (train / val)
-        4) Histogrammes SAR (train / val)
-    """
-
-    # --- Récupération des datasets ---
-    train_ir = dictio["train"][0]          # (N,C,H,W)
-    train_sar = dictio["train"][1]         # (N,H,W)
-    val_ir   = dictio["val"][0]            # (N,C,H,W)
-    val_sar  = dictio["val"][1]            # (N,H,W)
-
-    # --- Récupération masques ---
-    mask_train = dictio["mask_sar_train"]  # (N,H,W)
-    mask_val   = dictio["mask_sar_val"]    # (N,H,W)
-
-    # --- Moyennes ---
-    mean_train_ir  = np.nanmean(train_ir[:,0], axis=0)
-    mean_val_ir    = np.nanmean(val_ir[:,0], axis=0)
-
-    mean_train_sar = np.nanmean(train_sar, axis=0)
-    mean_val_sar   = np.nanmean(val_sar, axis=0)
-
-    # --- Figure ---
-    fig, axs = plt.subplots(4, 2, figsize=(18, 20))
-
-    # -------------------------------
-    # 1) IR MEAN IMAGES
-    # -------------------------------
-    plot_ir(mean_train_ir, ax=axs[0,0])
-    axs[0,0].set_title("Train — Mean IR")
-
-    plot_ir(mean_val_ir, ax=axs[0,1])
-    axs[0,1].set_title("Validation — Mean IR")
-
-    # -------------------------------
-    # 2) SAR MEAN IMAGES
-    # -------------------------------
-    plot_sar(mean_train_sar, ax=axs[1,0])
-    axs[1,0].set_title("Train — Mean SAR")
-
-    plot_sar(mean_val_sar, ax=axs[1,1])
-    axs[1,1].set_title("Validation — Mean SAR")
-
-    # -------------------------------
-    # 3) IR HISTOGRAMS (mask ignored)
-    # -------------------------------
-    ir_train_flat = train_ir[:,0].reshape(-1)
-    ir_val_flat = val_ir[:,0].reshape(-1)
-
-    ir_train_valid = ir_train_flat[np.isfinite(ir_train_flat)]
-    ir_val_valid   = ir_val_flat[np.isfinite(ir_val_flat)]
-
-    plot_ir_hist(ir_train_valid, ax=axs[2,0])
-    axs[2,0].set_title("Train — IR Histogram (no NaN)")
-
-    plot_ir_hist(ir_val_valid, ax=axs[2,1])
-    axs[2,1].set_title("Validation — IR Histogram (no NaN)")
-
-    # -------------------------------
-    # 4) SAR HISTOGRAMS (mask applied)
-    # -------------------------------
-    sar_train_flat = train_sar.reshape(-1)
-    sar_val_flat   = val_sar.reshape(-1)
-
-    mask_train_flat = mask_train.reshape(-1)
-    mask_val_flat   = mask_val.reshape(-1)
-
-    # garder uniquement les pixels où mask == 1
-    sar_train_valid = sar_train_flat[(mask_train_flat == 1) & np.isfinite(sar_train_flat)]
-    sar_val_valid   = sar_val_flat[(mask_val_flat == 1) & np.isfinite(sar_val_flat)]
-
-    plot_sar_hist(sar_train_valid, ax=axs[3,0])
-    axs[3,0].set_title("Train — SAR Histogram (mask applied)")
-
-    plot_sar_hist(sar_val_valid, ax=axs[3,1])
-    axs[3,1].set_title("Validation — SAR Histogram (mask applied)")
-
-    plt.tight_layout()
-
-    # --- Save ---
-    save_dir = os.path.join(target_dir, "visualizations")
-    os.makedirs(save_dir, exist_ok=True)
-
-    save_path = os.path.join(save_dir, "dataset_overview.png")
-    fig.savefig(save_path, dpi=200)
-
-    plt.close(fig)
-    plt.close("all")
-
-    print(f"📊 Dataset visualization saved to: {save_path}")
-
 def regrid_batch_by_resolution(x, in_resolution, out_resolution):
-    """
-    x : numpy array of shape (N, C, H, W)
-    in_resolution : km/pixel (ex: 2)
-    out_resolution : km/pixel (ex: 4)
-
-    Returns:
-        Regridded array with same spatial extent.
-    """
-
     scale = out_resolution / in_resolution  # ex: 4/2 = 2
-
     if np.isclose(scale, 1.0):
         return x
-
     if scale < 1:
         raise ValueError("This implementation handles downsampling only (out_resolution > in_resolution).")
-
     factor = int(np.round(scale))
-
     N, C, H, W = x.shape
-
-    # Crop to multiple of factor
     Hc = (H // factor) * factor
     Wc = (W // factor) * factor
     x = x[:, :, :Hc, :Wc]
-
-    # Block average pooling
     x = x.reshape(N, C, Hc // factor, factor, Wc // factor, factor)
     x = x.mean(axis=(3, 5))
-
     return x
 
 
-def build_irwin_channels(irwin_train, n_channels):
-    
-    assert n_channels % 2 == 1, "Number of channels must be odd"
-    half = n_channels // 2
-    N,C,W,H = irwin_train.shape
-    output = []
-    for ir in irwin_train:
-        left_1 = np.nanmean(ir[0:3,:,:],axis=0)
-        left_2 = np.nanmean(ir[1:4,:,:],axis=0)
-        left_3 = np.nanmean(ir[2:5,:,:],axis=0)
-        center = np.nanmean(ir[3:6,:,:],axis=0)
-        right_1 = np.nanmean(ir[4:7,:,:],axis=0)
-        right_2 = np.nanmean(ir[5:8,:,:],axis=0)
-        right_3 = np.nanmean(ir[6:,:,:],axis=0)
-        output.append([left_3,left_2,left_1,left_3,right_1,right_2,right_3])
-        # print(np.array(left_2).shape,np.array(left_1).shape,np.array(left_3).shape,np.array(right_1).shape,np.array(right_2).shape)
-    return np.array(output)
-
-
 def compute_residual_stats(train_loader, regression_model, device="cpu"):
-    """
-    Compute mean and std of residuals (SAR - regression) over the training set.
-
-    Args:
-        train_loader:       DataLoader returning (x, sar, mask, infos)
-        regression_model:   frozen regression UNet
-        device:             torch device
-
-    Returns:
-        dict: {"mean": float, "std": float, "n_pixels": int}
-    """
     regression_model.eval()
     sum_vals  = 0.0
     sum_sq    = 0.0
     n_pixels  = 0
-
     with torch.no_grad():
         for x, sar, mask, infos in tqdm(train_loader, desc="Computing residual stats"):
             x    = x.to(device)
             sar  = sar.to(device)
             mask = mask.to(device)
-
             if sar.ndim == 3:
                 sar  = sar.unsqueeze(1)
             if mask.ndim == 3:
                 mask = mask.unsqueeze(1)
-
-            # Regression prediction (mean field)
             t0 = torch.zeros(x.shape[0], device=device)
             mean_pred = regression_model(x, t0).sample   # (B, 1, H, W)
-
-            # Residual at valid pixels
             residual = sar - mean_pred
             valid    = (mask > 0) & sar.isfinite()
-
             r_valid = residual[valid]
             sum_vals += r_valid.sum().item()
             sum_sq   += (r_valid ** 2).sum().item()
             n_pixels += r_valid.numel()
-
     mean = sum_vals / n_pixels
     var  = sum_sq   / n_pixels - mean ** 2
     std  = max(var, 1e-8) ** 0.5
-
     stats = {"mean": mean, "std": std, "n_pixels": n_pixels}
     print(f"Residual stats: mean={mean:.4f}, std={std:.4f} (n_pixels={n_pixels:,})")
     return stats
@@ -1175,87 +280,15 @@ def load_residual_stats(path: str) -> dict:
         return json.load(f)
 
 
-def split_ir_channels_and_repeat_sar(X, y):
-    """
-    X: IR data of shape (N, 9, H, W)
-    y: SAR data of shape (N, ...) matching the same N samples
-
-    Returns:
-        X_new: (N*9, H, W)
-        y_new: repeated SAR targets with shape (N*9, ...)
-    """
-    N, C, H, W = X.shape
-    assert C >= 2, f"Expected more than 1 IR channels, but got {C}"
-
-    # (N, 9, H, W) -> (N*9, H, W)
-    X_new = X.reshape(N * C, 1, H, W)
-
-    # Repeat SAR target 9 times for each original sample
-    y_new = np.repeat(y, C, axis=0) if y is not None else None
-    
-
-    return X_new, y_new
-
-
-import numpy as np
-
-def downsample_2km_to_4km(x):
-    """
-    Downsample a tensor from 2km to 4km resolution using average pooling.
-
-    Args:
-        x: numpy array of shape (N, C, H, W)
-
-    Returns:
-        numpy array of shape (N, C, H//2, W//2)
-    """
-    if x.ndim != 4:
-        # add channel dimension if missing
-        x = x[:, np.newaxis, :, :]
-    N, C, H, W = x.shape
-
-    # Make dimensions even
-    if H % 2 != 0:
-        x = x[:, :, :-1, :]
-    if W % 2 != 0:
-        x = x[:, :, :, :-1]
-    print("Shape after correction for cropping:", np.shape(x))
-    N, C, H, W = x.shape
-    x = x.reshape(N, C, H//2, 2, W//2, 2)
-    x = x.mean(axis=(3, 5))
-
-
-    return x.squeeze(1) if C == 1 else x  # remove channel dimension if it was added
-
-
-
-
 def shift_ir_path(ir_path: str, idx: int, step_minutes: int = 30) -> str:
-    """
-    Décale le timestamp contenu dans le nom d'un fichier IR (format
-    "IR_YYYYMMDDHHMMSS.nc") d'un certain nombre de pas de temps.
-
-    Args:
-        ir_path: chemin complet du fichier IR de référence.
-        idx: nombre de pas de temps à décaler (peut être négatif).
-        step_minutes: durée en minutes d'un pas de temps (30 min par défaut).
-
-    Returns:
-        Le chemin du fichier IR correspondant au timestamp décalé, dans le
-        même dossier que le fichier d'origine.
-    """
     m = re.search(r"(IR_)(\d{14})(\.nc)$", ir_path)
     if not m:
         raise ValueError(f"Format inattendu pour ir_path: {ir_path}")
-
     prefix, dt_str, suffix = m.group(1), m.group(2), m.group(3)
     dt = datetime.strptime(dt_str, "%Y%m%d%H%M%S")
     dt_shifted = dt + timedelta(minutes=idx * step_minutes)
-
     new_name = f"{prefix}{dt_shifted.strftime('%Y%m%d%H%M%S')}{suffix}"
     return ir_path[: m.start()] + new_name  # garde le même dossier
-
-
 
 
 def build_storm_centered_dataset(
@@ -1264,25 +297,14 @@ def build_storm_centered_dataset(
     dxy=2.0,
     kind="nearest"
 ):
-    """
-    Construit un dataset centré cyclone sur grille régulière [-500, 500] km.
-
-    Returns
-    -------
-    xr.Dataset
-    """
-
     ir = ds["brightness_temperature"].values
     ir_lon = ((ds["longitude"].values+180)%360)-180
     ir_lat = ds["latitude"].values
     center_lat = ds["storm_latitude"].values[0]
     center_lon = ((ds["storm_longitude"][0].values + 180)%360)-180
-
     nx = ny = int(2 * half_size / dxy) + 1
-
     x = np.linspace(-half_size, half_size, nx)
     y = np.linspace(half_size, -half_size, ny)  # nord en haut
-
     proj = pyproj.Proj(              #place le cyclone au centre (0,0), et je mesure tout en km autou
         proj="aeqd",
         lat_0=center_lat,
@@ -1290,16 +312,12 @@ def build_storm_centered_dataset(
         ellps="WGS84",
         units="km"
     )
-
-
     longitude, latitude = pyresample.utils.check_and_wrap(ir_lon, ir_lat)
     lon2d, lat2d = np.meshgrid(longitude, latitude)
-
     swath_ir = pyresample.SwathDefinition(
         lon2d,
         lat2d
     )
-
     area_def = pyresample.geometry.AreaDefinition(
         "storm",
         "storm centered grid",
@@ -1309,7 +327,6 @@ def build_storm_centered_dataset(
         ny,
         (x[0] - dxy/2, y[-1] - dxy/2, x[-1] + dxy/2, y[0] + dxy/2)
     )
-
     if kind == "nearest":
         ir_grid = pyresample.kd_tree.resample_nearest(
             swath_ir,
@@ -1326,9 +343,6 @@ def build_storm_centered_dataset(
             radius_of_influence=100000,
             sigmas=25000
         )
-
-   
-
     ds["ir_aeqd"] = xr.DataArray(
             ir_grid,
             dims=("y", "x"),
@@ -1341,12 +355,23 @@ def build_storm_centered_dataset(
                 "description": "Brightness temperature projected onto storm-centered AEQD grid",
             },
         )
-
     ds["center_lat"] = center_lat
     ds["center_lon"] = center_lon
-
     return ds
 
 
-if __name__ =="__main__":
-    create_coloc_pkl()
+def custom_collate(batch):
+    """
+    batch = [
+        (x, sar, mask, infos_dict),
+        ...
+    ]
+    """
+    xs    = torch.stack([item[0] for item in batch])
+    sars  = torch.stack([item[1] for item in batch])
+    masks = torch.stack([item[2] for item in batch])
+
+    # infos reste une liste de dictionnaires
+    infos = [item[3] for item in batch]
+
+    return xs, sars, masks, infos

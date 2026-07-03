@@ -1,23 +1,3 @@
-"""
-Module de préparation des données pour l'entraînement IR -> SAR.
-
-Ce module définit la classe `PrepareDataSet` qui :
-    1. Charge le fichier CSV de correspondance entre les images IR (IRWIN) et SAR.
-    2. Vérifie l'ouverture effective des fichiers NetCDF (SAR + IRWIN), et le cas
-       échéant des données ERA5 associées.
-    3. Construit les tenseurs d'entrée (X) et de sortie (sar) pour les ensembles
-       train / val / test (et éventuellement le jeu de test "Anggrek").
-    4. Applique le recadrage spatial, le downsampling, la conversion Kelvin -> Celsius,
-       le masquage des NaN, l'augmentation de données et la normalisation (z-score
-       ou annulaire).
-    5. Sauvegarde les statistiques de normalisation ainsi que quelques graphiques
-       de contrôle qualité.
-
-NOTE IMPORTANTE : aucune logique métier n'a été modifiée par rapport au script
-d'origine. Seuls ont été retirés les imports et variables qui n'étaient jamais
-utilisés, et le code a été réorganisé/commenté pour en faciliter la lecture.
-"""
-
 import os
 import re
 from datetime import datetime, timedelta
@@ -31,17 +11,8 @@ import pickle as pkl
 
 import src.IR_to_SAR.data_preparation.data_preprocessing as dataprep
 import src.IR_to_SAR.data_preparation.regrid_era5.regrid_era5 as regrid_colocs
-
-# Recharge le module dataprep (utile en environnement interactif / notebook)
 reload(dataprep)
 
-
-# Répertoire racine contenant les fichiers ERA5 (un sous-dossier par année,
-# puis par jour de l'année).
-era5_path = "/scale/user/mtannaou/alternance/src/extract_cyclones_era5/era5_single_levels"
-
-
-# puis par jour de l'année).
 era5_path = "/scale/user/mtannaou/alternance/src/extract_cyclones_era5/era5_single_levels"
 
 # Tableaux représentant les jours de chaque mois (utilisés pour calculer le
@@ -65,45 +36,20 @@ avril, juin, septembre, novembre = (
     np.arange(1, 31, 1),
 )
 
-
-
-
 class PrepareDataSet:
-    """
-    Construit et normalise les jeux de données (train / val / test / Anggrek)
-    utilisés pour entraîner les modèles IR -> SAR.
-    """
-
     def __init__(
         self,
-        pkl_file=None,
-        size=128,
-        norm="z_score",
-        augmentation=False,
         target_dir=None,
-        output_data="sar",
-        conditional_model=None,
-        anggrek_test=False,
-        irwin_channels=1,
-        add_era5=False,
         cfg=None,
     ):
-        # -------------------------------------------------------------
-        # Sauvegarde des paramètres de configuration sur l'instance
-        # -------------------------------------------------------------
-        self.augmentation = augmentation
+        self.augmentation = cfg.augmentation
         self.target_dir = target_dir
-        self.output_data = output_data
-        self.irwin_channels = irwin_channels
-        self.add_era5 = add_era5
+        self.output_data = cfg.output_data
+        self.irwin_channels = cfg.irwin_channels
+        self.add_era5 = cfg.add_era5
         self.cfg = cfg
-
-        # -------------------------------------------------------------
-        # 1) Chargement du CSV de correspondance IR / SAR
-        # -------------------------------------------------------------
         print("🔹 Loading data from csv ...")
         print("-------------------------------------------------------------")
-
         irwin_train, irwin_val, irwin_test, irwin_anggrek = [], [], [], []
         sar_train, sar_val, sar_test = [], [], []
         infos_train, infos_val, infos_test, infos_anggrek = [], [], [], []
@@ -116,8 +62,6 @@ class PrepareDataSet:
                 "analysis_rmax",
                 # "analysis_center_quality_flag",
             ]  # corilis
-        
-
         ## prmeier cas : utilisation de la nouvelle base de données IRAR 
         if self.cfg.irar:
             data = pd.read_csv(
@@ -194,7 +138,7 @@ class PrepareDataSet:
 
         ## Utilisation de sargeo avec une fenetre temporelle de 4h maximum avec 9 channels
         else :
-            if not conditional_model:
+            if not cfg.conditional_model:
                 
                 data = pd.read_csv(
                         "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/"
@@ -214,7 +158,7 @@ class PrepareDataSet:
             data = data.reset_index(drop=True)
 
             # --- Normalisation des features de cisaillement (shear) si modèle conditionnel ---
-            if conditional_model:
+            if cfg.conditional_model:
                 mag_cols = [f"shear_magnitude_{i}" for i in range(1, 9)]
                 dir_cols = [f"shear_direction_{i}" for i in range(1, 9)]
                 shear_cols = dir_cols + mag_cols
@@ -296,7 +240,7 @@ class PrepareDataSet:
                                 irwin_test.append(sargeo["IRWIN"].values)
 
                         # --- Ajout des features environnementales (shear) si modèle conditionnel ---
-                        if conditional_model:
+                        if cfg.conditional_model:
                             shear_vec = row[shear_cols].to_numpy(dtype=np.float32)
                             shear_vec = np.nan_to_num(shear_vec, nan=0.0)
                             shear_vec = (shear_vec - shear_mean) / shear_std
@@ -427,6 +371,7 @@ class PrepareDataSet:
 
 
         ## recadrage et centrage autour du cnetre et redimensionnement
+        size = self.cfg.img_size
         N,C,H,W = self.X_train.shape
         self.X_train = self.X_train[:,:, W//2 - size//2 : W//2 + size//2, H//2 - size//2 : H//2 + size//2]
         self.X_val = self.X_val[:,:, W//2 - size//2 : W//2 + size//2, H//2 - size//2 : H//2 + size//2]
@@ -455,7 +400,7 @@ class PrepareDataSet:
         self.X_train = np.nan_to_num(self.X_train, nan=0.0, posinf=0.0, neginf=0.0)
         self.X_val = np.nan_to_num(self.X_val, nan=0.0, posinf=0.0, neginf=0.0)
         self.X_test = np.nan_to_num(self.X_test, nan=0.0, posinf=0.0, neginf=0.0)
-        if anggrek_test:
+        if self.cfg.anggrek_test:
             self.X_anggrek = np.nan_to_num(self.X_anggrek, nan=0.0, posinf=0.0, neginf=0.0)
 
         self.sar_train = np.nan_to_num(self.sar_train, nan=0.0, posinf=0.0, neginf=0.0)
@@ -488,17 +433,17 @@ class PrepareDataSet:
         for c in range(self.X_train.shape[1]):
             self.X_val[:, c], _, _ = dataprep.z_score(self.X_val[:, c], mean_value=mean_x[c], std_value=std_x[c])
             self.X_test[:, c], _, _ = dataprep.z_score(self.X_test[:, c], mean_value=mean_x[c], std_value=std_x[c])
-            if anggrek_test:
+            if self.cfg.anggrek_test:
                 self.X_anggrek[:, c], _, _ = dataprep.z_score(
                     self.X_anggrek[:, c], mean_value=mean_x[c], std_value=std_x[c]
                 )
         
-        if norm == "z_score":
+        if self.cfg.norm == "z_score":
             self.sar_train, self.mean_sar, self.std_sar = dataprep.z_score(self.sar_train)
             self.sar_val, _, _ = dataprep.z_score(self.sar_val, mean_value=self.mean_sar, std_value=self.std_sar)
             self.sar_test, _, _ = dataprep.z_score(self.sar_test, mean_value=self.mean_sar, std_value=self.std_sar)
 
-        elif norm == "annular":
+        elif self.cfg.norm == "annular":
             self.sar_train, stats = dataprep.annular_normalization(self.sar_train, bin_size=1, mask=None)
             self.mean_sar = stats["mean"]
             self.std_sar = stats["std"]
@@ -512,7 +457,7 @@ class PrepareDataSet:
         with open(os.path.join(data_saved, "Tets_data_stats.pkl"), "wb") as f:
             pkl.dump(
                 {
-                    "normalisation_type": str(norm),
+                    "normalisation_type": str(self.cfg.norm),
                     "std_sar": self.std_sar,
                     "mean_sar": self.mean_sar,
                     "mean_x": mean_x,

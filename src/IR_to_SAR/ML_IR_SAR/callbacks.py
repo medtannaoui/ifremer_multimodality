@@ -1,16 +1,6 @@
-"""
-Callbacks d'entraînement IR -> SAR.
-
-Règle d'affichage des métriques :
-    - cfg.code_test = True  → on affiche uniquement le jeu TRAIN
-    - cfg.code_test = False → on affiche uniquement le jeu TEST
-    Le jeu de VALIDATION n'est jamais affiché.
-"""
-
 import os
 from pathlib import Path
 import pickle as pkl
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -24,16 +14,12 @@ import src.IR_to_SAR.data_preparation.distribution_data_visualisation as distdat
 import src.IR_to_SAR.ML_IR_SAR.flow_matching_inference as fm_inf
 import src.IR_to_SAR.ML_IR_SAR.callbacks_functions as clbk_func
 import importlib
-
 importlib.reload(distdata)
 importlib.reload(fm_inf)
+importlib.reload(clbk_func)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
-# =============================================================================
-# EarlyStopping
-# =============================================================================
 
 class EarlyStopping:
     """Arrête l'entraînement quand la métrique surveillée ne s'améliore plus."""
@@ -45,7 +31,6 @@ class EarlyStopping:
         self.best_val_loss = float("inf")
         self.best_epoch = 0
         self.should_stop = False
-
     def on_validation_epoch_end(self, val_loss, epoch, **kwargs):
         if val_loss < self.best_val_loss - self.min_delta:
             self.best_val_loss = val_loss
@@ -53,33 +38,19 @@ class EarlyStopping:
             self.epochs_without_improvement = 0
         else:
             self.epochs_without_improvement += 1
-
         if self.epochs_without_improvement >= self.patience:
             self.should_stop = True
             print("Early stopping triggered.")
 
-
-# =============================================================================
-# ModelCheckpoint
-# =============================================================================
-
 class ModelCheckpoint:
-    """Sauvegarde le modèle si la validation loss s'améliore."""
-
     def __init__(self, output_dir, filename="best_regression_model.pt", target_dir=None):
         self.output_path = Path(output_dir) / target_dir / filename
         self.best_val_loss = float("inf")
-
     def on_validation_epoch_end(self, val_loss, model, fabric, **kwargs):
         if val_loss < self.best_val_loss:
             self.best_val_loss = val_loss
             fabric.save(self.output_path, {"model": model.state_dict()})
             fabric.print(f"Validation loss improved. Saved model to {self.output_path}")
-
-
-# =============================================================================
-# Utilitaire : solveur ODE Euler (utilisé par plusieurs méthodes)
-# =============================================================================
 
 def _euler_ode(model, z, ir_input, num_steps, device):
     """Intègre l'ODE de Flow Matching par la méthode d'Euler explicite."""
@@ -92,20 +63,7 @@ def _euler_ode(model, z, ir_input, num_steps, device):
         x_t = x_t + pred_velocity * dt
     return x_t
 
-
-# =============================================================================
-# LogValidationSamples
-# =============================================================================
-
 class LogValidationSamples:
-    """
-    Callback de visualisation et de métriques.
-
-    Règle d'affichage :
-        cfg.code_test = True  → uniquement le jeu TRAIN
-        cfg.code_test = False → uniquement le jeu TEST
-    """
-
     def __init__(
         self,
         base_dir,
@@ -124,8 +82,7 @@ class LogValidationSamples:
         mask_test=None,
         target_dir=None,
         cfg=None,
-    ):
-        
+    ):   
         self.cfg = cfg
         self.base_dir = Path(base_dir)
         self.output_dir = target_dir
@@ -153,15 +110,6 @@ class LogValidationSamples:
         self.irwin_channels = self.cfg.irwin_channels
         self.add_era5 = self.cfg.add_era5
 
-    # -------------------------------------------------------------------------
-    # Helpers internes
-    # -------------------------------------------------------------------------
-
-    
-
-    # -------------------------------------------------------------------------
-    # log_batch : affichage principal (métriques + samples)
-    # -------------------------------------------------------------------------
 
     def log_batch(
         self,
@@ -174,30 +122,20 @@ class LogValidationSamples:
         reg_model=None,
         resid_stats=None,
     ):
-        """
-        Journalise un batch complet : images + distributions pixel-par-pixel.
-        Compatible avec un batch normal ou avec toute la concaténation d'un split.
-        """
         model.eval()
-
         if ode_pred is None:
             x, sar, mask, infos = batch
         else:
             x, sar, mask, infos, ode_pred = batch
-
         cyclone_id = [d["cyclone_id"] for d in infos]
         sar_time = [d["sar_time"] for d in infos]
         #vmax = [d["vmax"] for d in infos]
         analysis_vmax = [d["analysis_vmax"] for d in infos]
         analysis_rmax = [d["analysis_rmax"] for d in infos]
-
         x = x.to(device)
         sar = sar.to(device)
         mask = mask.to(device)
 
-        # -----------------------------------------------------------------
-        # Inférence
-        # -----------------------------------------------------------------
         if ode_pred is None:
             with torch.no_grad():
                 if not self.conditional_model:
@@ -233,18 +171,12 @@ class LogValidationSamples:
             print("using precomputed ode pred", pred.shape)
 
         
-        # -----------------------------------------------------------------
-        # Dé-normalisation des sorties
-        # -----------------------------------------------------------------
-        
         ch = x.shape[1] // 2 if x.shape[1] > 4 else 0
         ir = x[:, ch, :, :].squeeze().cpu().numpy()
         sar = sar.squeeze().cpu().numpy() if sar.ndim == 4 else sar.cpu().numpy()
         pred = pred.squeeze().cpu().numpy() if pred.ndim == 4 else pred.cpu().numpy()
 
-
         ir_denorm = clbk_func.denorm(ir, self.mean_X[ch], self.std_X[ch])
-
         if self.norm == "z_score":
             sar_denorm = clbk_func.denorm(sar, self.mean_sar, self.std_sar)
             pred_denorm = clbk_func.denorm(pred, self.mean_sar, self.std_sar)
@@ -252,11 +184,9 @@ class LogValidationSamples:
             sar_denorm = clbk_func.annular_denormalization(sar, stats={"mean": self.mean_sar, "std": self.std_sar})
             pred_denorm = clbk_func.annular_denormalization(pred, stats={"mean": self.mean_sar, "std": self.std_sar})
 
-
         if self.output_data == "aam":
             sar_denorm = clbk_func.moment_to_sar(sar_denorm)
             pred_denorm = clbk_func.moment_to_sar(pred_denorm)
-
 
         B, H, W = sar_denorm.shape
         ir_np = ir_denorm
@@ -267,34 +197,26 @@ class LogValidationSamples:
 
 
         B, H, W = pred_np.shape
-        # -----------------------------------------------------------------
-        # Calcul des métriques Vmax / Rmax par échantillon
-        # -----------------------------------------------------------------
         pred_vmax = np.full(B, np.nan, dtype=np.float32)
         pred_rmax_km = np.full(B, np.nan, dtype=np.float32)
         for i in range(B):
             pred_vmax[i], pred_rmax_km[i] = clbk_func.compute_vmax1d_rmax1d(pred_np[i])
-
         analysis_vmax = np.array(analysis_vmax, dtype=np.float32)
         analysis_rmax = np.array(analysis_rmax, dtype=np.float32)
         analysis_rmax_km = analysis_rmax / 1000.0
-
         ok_vmax = np.isfinite(analysis_vmax) & np.isfinite(pred_vmax)
         ok_rmax = np.isfinite(analysis_rmax_km) & np.isfinite(pred_rmax_km)
         err_vmax = (pred_vmax - analysis_vmax)[ok_vmax]
         cat_vmax = analysis_vmax[ok_vmax]
         err_rmax = (pred_rmax_km - analysis_rmax_km)[ok_rmax]
         cat_rmax = analysis_rmax_km[ok_rmax]
-
         if set == "train":
             self.vmax_bins_knots = clbk_func._split_bins_from_train(cat_vmax, n_intervals=3)
             self.rmax_bins_km = clbk_func._split_bins_from_train(cat_rmax, n_intervals=3)
-
         if self.vmax_bins_knots is None:
             self.vmax_bins_knots = clbk_func._split_bins_from_train(cat_vmax, n_intervals=3)
         if self.rmax_bins_km is None:
             self.rmax_bins_km = clbk_func._split_bins_from_train(cat_rmax, n_intervals=3)
-
         if self.vmax_bins_knots is not None and err_vmax.size > 0:
             clbk_func._plot_4panel_error_hist(
                 errors=err_vmax,
@@ -304,7 +226,6 @@ class LogValidationSamples:
                 unit="m/s",
                 save_path=os.path.join(self.output_dir, "errors_hist", set, f"vmax_error_epoch_{epoch + 1:04d}.png"),
             )
-
         if self.rmax_bins_km is not None and err_rmax.size > 0:
             clbk_func._plot_4panel_error_hist(
                 errors=err_rmax,
@@ -315,11 +236,7 @@ class LogValidationSamples:
                 save_path=os.path.join(self.output_dir, "errors_hist", set, f"rmax_error_epoch_{epoch + 1:04d}.png"),
             )
 
-        # -----------------------------------------------------------------
-        # Plots des samples
-        # -----------------------------------------------------------------
         os.makedirs(os.path.join(self.output_dir, "samples", set), exist_ok=True)
-
         sar_all = sar_denorm.flatten()
         pred_all = pred_denorm.flatten()
         mask_all = mask_np.flatten()
@@ -327,21 +244,18 @@ class LogValidationSamples:
         distdata.compare_sar_distribution(
             sar_all[valid], pred_all[valid], self.output_dir, set=set, epoch=epoch
         )
-
         sar_2d = sar_denorm
         pred_2d = pred_denorm
         mask_2d = mask_np
-
         os.makedirs(os.path.join(self.output_dir, "predictions_denormalisees", set), exist_ok=True)
         with open(
             os.path.join(self.output_dir, "predictions_denormalisees", set, "predictions_denormalisées.pkl"), "wb"
         ) as f:
             pkl.dump({f"{set}": [ir_np, sar_2d, pred_2d, mask_2d, infos_np], "model": model}, f)
-
         if not self.cfg.code_test:
             for vmin_cat, vmax_cat in zip([19, 63, 83, 96, 113], [63, 83, 96, 113, 200]):
                 distdata.vmax_compare(analysis_vmax, pred_2d * mask_2d, self.output_dir,
-                                    set=set, epoch=epoch, min=vmin_cat, max=vmax_cat)
+                                        set=set, epoch=epoch, min=vmin_cat, max=vmax_cat)
         distdata.vmax_compare(analysis_vmax, pred_2d * mask_2d, self.output_dir, set=set, epoch=epoch)
 
         if not self.cfg.code_test:
@@ -355,30 +269,24 @@ class LogValidationSamples:
         distdata.compute_mae_metric(sar_2d, pred_2d * mask_2d, output_dir=self.output_dir,
                                     set=set, epoch=epoch, plot=False)
 
-        # Tirage aléatoire d'exemples à visualiser
         batch_size = ir_np.shape[0]
         num = min(batch_size, self.num_samples)
         np.random.seed(0)
         sample_ids = np.random.choice(batch_size, size=num, replace=False)
-
         for i in sample_ids:
             fig, axes = plt.subplots(1, 3, figsize=(15, 5))
             H, W = sar_np[i].shape
-
             rmax = analysis_rmax[i] / 1000
             vmax_i = analysis_vmax[i]
             if vmax_i is None or np.isnan(vmax_i):
                 vmax_i = 99999
             if rmax is None or np.isnan(rmax):
                 rmax = 99999
-
             vmax1d_pred, rmax1d_pred = clbk_func.compute_vmax1d_rmax1d(pred_np[i])
             vmax_sar, rmax_sar = clbk_func.compute_vmax1d_rmax1d(sar_np[i])
-
             distdata.plot_ir(ir_np[i], cmap=self.cmap_ir, ax=axes[0], fig=fig, x_lim=H)
             axes[0].set_title("IRWIN (°C)")
             axes[0].axis("off")
-
             sar_vis = np.where(mask_np[i] == 1, sar_np[i], np.nan)
             distdata.plot_sar(sar_vis, cmap=self.cmap_sar, ax=axes[1], fig=fig, x_lim=H)
             axes[1].set_title("True SAR (m/s)")
@@ -386,14 +294,12 @@ class LogValidationSamples:
             axes[1].axvline(x=0, color="black", linewidth=1)
             axes[1].add_patch(Circle((0, 0), radius=rmax, color="black", fill=False, linestyle="--"))
             axes[1].axis("off")
-
             distdata.plot_sar(pred_np[i], cmap=self.cmap_sar, ax=axes[2], fig=fig, x_lim=H)
             axes[2].set_title("Predicted SAR (m/s)")
             axes[2].axhline(y=0, color="black", linewidth=1)
             axes[2].axvline(x=0, color="black", linewidth=1)
             axes[2].add_patch(Circle((0, 0), radius=rmax, color="black", fill=False, linestyle="--"))
             axes[2].axis("off")
-
             fig.suptitle(
                 f"Cyclone: {cyclone_id[i]} — SAR Time: {sar_time[i]} — Epoch {epoch + 1}\n"
                 f"Analysis Rmax = {rmax:.1f} Km — Rmax SAR = {rmax_sar:.1f} km — Predicted Rmax1D = {rmax1d_pred:.1f} Km\n"
@@ -406,25 +312,18 @@ class LogValidationSamples:
 
         print(f"💾 Saved {num} sample images.")
 
-        # -----------------------------------------------------------------
-        # Diagnostics Flow Matching (uniquement sur le set actif)
-        # -----------------------------------------------------------------
         if self.cfg.use_flow_matching:
             os.makedirs(os.path.join(self.output_dir, f"fm_diagnostics_{set}", "rank_hist_and_samples"), exist_ok=True)
             rank_smple_path = os.path.join(self.output_dir, f"fm_diagnostics_{set}", "rank_hist_and_samples")
             print(f"starting fm diagnostics for {set} set")
-
             mean_ph, std_ph = [], []
             check_indices = [len(x) // k for k in [8, 7, 6, 5, 4]]  # indices pour lesquels on sauvegarde les samples et rank histogram
-
             x_fm, sar_fm, mask_fm, infos_fm = x, sar, mask, infos
-
             for i, (x_ir, sar_target, mask_i, infos_i) in enumerate(zip(x_fm, sar_fm, mask_fm, infos_fm)):
                 x_ir = x_ir.unsqueeze(0).to(device)
                 sar_target = torch.from_numpy(np.expand_dims(sar_target, axis=0)).to(device)
                 mask_i = mask_i.unsqueeze(0).to(device)
                 stats = {"mean": self.mean_sar, "std": self.std_sar}
-
                 if not self.cfg.use_residu:
                     ensemble = fm_inf.generate_ensemble(model=model, ir_input=x_ir, n_members=20, device=device)
                 else:
@@ -434,7 +333,6 @@ class LogValidationSamples:
                         residual_mean=resid_stats["mean"],
                         residual_std=resid_stats["std"],
                     )
-
                 if i in check_indices:
                     save_dir_sample = os.path.join(rank_smple_path, f"{cyclone_id[i]}_{sar_time[i]}")
                     os.makedirs(save_dir_sample, exist_ok=True)
@@ -451,16 +349,12 @@ class LogValidationSamples:
                         x_ir, sar_target=sar_target, ensemble=ensemble, stats=stats, mask=mask_i,
                         save_path=None, cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir, save_pic=False,
                     )
-
                 mean_ph.append(ens_mean_phys)
                 std_ph.append(ens_std_phys)
-
             mean_ph = np.array(mean_ph)
             std_ph = np.array(std_ph)
-
             mean_std_dir = os.path.join(self.output_dir, f"fm_diagnostics_{set}", "mean_std_plots")
             os.makedirs(mean_std_dir, exist_ok=True)
-
             distdata.vmax_compare(analysis_vmax, mean_ph * mask_2d, self.output_dir, set=set, epoch=epoch,
                                   y_label="Vmax Mean ensemble fm (m/s)",
                                   output=os.path.join(mean_std_dir, "mean_vmax.png"))
@@ -475,18 +369,12 @@ class LogValidationSamples:
                 distdata.compute_mae_metric(sar_2d, field * mask_2d, output_dir=self.output_dir, set=set,
                                             epoch=epoch, plot=False,
                                             output=os.path.join(mean_std_dir, f"{label}_mae.png"))
-
             sar_flat = sar_2d.flatten()
             mask_flat = mask_2d.flatten()
             valid = mask_flat == 1
             distdata.compare_sar_distribution(sar_flat[valid], mean_ph.flatten()[valid],
                                               self.output_dir, set, epoch,
                                               output=os.path.join(mean_std_dir, "mean_distribution.png"))
-
-
-    # -------------------------------------------------------------------------
-    # plot_fm_diagnostics : diagnostics Flow Matching (IR | target | sample | vélocité)
-    # -------------------------------------------------------------------------
 
     def plot_fm_diagnostics(
         self,
@@ -505,9 +393,6 @@ class LogValidationSamples:
         reg_model=None,
         resid_stats=None,
     ):
-        """
-        Figure de validation rapide : IR | cible SAR | échantillon FM | vélocité à t=0.5.
-        """
         model.eval()
         B = min(x_ir.shape[0], n_rows)
         x_ir = x_ir[:B].to(device)
@@ -534,14 +419,11 @@ class LogValidationSamples:
                 fm_out = fm_inf.reconstruct_from_residual(
                     resid_norm, mean_pred, resid_stats["mean"], resid_stats["std"]
                 )
-
         sar_mean = stats["mean"]
         sar_std = stats["std"]
-
         fig, axes = plt.subplots(B, 4, figsize=(16, 4 * B))
         if B == 1:
             axes = axes[None]
-
         for i in range(B):
             im_ir = x_ir[i, 0].cpu().numpy() * self.std_X[0] + self.mean_X[0]
             im_tgt = sar_tgt[i, 0].cpu().numpy() * sar_std + sar_mean
@@ -551,7 +433,6 @@ class LogValidationSamples:
                 if not self.cfg.use_residu
                 else (resid_norm[i, 0] * sar_std + sar_mean).cpu().numpy()
             )
-
             distdata.plot_ir(im_ir, fig=fig, ax=axes[i, 0], cmap=cmap_ir)
             axes[i, 0].set_title("IR (ch 0)")
             distdata.plot_sar(im_tgt, fig=fig, ax=axes[i, 1], cmap=cmap_sar or "RdBu_r")
@@ -560,21 +441,17 @@ class LogValidationSamples:
             axes[i, 2].set_title("FM sample")
             distdata.plot_sar(im_vel, fig=fig, ax=axes[i, 3], cmap="seismic")
             axes[i, 3].set_title("Velocity @ t=0.5" if not self.cfg.use_residu else "Residu")
-
         for ax in axes.flat:
             ax.axis("off")
         plt.tight_layout()
-
         fm_diag_dir = os.path.join(self.output_dir, f"fm_diagnostics_{set}")
         os.makedirs(fm_diag_dir, exist_ok=True)
         plt.savefig(os.path.join(fm_diag_dir, "fm_diagnostics.png"), dpi=150)
-
         if self.cfg.use_residu:
             for i in range(B):
                 im_ir = x_ir[i, 0].cpu().numpy() * self.std_X[0] + self.mean_X[0]
                 im_tgt = sar_tgt[i, 0].cpu().numpy() * sar_std + sar_mean
                 im_fm = fm_out[i, 0].cpu().numpy() * sar_std + sar_mean
-
                 reg_pred = reg_model(x_ir[i].unsqueeze(0), timestep=0).sample
                 residual_ensemble = fm_inf.generate_residual_ensemble(
                     model, reg_pred, 20,
@@ -582,70 +459,41 @@ class LogValidationSamples:
                     resid_stats["mean"],
                     resid_stats["std"],
                 ).cpu().numpy()
-
                 fig2 = distdata.plot_comparison(im_ir, im_tgt, mask_v[i, 0].cpu().numpy(),
                                                 stats, reg_pred.cpu().numpy(), residual_ensemble)
                 plt.savefig(os.path.join(fm_diag_dir, f"plot_comparison_residual_sample_{i}.png"))
                 plt.close(fig2)
 
-    # -------------------------------------------------------------------------
-    # on_validation_plots : point d'entrée principal du callback
-    #
-    # Règle : code_test=True → set TRAIN / code_test=False → set TEST
-    #         Le set de VALIDATION n'est jamais affiché.
-    # -------------------------------------------------------------------------
-
     def on_validation_plots(self, model, epoch, dataloader, device, reg_model=None, resid_stats=None):
-        """
-        Collecte les données du split actif (train ou test selon cfg.code_test),
-        puis appelle log_batch et les diagnostics FM.
-        """
         print(f"📸 Logging samples at epoch {epoch + 1}")
 
-        # -----------------------------------------------------------------
-        # Collecte du split actif (train OU test, jamais val)
-        # -----------------------------------------------------------------
         all_ir, all_sar, all_mask, all_infos = [], [], [], []
-
-        
-
-
-        # --- mode production : on utilise le test ---
         active_set = "test"
         for ir, sar, mask, inf in dataloader[0]:
             all_ir.append(ir)
             all_sar.append(sar)
             all_mask.append(mask)
             all_infos.append(inf)
-
         ir_full = torch.cat(all_ir, dim=0)
         sar_full = torch.cat(all_sar, dim=0)
         mask_full = torch.cat(all_mask, dim=0)
         infos_full = [d for batch in all_infos for d in batch]
-
         batch_active = (ir_full, sar_full, mask_full, infos_full)
-
-        # Affichage principal du split actif
         self.log_batch(model, batch_active, epoch, device,
                        set=active_set, reg_model=reg_model, resid_stats=resid_stats)
 
-        # -----------------------------------------------------------------
-        # Diagnostics FM + plots Anggrek
-        # -----------------------------------------------------------------
-        if (not self.conditional_model or self.cfg.anggrek_test) and epoch > 0 :
+        if  (not self.conditional_model or self.cfg.anggrek_test) and epoch > 0 :  # 
             ir_anggrek, sar_anggrek, mask_anggrek, infos_anggrek = [], [], [], []
             for ir, sar, mask, inf in dataloader[-1]:
                 ir_anggrek.append(ir)
                 sar_anggrek.append(sar)
                 mask_anggrek.append(mask)
                 infos_anggrek.append(inf)
-
             ir_full_anggrek = torch.cat(ir_anggrek, dim=0)
             sar_full_anggrek = torch.cat(sar_anggrek, dim=0)
             mask_anggrek_full = torch.cat(mask_anggrek, dim=0)
             infos_anggrek_full = [d for batch in infos_anggrek for d in batch]
             batch_anggrek = (ir_full_anggrek, sar_full_anggrek, mask_anggrek_full, infos_anggrek_full)
-
             self.anggrek_plots(model, batch_anggrek, epoch, device,
                                reg_model=reg_model, resid_stats=resid_stats)
             print("finished anggrek plots")
@@ -665,11 +513,10 @@ class LogValidationSamples:
                 reg_model=reg_model,
                 resid_stats=resid_stats,
             )
-            if epoch > 0 and (not self.conditional_model or self.cfg.anggrek_test):
+            if  epoch > 0 and (not self.conditional_model or self.cfg.anggrek_test):
                 self.anggrek_plots(model, batch_anggrek, epoch, device,
                                add_mean_std_fm=True, reg_model=reg_model, resid_stats=resid_stats)
 
-            # ODE avec guidance et reprojection (uniquement sans résidu)
             if not self.cfg.use_residu:
                 ode_guidances, ode_reprojections = [], []
                 loader_idx = 0 
@@ -691,11 +538,8 @@ class LogValidationSamples:
                             obs_mask=mask, num_steps=self.cfg.fm_num_inference_steps,
                         )
                     )
-
                 ode_guidances = torch.cat(ode_guidances, dim=0)
                 ode_reprojections = torch.cat(ode_reprojections, dim=0)
-
-                # On réutilise le batch actif (train ou test)
                 self.log_batch(model,
                                (*batch_active, ode_guidances),
                                epoch, device,
@@ -709,40 +553,14 @@ class LogValidationSamples:
                                ode_pred=True,
                                reg_model=reg_model, resid_stats=resid_stats)
 
-    # -------------------------------------------------------------------------
-    # anggrek_plots : monitoring du cyclone Anggrek
-    # -------------------------------------------------------------------------
 
     def anggrek_plots(
         self, model, batch, epoch, device,
         add_mean_std_fm=False, reg_model=None, resid_stats=None
     ):
-        """
-        Produit :
-          (1) Les champs IR + prédiction par pas de temps (field_plots/).
-          (2) Une courbe de comparaison Vmax au cours du cycle de vie du cyclone.
-        """
         model.eval()
         x, _, _, infos = batch
         x = x.to(device)
-
-        # -----------------------------------------------------------------
-        # Inférence
-        # -----------------------------------------------------------------
-        def denorm(t, mean, std):
-            return t * (std + 1e-10) + mean
-
-        def annular_denormalization(images_norm, stats, bin_size=1):
-            N, H, W = images_norm.shape
-            cx, cy = W // 2, H // 2
-            y, x_idx = np.indices((H, W))
-            radius = np.sqrt((y - cy) ** 2 + (x_idx - cx) ** 2)
-            radial_bins = (radius // bin_size).astype(np.int32)
-            mean, std = stats["mean"], stats["std"]
-            images = images_norm.copy()
-            for b in range(len(mean)):
-                images[:, radial_bins == b] = images[:, radial_bins == b] * std[b] + mean[b]
-            return images
 
         def moment_to_sar(moment):
             assert moment.ndim == 3
@@ -778,9 +596,6 @@ class LogValidationSamples:
                     ).to(device)
                     pred = model(x, timestep=0, cond=shear).sample
 
-        # -----------------------------------------------------------------
-        # Tri temporel
-        # -----------------------------------------------------------------
         sar_time = [d.get("date") for d in infos]
         time_parsed = pd.to_datetime(sar_time, errors="coerce")
         order = np.argsort(time_parsed.values.astype("datetime64[ns]"))
@@ -797,12 +612,12 @@ class LogValidationSamples:
             ir = x_np[:, ch, :, :]
             if self.add_era5:
                 era5 = x_np[:, -1, :, :]
-                era5 = denorm(era5, self.mean_X[-1], self.std_X[-1])
-            ir_den = denorm(ir, self.mean_X[ch], self.std_X[ch])
+                era5 = clbk_func.denorm(era5, self.mean_X[-1], self.std_X[-1])
+            ir_den = clbk_func.denorm(ir, self.mean_X[ch], self.std_X[ch])
             if self.norm == "z_score":
-                pred_den = denorm(pred_np, self.mean_sar, self.std_sar)
+                pred_den = clbk_func.denorm(pred_np, self.mean_sar, self.std_sar)
             elif self.norm == "annular":
-                pred_den = annular_denormalization(pred_np, stats={"mean": self.mean_sar, "std": self.std_sar})
+                pred_den = clbk_func.annular_denormalization(pred_np, stats={"mean": self.mean_sar, "std": self.std_sar})
             else:
                 pred_den = pred_np
 
@@ -862,9 +677,6 @@ class LogValidationSamples:
                 pkl.dump({"mean_fm": mean_ph, "std_fm": std_ph, "time": time_parsed,
                           "ir_norm": x_np, "model": model}, f)
 
-        # -----------------------------------------------------------------
-        # Resampling 2km → 3km (torch, CPU)
-        # -----------------------------------------------------------------
         @torch.no_grad()
         def resample_2km_to_3km_torch(xs):
             resamples = []
@@ -873,7 +685,7 @@ class LogValidationSamples:
                 if x_t.dim() == 2:
                     x_t = x_t.unsqueeze(0).unsqueeze(0)
                 H, W = x_t.shape[-2:]
-                in_res = 4 if self.cfg.downsampling else 2
+                in_res = 2
                 x3 = F.interpolate(x_t, size=(int(H * in_res / 3), int(W * in_res / 3)),
                                    mode="bilinear", align_corners=False)
                 resamples.append(x3.squeeze(0).squeeze(0).cpu().numpy())
@@ -889,9 +701,6 @@ class LogValidationSamples:
             pred_vmax_mean_fm_3m = np.nanmax(mean_fm_3m.reshape(len(mean_ph), -1), axis=1)
             pred_vmax_std_fm_3m = np.nanmax(std_fm_3m.reshape(len(std_ph), -1), axis=1)
 
-        # -----------------------------------------------------------------
-        # Métadonnées
-        # -----------------------------------------------------------------
         vmax = np.array([d.get("vmax", np.nan) for d in infos_ord], dtype=float)
         vmax_cyclobs = np.array([d.get("vmax_cyclobs", np.nan) for d in infos_ord], dtype=float)
         analysis_vmax_cyclobs = np.array([d.get("analysis_vmax_cyclobs", np.nan) for d in infos_ord], dtype=float)
@@ -899,9 +708,6 @@ class LogValidationSamples:
         satcon_vmax = np.array([d.get("satcon_vmax", np.nan) for d in infos_ord], dtype=float)
         era5_vmaxs = np.array([d.get("era5_vmax", np.nan) for d in infos_ord], dtype=float)
 
-        # -----------------------------------------------------------------
-        # Plots des champs (uniquement sans ensemble FM)
-        # -----------------------------------------------------------------
         if not add_mean_std_fm:
             for i in range(B):
                 t = time_parsed[i]
@@ -936,7 +742,7 @@ class LogValidationSamples:
 
                 if self.add_era5:
                     era5_vis = (
-                        annular_denormalization(era5[i:i+1], stats={"mean": self.mean_sar, "std": self.std_sar})[0]
+                        clbk_func.annular_denormalization(era5[i:i+1], stats={"mean": self.mean_sar, "std": self.std_sar})[0]
                         if self.norm == "annular"
                         else era5[i] * self.std_sar + self.mean_sar
                     )
@@ -949,9 +755,6 @@ class LogValidationSamples:
                 fig.savefig(sub / fname, dpi=150)
                 plt.close(fig)
 
-        # -----------------------------------------------------------------
-        # RMSE
-        # -----------------------------------------------------------------
         if not add_mean_std_fm:
             ok = np.isfinite(vmax) & np.isfinite(pred_vmax)
             rmse = float(np.sqrt(np.mean((pred_vmax[ok] - vmax[ok]) ** 2))) if np.any(ok) else np.nan
@@ -959,9 +762,6 @@ class LogValidationSamples:
             ok = np.isfinite(vmax) & np.isfinite(pred_vmax_mean_fm_3m)
             rmse = float(np.sqrt(np.mean((pred_vmax_mean_fm_3m[ok] - vmax[ok]) ** 2))) if np.any(ok) else np.nan
 
-        # -----------------------------------------------------------------
-        # Courbe de vie du cyclone
-        # -----------------------------------------------------------------
         fig, ax = plt.subplots(figsize=(11, 6))
         ax.plot(time_parsed, ibtracs_vmax, color="black", linewidth=2, label="IBTrACS (Best Track)")
         ax.plot(time_parsed, vmax, color="red", linewidth=2, label="ATCF")
@@ -980,18 +780,15 @@ class LogValidationSamples:
                 pred_vmax_mean_fm_3m + pred_vmax_std_fm_3m,
                 color="magenta", alpha=0.10, label="Residual FM ± std",
             )
-
         t_arr = np.array(time_parsed)
         mA = ~np.isnan(analysis_vmax_cyclobs)
         mC = ~np.isnan(vmax_cyclobs)
-
         ax.scatter(t_arr[mA], analysis_vmax_cyclobs[mA], marker="*", s=110,
                    facecolor="#FFD54F", edgecolor="black", linewidths=1.2, alpha=0.95, zorder=10,
                    label="Analysis vmax cyclobs")
         ax.scatter(t_arr[mC], vmax_cyclobs[mC], marker="s", s=55,
                    facecolor="#FF0000", edgecolor="black", linewidths=1.0, alpha=0.95, zorder=9,
                    label="Vmax cyclobs")
-
         handles, _ = ax.get_legend_handles_labels()
         handles += [
             Line2D([0], [0], marker="*", linestyle="None", markerfacecolor="#FFD54F",
@@ -1000,7 +797,6 @@ class LogValidationSamples:
                    markeredgecolor="black", markeredgewidth=1.0, markersize=8, label="Vmax cyclobs"),
         ]
         ax.legend(handles=handles, loc="upper left", frameon=True, framealpha=0.9)
-
         ax.set_title(f"Lifecycle Vmax Comparison - 2024013S10093 — RMSE UNET = {rmse:.2f} m/s")
         ax.set_xlabel("Time")
         ax.set_ylabel("Vmax (m/s)")

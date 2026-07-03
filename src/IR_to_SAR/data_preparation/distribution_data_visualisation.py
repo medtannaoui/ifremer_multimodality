@@ -1,365 +1,28 @@
-"""
-Visualization utilities for IR → SAR data exploration.
-
-This module provides:
-    - Loading IRWIN and SAR tensors from SARGEO CSV
-    - Histogram visualizations (brightness temperature & wind speed)
-    - IR to SAR grid alignment
-    - SAR to IR resolution downsampling
-    - Scatter plots: IR vs SAR (pixel-to-pixel)
-    - Distribution comparison for SAR missing pixels
-
-"""
-
-from fileinput import filename
 import os
 import numpy as np
 import pandas as pd
 import xarray as xr
 import matplotlib.pyplot as plt
-from scipy.ndimage import zoom
 from scipy.stats import gaussian_kde
 from src.visualisation.utils_colormap import CMAP
+from loguru import logger
+import shutil
 
 cmap_ir = CMAP.cira_ir()
 cmap_sar = CMAP.cmap_sar()
 
 
 
-# ============================================================
-# ========================= DATA LOADING ======================
-# ============================================================
-
-def load_ir_sar_values(
-    sargeo_sar_csv_path: str = "/scale/user/mtannaou/alternance/excels/SARGEO_SAR_v1.csv",
-    flatten: bool = False
-):
-    """
-    Loads IR and SAR values for all colocated products listed in SARGEO_SAR CSV.
-
-    Inputs:
-        sargeo_sar_csv_path : path to SARGEO_SAR CSV
-        flatten              : flatten each field, or keep original 2D maps
-
-    Returns:
-        If flatten=True:
-            IR_flat, SAR_flat (1D arrays)
-        Else:
-            IR_list, SAR_list (list of 2D arrays)
-    """
-
-    df = pd.read_csv(sargeo_sar_csv_path)
-
-    # Skip obsolete AEQD data
-    df = df[~df["sar_xy"].str.contains("donnees_sar_changes", na=False)]
-
-    IR_list = []
-    SAR_list = []
-
-    for _, row in df.iterrows():
-
-        sar_path = row["sar_xy"]
-        ir_name  = row["fichier"]
-        cyclone  = row["cyclone"]
-
-        # Build IR file path
-        sargeo_root = "/scale/project/ifremer-isi-jumeaunumerique/SARGEO/prototype/v01r02/cyclobs"
-        ir_path = os.path.join(sargeo_root, cyclone, "IRWIN", ir_name)
-
-        if not isinstance(sar_path, str) or not isinstance(ir_path, str):
-            continue
-
-        try:
-            ds_sar = xr.open_dataset(sar_path)
-            ds_ir  = xr.open_dataset(ir_path)
-
-            # IR in Celsius
-            ir  = (ds_ir["IRWIN"].sel(t_rel=0) - 273.15).values   # (H,W)
-
-            # SAR in knots
-            sar = (ds_sar["owiWindSpeed"].values * 1.94384)        # (H,W)
-
-            if flatten:
-                IR_list.append(ir.flatten())
-                SAR_list.append(sar.flatten())
-            else:
-                IR_list.append(ir)
-                SAR_list.append(sar)
-
-        except Exception as err:
-            print(f"⚠️ Error loading {sar_path}: {err}")
-            continue
-
-    if flatten:
-        return np.concatenate(IR_list), np.concatenate(SAR_list)
-
-    return IR_list, SAR_list
-
-
-# ============================================================
-# =================== HISTOGRAM VISUALIZATION ================
-# ============================================================
-
-def plot_ir_hist(values, ax=None, title=""):
-
-    if ax is None : 
-        
-        ax = plt.gca()
-    """Plots IR brightness temperature distribution (°C)."""
-    
-    ax.hist(values, bins=200, color="gray")
-    ax.set_xlabel("IR Brightness Temperature (°C)")
-    ax.set_ylabel("Count")
-    ax.set_title("Distribution of IR Brightness Temperature "+ str(title))
-    ax.grid(alpha=0.3)
-        
-
-
-def plot_sar_hist(values,ax =None, title=""):
-
-    """Plots SAR wind speed distribution (knots)."""
-    if ax is None : 
-        plt.figure(figsize=(7, 5))
-        ax = plt.gca()
-    ax.hist(values, bins=200, color="steelblue")
-    ax.set_xlabel("SAR Wind Speed (kt)")
-    ax.set_ylabel("Count")
-    ax.set_title("Distribution of SAR Wind Speed "+ str(title))
-    ax.grid(alpha=0.3)
-   
-
-
-# ============================================================
-# ===================== SCATTER IR VS SAR =====================
-# ============================================================
-
-from src.visualisation.utils_colormap import CMAP
-def resize_ir_to_sar(
-    ir_tensor: np.ndarray,
-    max_radius_km: int = 300,
-    sar_resolution_km: float = 0.5,
-    plot: bool = False
-):
-    """
-    Resamples IR image to SAR AEQD grid resolution.
-
-    Inputs:
-        ir_tensor          : (H, W) original IR image
-        max_radius_km      : radius in km to crop (final image spans [-R,+R])
-        sar_resolution_km  : desired SAR resolution (ex: 0.5 km)
-        plot               : show before/after comparison
-
-    Returns:
-        ir_resized    : (H_sar, W_sar) IR resized to match SAR resolution
-    """
-
-    cmap = CMAP.cira_ir()
-
-    # Center and crop the IR image to match SAR diameter (600 km)
-    center_idx = ir_tensor.shape[0] // 2
-    half_size  = max_radius_km // 2
-
-    ir_crop = ir_tensor[
-        center_idx - half_size : center_idx + half_size,
-        center_idx - half_size : center_idx + half_size
-    ]  # shape = (300,300)
-
-    # Compute scaling factor: original ~ 2 km/pixel → target sar_resolution (km/pixel)
-    zoom_factor = 2.0 / sar_resolution_km
-    ir_resized = zoom(ir_crop, zoom=zoom_factor, order=1)   # bilinear interpolation
-
-    # Optional visualization
-    if plot:
-        fig, ax = plt.subplots(1, 2, figsize=(12, 5))
-
-        # Original crop
-        ax[0].set_title("Original IR (cropped)")
-        p0 = ax[0].imshow(ir_crop, cmap=cmap, origin="lower")
-        plt.colorbar(p0, ax=ax[0])
-
-        # Resized IR
-        ax[1].set_title(f"IR resampled: {ir_resized.shape[0]}×{ir_resized.shape[1]} (resolution={sar_resolution_km} km)")
-        p1 = ax[1].imshow(ir_resized, cmap=cmap, origin="lower")
-        plt.colorbar(p1, ax=ax[1])
-
-        plt.tight_layout()
-        plt.show()
-
-    return ir_resized
-
-def scatter_ir_vs_sar(ir_tensor, sar_tensor, max_points=300000):
-    """
-    Pixel-to-pixel scatter plot IR (downsampled) vs SAR (downsampled).
-    Assumes:
-        ir_tensor  : (N,1001,1001)
-        sar_tensor : (N,601,601)
-    """
-                      # 150*2km = 300km
-
-
-    # 2. Downsample SAR (601→300)
-    ir_resampled = resize_ir_to_sar(ir_tensor,max_radius_km=300,sar_resolution_km=1,plot=False)
-
-    # 3. Flatten
-    ir_flat  = ir_resampled.flatten()
-    sar_flat = sar_tensor.flatten()
-
-    # 4. Remove NaNs
-    mask = np.isfinite(ir_flat) & np.isfinite(sar_flat)
-    ir_valid  = ir_flat[mask]
-    sar_valid = sar_flat[mask]
-
-    # Optional subsampling for readability
-    if len(ir_valid) > max_points:
-        idx = np.random.choice(len(ir_valid), max_points, replace=False)
-        ir_valid  = ir_valid[idx]
-        sar_valid = sar_valid[idx]
-
-    # 5. Plot
-    plt.figure(figsize=(7, 7))
-    plt.scatter(ir_valid, sar_valid, s=2, alpha=0.1)
-    plt.xlabel("IR (°C) — downsampled to SAR resolution")
-    plt.ylabel("SAR Wind Speed (kt)")
-    plt.title("IR vs SAR — Pixel-to-Pixel Scatter Plot")
-    plt.grid(alpha=0.3)
-    plt.show()
-
-
-# ============================================================
-# ============= IR DISTRIBUTION FOR SAR MISSING VALUES =======
-# ============================================================
-
-def compare_ir_distributions_sar_nan(ir_tensor, sar_tensor):
-    """
-    Compares IR distribution for pixels where SAR is valid vs SAR is NaN.
-
-    Useful to analyse missing-value patterns.
-    """
-
-    # 1. Crop IR
-    
-    # 2. Downsample SAR
-    ir_resampled = resize_ir_to_sar(ir_tensor,max_radius_km=300,sar_resolution_km=1,plot=False)
-
-    # 3. Flatten
-    ir_flat  = ir_resampled.flatten()
-    sar_flat = sar_tensor.flatten()
-
-    # 4. Masks
-    mask_nan   = np.isnan(sar_flat)
-    mask_valid = np.isfinite(sar_flat)
-
-    ir_nan     = ir_flat[mask_nan]
-    ir_valid   = ir_flat[mask_valid]
-
-    # 5. Plot
-    plt.figure(figsize=(8, 5))
-    plt.hist(ir_valid, bins=100, alpha=0.6, color="green", label="SAR Valid")
-    plt.hist(ir_nan,   bins=100, alpha=0.6, color="red",   label="SAR NaN")
-    plt.xlabel("IR Temperature (°C)")
-    plt.ylabel("Count")
-    plt.title("IR Distributions for SAR Valid vs SAR Missing")
-    plt.legend()
-    plt.grid(alpha=0.3)
-    plt.show()
-
-
-# ============================================================
-# ============= DETECT SAR QUADRANTS =========================
-# ============================================================
-
-def detect_sar_quadrants(sar_tensor):
-    """
-    Detect which quadrants contain valid (non-NaN) SAR data.
-    Assumes domain is centered and shape is (H,W).
-    
-    Returns a numpy array [NW, NE, SW, SE], each 0 or 1.
-    """
-    
-    H, W = sar_tensor.shape
-    center = H // 2
-    
-    # Create a mask of valid pixels (True where data exists)
-    valid = ~np.isnan(sar_tensor)
-
-    quadrants = np.zeros(4, dtype=int)
-
-    # NW: top-left
-    quadrants[0] = np.any(valid[0:center, 0:center])
-
-    # NE: top-right
-    quadrants[1] = np.any(valid[0:center, center:W])
-
-    # SW: bottom-left
-    quadrants[2] = np.any(valid[center:H, 0:center])
-
-    # SE: bottom-right
-    quadrants[3] = np.any(valid[center:H, center:W])
-
-    return quadrants
-
-
-
-
-def plot_quadrant_distribution(sar_tensors, ax=None, title = ""):
-    """
-    Analyzes and visualizes the distribution of valid SAR coverage
-    across the four quadrants (NW, NE, SW, SE) in the dataset.
-    """
-
-    if ax is None:
-        ax = plt.gca()
-
-    quadrant_list = []
-    for tensor in sar_tensors:
-        q = detect_sar_quadrants(tensor)  # returns [NW, NE, SW, SE]
-        quadrant_list.append(q)
-
-    quadrant_array = np.array(quadrant_list)
-    quadrant_counts = quadrant_array.sum(axis=0)
-    total_samples = len(sar_tensors)
-    quadrant_percentages = (quadrant_counts / total_samples) * 100
-
-    labels = ["NW", "NE", "SW", "SE"]
-
-    # --- Print summary in console ---
-    print("\n📊 Quadrant Coverage Distribution:")
-    for i, label in enumerate(labels):
-        print(f"  {label}: {quadrant_counts[i]} samples ({quadrant_percentages[i]:.1f}%)")
-
-    # --- Bar Plot directly on ax ---
-    bars = ax.bar(labels, quadrant_percentages)
-
-    ax.set_title("SAR Coverage Distribution per Quadrant"+ str(title), fontsize=12)
-    ax.set_ylabel("Presence Percentage (%)")
-    ax.set_ylim(0, 100)
-    ax.grid(axis='y', linestyle='--', alpha=0.6)
-
-    # Add text on bars
-    for bar, pct in zip(bars, quadrant_percentages):
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            pct + 1,  # place text slightly above bar
-            f"{pct:.1f}%",
-            ha='center',
-            va='bottom',
-            fontsize=10
-        )
-
-
 def plot_sar(tensor, fig=None, ax=None, cmap=cmap_sar, title=None,
              x_lim=300, x=None, y=None):
-
     if ax is None:
         ax = plt.gca()
-
     if x is None:
         y_sar = np.linspace(-x_lim, x_lim, tensor.shape[0])
         x_sar = np.linspace(-x_lim, x_lim, tensor.shape[1])
         x_sar, y_sar = np.meshgrid(x_sar, y_sar)
     else:
         x_sar, y_sar = x, y   # déjà 2D, pas de meshgrid
-
     im = ax.pcolormesh(
         x_sar,
         y_sar,
@@ -369,25 +32,18 @@ def plot_sar(tensor, fig=None, ax=None, cmap=cmap_sar, title=None,
         vmax=160/1.94384449,
         shading="auto"
     )
-
     if x is None:
         ax.set_xlim(-x_lim, x_lim)
         ax.set_ylim(-x_lim, x_lim)
-
     if title is not None:
         ax.set_title(title)
-
     if fig is not None:
         fig.colorbar(im, ax=ax, orientation="horizontal")
-
     ax.set_aspect("equal")
 
-
-    
 def plot_aam(tensor, fig=None, ax=None,title=None,x_lim=300):
     if ax is None:
         ax = plt.gca()
-    
     x_sar,y_sar = np.linspace(-x_lim,x_lim,tensor.shape[0]) , np.linspace(-x_lim,x_lim,tensor.shape[1])
     im = ax.pcolormesh(x_sar, y_sar, tensor,vmin=-0,vmax=4500)
     ax.set_xlim(-x_lim,x_lim)
@@ -398,22 +54,16 @@ def plot_aam(tensor, fig=None, ax=None,title=None,x_lim=300):
         fig.colorbar(im,ax=ax,orientation="horizontal")
     ax.set_aspect('equal')
 
-
 def plot_ir(tensor, fig=None, x=None, y=None, ax=None, x_lim=300,
             cmap=cmap_ir, vmin=-100, vmax=50):
-
     if ax is None:
         ax = plt.gca()
-
     tensor = np.squeeze(tensor)
     ny, nx = tensor.shape  # ny = rows, nx = cols
-
     if x is None:
         x = np.linspace(-x_lim, x_lim, nx)
-
     if y is None:
         y = np.linspace(-x_lim, x_lim, ny)
-
     im = ax.pcolormesh(
         x, y, tensor,
         cmap=cmap,
@@ -421,48 +71,32 @@ def plot_ir(tensor, fig=None, x=None, y=None, ax=None, x_lim=300,
         vmin=vmin,
         vmax=vmax
     )
-
     ax.set_xlim(-x_lim, x_lim)
     ax.set_ylim(-x_lim, x_lim)
     ax.set_aspect("equal")
-
     if fig is not None:
         fig.colorbar(im, ax=ax, orientation="horizontal")
 
-
-
 def plot_mw(tensor, cmap="cividis", x=None, y=None, ax=None, x_lim=300,fig=None):
-    
     if ax is None:
         ax = plt.gca()
-
     tensor = np.array(tensor)
-
     if x is None:
         x_mw = np.linspace(-300, 300, tensor.shape[1])
         y_mw = np.linspace(-300, 300, tensor.shape[0])
-
         im = ax.pcolormesh(x_mw, y_mw, tensor, cmap=cmap, shading="nearest")
     else:
         im = ax.pcolormesh(x, y, tensor, cmap=cmap, shading="nearest")
-
-
     if fig is not None:
         fig.colorbar(im,ax=ax,orientation="horizontal")
     ax.set_xlim(-x_lim, x_lim)
     ax.set_ylim(-x_lim, x_lim)
     ax.set_aspect('equal')
     
-
 def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False,min=None, max=None, y_label = None, output = None):
-    
-    if set == "train":
-        return None
     title_end = "Categorie_1" if min==19 and max==63 else "Categorie_2" if min==63 and max==83 else "Categorie_3" if min==83 and max==96 else "Categorie_4" if min==96 and max==113 else "Categorie_5" if min==113 else ""
-
     vmax_true = []
     vmax_pred = []
-
     for ana_vmax, sar2 in zip(analysis_vmax, predict_sars):
         if min is None or max is None:
             if ana_vmax is None or np.isnan(ana_vmax):
@@ -472,55 +106,35 @@ def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False
                 continue
         vmax_true.append(ana_vmax)   #m/s
         vmax_pred.append(np.nanmax(sar2)) #m/s
-
     vmax_true = np.array(vmax_true)
     vmax_pred = np.array(vmax_pred)
-
     errors = vmax_pred - vmax_true
     mae = np.nanmean(np.abs(errors))
     rmse = np.sqrt(np.nanmean(errors**2))
     bias = np.nanmean(errors)
-
-    # ---------- Regression ----------
     coef = np.polyfit(vmax_true, vmax_pred, 1)
     x_line = np.array([vmax_true.min(), vmax_true.max()])
     y_line = coef[0] * x_line + coef[1]
-
-    # ---------- Density Coloring ----------
-    
     xy = np.vstack([vmax_true, vmax_pred])
     z = gaussian_kde(xy)(xy)
-
-    # ---------- Figure ----------
     fig, axes = plt.subplots(2, 1, figsize=(6, 9), gridspec_kw={"height_ratios": [3, 1]})
-
     ax = axes[0]
     ax_hist = axes[1]
-
     sc = ax.scatter(vmax_true, vmax_pred, c=z, cmap="viridis", s=20)
     fig.colorbar(sc, ax=ax, label="Density")
-
-    # Perfect line
     ax.plot(x_line, x_line, "r--", lw=2, label="Perfect prediction")
-
-    # Regression line
     ax.plot(x_line, y_line, "b-", lw=2,
             label=f"Regression: y={coef[0]:.2f}x+{coef[1]:.2f}")
-
     ax.set_xlabel(f"Analysis Vmax (m/s)")
     ax.set_ylabel(y_label or "Predicted Vmax (m/s)")
     ax.set_title(f"Vmax Comparison — Epoch {epoch+1} ({set}) {title_end}")
     ax.grid(True, linestyle="--", alpha=0.3)
     ax.legend(loc="lower right")
-
-    # ---------- Error histogram ----------
     ax_hist.hist(errors, bins=40, color="gray", alpha=0.8)
     ax_hist.set_title("Prediction Error Distribution (Pred - Analysis_vmax)")
     ax_hist.set_xlabel("Prediction Error (m/s)")
     ax_hist.set_ylabel("Count")
     ax_hist.grid(True, linestyle="--", alpha=0.3)
-
-    # ---------- Stats box ----------
     textstr = (
         f"MAE  : {mae:.2f} m/s\n"
         f"RMSE : {rmse:.2f} m/s\n"
@@ -528,22 +142,17 @@ def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False
         f"Max analysis vmax : {vmax_true.max():.2f} m/s\n"
         f"Max predicted vmax: {vmax_pred.max():.2f} m/s"
     )
-
     ax.text(0.02, 0.98, textstr,
             transform=ax.transAxes,
             fontsize=11,
             verticalalignment="top",
             bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
-
     plt.tight_layout()
-
     filename = f"Vmax_Comparison_{title_end}.png"
     if output is None:
         os.makedirs(os.path.join(output_dir,"vmax_compare",set),exist_ok=True)
     plt.savefig(output if output is not None else os.path.join(output_dir,"vmax_compare",set, filename), dpi=150)
     plt.close(fig)
-
-
 
 def compare_sar_distribution(sar_knots, pred_knots, output_dir, set, epoch,output=None):
         if set == "train":
@@ -576,102 +185,66 @@ def compare_radial_vmax(
     output=None,
     plot=False
 ):
-    
-    
-    # Shapes
     assert sars_true.shape == sars_predict.shape, "sars_true and sars_predict must have the same shape"
     N, H, W = sars_true.shape
-
     if center is None:
         yc, xc = H // 2, W // 2
     else:
         yc, xc = center
-
     Y, X = np.indices((H, W))
     R = np.sqrt((X - xc)**2 + (Y - yc)**2)
-
     Rmax = int(R.max())
     r_bins = np.arange(0, Rmax + dr, dr)
-
     vmax_r_true = []
     vmax_r_pred = []
     err_of_means = []      # RED
     mean_of_errors = []    # ORANGE
     r_centers = []
-
     for r0 in r_bins[:-1]:
         mask = (R >= r0) & (R < r0 + dr)
         if np.sum(mask) == 0:
             continue
-
-        # Per-sample vmax on the shell (shape: [N])
         vmax_true_per_sample = np.nanmax(sars_true[:, mask], axis=1)
         vmax_pred_per_sample = np.nanmax(sars_predict[:, mask], axis=1)
-
-        # Means (your current approach)
         vmax_true_shell = np.nanmean(vmax_true_per_sample)
         vmax_pred_shell = np.nanmean(vmax_pred_per_sample)
-
         vmax_r_true.append(vmax_true_shell)
         vmax_r_pred.append(vmax_pred_shell)
-
-        # RED: error of means
         err_of_means.append(np.abs(vmax_true_shell - vmax_pred_shell))
-
-        #ORANGE: mean of per-sample absolute errors
         per_sample_abs_err = np.abs(vmax_true_per_sample - vmax_pred_per_sample)
         mean_of_errors.append(np.nanmean(per_sample_abs_err))
-
         r_centers.append(r0 + dr / 2)
-
-    
-
     vmax_r_true     = np.array(vmax_r_true)
     vmax_r_pred     = np.array(vmax_r_pred)
     err_of_means    = np.array(err_of_means)
     mean_of_errors  = np.array(mean_of_errors)
     r_centers       = np.array(r_centers)
-        
-    
-
     vmax1d_true = np.nanmax(vmax_r_true)
     vmax1d_pred = np.nanmax(vmax_r_pred)
-
     rmax1d_true = r_centers[np.nanargmax(vmax_r_true)]
     rmax1d_pred = r_centers[np.nanargmax(vmax_r_pred)]
     r_norm = r_centers /rmax1d_true
     rmax_1d_with_norme = rmax1d_true
     rmax1d_true /= (rmax_1d_with_norme*2)
     rmax1d_pred /= (rmax_1d_with_norme*2)
-
-  
     error = np.abs(vmax_r_true - vmax_r_pred)
-
-  
     plt.figure(figsize=(10, 6))
-
     plt.plot(r_norm, vmax_r_true*1.94384, color="green", linewidth=2, label="Reel SAR Radial Vmax (knots)")
     plt.plot(r_norm, vmax_r_pred*1.94384, color="blue", linewidth=2, label="Predict SAR Radial Vmax (knots)")
     plt.plot(r_norm, err_of_means*1.94384, linestyle="--", linewidth=2,
          label="|Error of means| = |E(true)-E(pred)| (m/s)")
     plt.plot(r_norm, mean_of_errors*1.94384, linestyle="-.", linewidth=2, color="orange",
          label="Mean absolute error = E(|true-pred|) (m/s)")
-
-    # --- Add vertical lines for Rmax
     plt.axvline(rmax1d_true*2, color="green", linestyle="--", linewidth=1.5, label=f"Reel Rmax1D = {rmax1d_true*2:.1f}")
     plt.axvline(rmax1d_pred*2, color="blue", linestyle="--", linewidth=1.5, label=f"Pred Rmax1D = {rmax1d_pred*2:.1f}")
     plt.axhline(vmax1d_true*1.94384, color="green", linestyle="--", linewidth=1.5, label=f"Reel Vmax1D = {vmax1d_true*1.94384:.1f} m/s")
     plt.axhline(vmax1d_pred*1.94384, color="blue", linestyle="--", linewidth=1.5, label=f"Pred Vmax1D = {vmax1d_pred*1.94384:.1f} m/s")
-
     plt.xlabel("Radius R* (R/RMW)", fontsize=14)
     plt.ylabel("Vmax Mean (m/s)", fontsize=14)
     plt.title(f"Radial Vmax Profile — {set} (Epoch {epoch+1})", fontsize=16)
     plt.grid(True, linestyle="--", alpha=0.4)
     plt.legend(fontsize=12)
-
     plt.tight_layout()
-
-    # --- Save
     if not plot:
         os.makedirs(os.path.join(output_dir,"compare_radial_vmax",set),exist_ok=True)
         if output is None:
@@ -685,7 +258,6 @@ def compare_radial_vmax(
     else:
         plt.show()
 
- 
     return {
         "vmax1d_true": float(vmax1d_true),
         "vmax1d_pred": float(vmax1d_pred),
@@ -703,11 +275,7 @@ def compute_mae_metric(sar_true, sar_pred, output_dir, set, epoch, plot=False, o
         return None
     mask = np.isfinite(sar_true)
     mae_global = np.nanmean(np.abs(sar_pred - sar_true))
-
-
-    # =========================
     mae_map = np.nanmean(np.abs(sar_pred - sar_true), axis=0)  # (H, W)
-
     plt.figure(figsize=(6, 5))
     im = plt.imshow(mae_map, cmap="inferno")
     plt.colorbar(im, label="MAE (m/s)")
@@ -721,92 +289,53 @@ def compute_mae_metric(sar_true, sar_pred, output_dir, set, epoch, plot=False, o
         else :
             plt.savefig(output, dpi=150)
         plt.close()
-
-        
     else : 
         plt.show()
 
 
 def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False, min=None, max=None, y_label=None, output=None):
-    """
-    Compare Analysis Rmax vs Predicted Rmax (from SAR prediction).
-
-    analysis_rmax : list or array of Rmax (meters)
-    predict_sars  : (N, H, W) predicted SAR fields in knots
-    """
-
     if set == "train":
         return None
-
     N, H, W = predict_sars.shape
     cx, cy = W // 2, H // 2
-
     Y, X = np.indices((H, W))
     dist_map = np.sqrt((X - cx)**2 + (Y - cy)**2)
-
     rmax_true = []
     rmax_pred = []
     title_end = "Categorie_1" if min==0 and max==30 else "Categorie_2" if min==30 and max==60 else "Categorie_3" if min==60 else ""
-
     for ana_rmax, sar_pred in zip(analysis_rmax, predict_sars):
-        # print(ana_rmax)
         if min is None or max is None:
             if ana_rmax is None or np.isnan(ana_rmax):
                 continue
         else :
             if ana_rmax is None or np.isnan(ana_rmax) or ana_rmax < min*1000 or ana_rmax > max*1000:
                 continue
-        
-        
-        # True Rmax in km
         rmax_true.append(ana_rmax / 1000.0)
-
-        # Predicted Rmax = radius of predicted Vmax
         vmax_p = np.nanmax(sar_pred)
         mask = sar_pred == vmax_p
         rmax_p = np.nanmean(dist_map[mask]) * 2.0  # pixel → km
         rmax_pred.append(rmax_p)
-
     rmax_true = np.array(rmax_true)
     rmax_pred = np.array(rmax_pred)
-
     valid = ~np.isnan(rmax_true) & ~np.isnan(rmax_pred)
     rmax_true = rmax_true[valid]
     rmax_pred = rmax_pred[valid]
-
-    # ----------- METRICS -----------
     errors = rmax_pred - rmax_true
     MAE = np.nanmean(np.abs(errors))
     RMSE = np.sqrt(np.nanmean(errors**2))
     Bias = np.nanmean(errors)
-    # print("taille des rmaxes :          ",len(rmax_true), len(rmax_pred))
     max_true = np.nanmax(rmax_true)
     max_pred = np.nanmax(rmax_pred)
-
-    # ----------- REGRESSION (NEW) -----------
     coef = np.polyfit(rmax_true, rmax_pred, 1)
     x_line = np.array([rmax_true.min(), rmax_true.max()])
     y_line = coef[0] * x_line + coef[1]
-
-    # ----------- DENSITY -----------
     xy = np.vstack([rmax_true, rmax_pred])
     z = gaussian_kde(xy)(xy)
-
-    # ----------- FIGURE -----------
     fig = plt.figure(figsize=(7, 10))
-
-    # =======================
-    # 1) SCATTER + DENSITY
-    # =======================
     ax1 = fig.add_subplot(2, 1, 1)
-
     sc = ax1.scatter(rmax_true, rmax_pred, c=z, cmap="viridis", s=25)
     plt.colorbar(sc, ax=ax1, label="Density")
-
-    # Perfect line y=x
     ax1.plot(x_line, x_line, 'r--', linewidth=2, label="Perfect prediction (y=x)")
-
-    # Regression line (NEW)
     ax1.plot(
         x_line, y_line, 'b-', linewidth=2,
         label=f"Regression: y={coef[0]:.2f}x+{coef[1]:.2f}"
@@ -817,9 +346,6 @@ def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False
     ax1.set_xlabel("Analysis Rmax (km)")
     ax1.set_ylabel(y_label or "Predicted Rmax (km)")
     ax1.grid(True, linestyle="--", alpha=0.4)
-    
-
-    # Metrics box
     textstr = (
         f"MAE : {MAE:.2f} km\n"
         f"RMSE : {RMSE:.2f} km\n"
@@ -834,19 +360,13 @@ def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False
         verticalalignment="top",
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.8)
     )
-
-    # =======================
-    # 2) HISTOGRAM OF ERRORS
-    # =======================
     ax2 = fig.add_subplot(2, 1, 2)
     ax2.hist(errors, bins=30, color="gray", alpha=0.85)
     ax2.set_title("Prediction Error Distribution (Pred - Analysis Rmax)")
     ax2.set_xlabel("Error (km)")
     ax2.set_ylabel("Count")
     ax2.grid(True, linestyle="--", alpha=0.4)
-
     plt.tight_layout()
-
     if plot:
         plt.show()
     else:
@@ -855,7 +375,6 @@ def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False
         out_path = output if output is not None else os.path.join(output_dir,"rmax_compare",set, f"Rmax_Comparison_{set}_{title_end}.png")
         plt.savefig(out_path, dpi=150)
         plt.close()
-
     return {
         "rmax_true": rmax_true,
         "rmax_pred": rmax_pred,
@@ -872,27 +391,19 @@ def plot_comparison(ir_input, sar_target, mask, stats,
                     residual_ensemble,
                     title=""
                     ):
-    """
-    5-panel comparison: IR | SAR | Regression | Direct FM | Residual FM
-    plus uncertainty maps for both FM variants.
-    """
+
     sar_mean = stats["mean"]
     sar_std  = stats["std"]
-
     def denorm(x):
         return x.squeeze() * sar_std + sar_mean
-
     def stdmap(ens):
         return ens.std(0).squeeze() * sar_std  # std scales with std
-
     # Apply mask
     valid_np = (mask.squeeze() > 0) if mask is not None else None
-
     def apply_mask(arr):
         if valid_np is not None:
             return np.where(valid_np, arr, np.nan)
         return arr
-
     tgt_np   = apply_mask(sar_target)
     reg_np   = denorm(reg_pred)
     res_np   = denorm(residual_ensemble.mean(0))
@@ -900,16 +411,113 @@ def plot_comparison(ir_input, sar_target, mask, stats,
     ir_np    = ir_input.squeeze()
 
     fig, axes = plt.subplots(1, 4, figsize=(20, 5))
-
-    # Top row: predictions
     plot_ir(ir_np, fig=fig,ax=axes[0], cmap=cmap_ir);      axes[0].set_title("IR (ch 0)")
-    
     plot_sar(tgt_np, fig=fig,ax=axes[1], cmap=cmap_sar);      axes[1].set_title("SAR target (m/s)")
     plot_sar(reg_np, fig=fig,ax=axes[2], cmap=cmap_sar);      axes[2].set_title("Deterministic regression")
     plot_sar(res_np, fig=fig,ax=axes[3], cmap=cmap_sar);  axes[3].set_title("Residual FM mean")
-
     if title: fig.suptitle(title, fontsize=12)
     plt.tight_layout()
     return fig
 
+def training_completed(cfg, train_loss_history, val_loss_history,pix2pix_loss_history, gradient_loss_history,radial_loss_history,  target_dir):
+    plt.figure()
+    plt.plot(train_loss_history, label="Train Loss")
+    plt.plot(val_loss_history, label="Validation Loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Training and Validation Loss")
+    plt.legend()
+    plot_path = os.path.join(target_dir, "loss_history.png")
+    plt.savefig(plot_path)
+    plt.close()    
+    history_df = pd.DataFrame({
+    "train_loss": train_loss_history,
+    "val_loss": val_loss_history,
+    "pix2pix_history": pix2pix_loss_history,
+    "gradient_loss_history" : gradient_loss_history,
+    "radial_loss_history" : radial_loss_history
+    })
+    csv_path = target_dir / "training_history.csv" 
+    history_df.to_csv(csv_path, index=False)
+    pix_train = [x[0] for x in pix2pix_loss_history]
+    pix_val   = [x[1] for x in pix2pix_loss_history]
+    grad_train = [x[0] for x in gradient_loss_history]
+    grad_val   = [x[1] for x in gradient_loss_history]
+    rad_train = [x[0] for x in radial_loss_history]
+    rad_val   = [x[1] for x in radial_loss_history]
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharex=True)
+    axes[0].plot(pix_train, label="Train")
+    axes[0].plot(pix_val, label="Val")
+    axes[0].set_title("Pix2Pix Loss")
+    axes[0].set_xlabel("Epoch")
+    axes[0].set_ylabel("Loss")
+    axes[0].legend()
+    axes[0].grid(True)
+    axes[1].plot(grad_train, label="Train")
+    axes[1].plot(grad_val, label="Val")
+    axes[1].set_title("Gradient Loss")
+    axes[1].set_xlabel("Epoch")
+    axes[1].legend()
+    axes[1].grid(True)
+    axes[2].plot(rad_train, label="Train")
+    axes[2].plot(rad_val, label="Val")
+    axes[2].set_title("Radial Loss (Vmax)")
+    axes[2].set_xlabel("Epoch")
+    axes[2].legend()
+    axes[2].grid(True)
+    plt.suptitle("Loss Components Evolution", fontsize=14)
+    plt.tight_layout()
+    plot_path = os.path.join(target_dir, "3_losses_history.png")
+    plt.savefig(plot_path)
+    plt.close()
+    logger.info("🎯 Training Complete!")
+    dst_cfg = os.path.join(target_dir, "config.yaml")
+    config_path ="/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/config.yaml"
+    if hasattr(cfg, "config_path") and config_path and os.path.exists(config_path):
+        shutil.copy(config_path, dst_cfg)
+        logger.info(f"📄 Config copied to: {dst_cfg}")
+    else:
+        with open(os.path.join(target_dir, "config_fallback.txt"), "w") as f:
+            for k, v in cfg.__dict__.items():
+                f.write(f"{k}: {v}\n")
+        logger.warning("⚠️ config.yaml path not found, saved config_fallback.txt instead")
 
+
+def plot_metric_scatter(
+    true_values,            # liste ou array des valeurs vraies
+    pred_values,            # liste ou array des valeurs prédites
+    output_path,            # chemin complet fichier .png
+    file_name,
+    title="Metric Comparison",
+    xlabel="True Values",
+    ylabel="Predicted Values",
+    stats_title="Statistics"
+):
+    true_values = np.array(true_values, dtype=float)
+    pred_values = np.array(pred_values, dtype=float)
+    errors = pred_values - true_values
+    mae = np.nanmean(np.abs(errors))
+    rmse = np.sqrt(np.nanmean(errors**2))
+    bias = np.nanmean(errors)
+    textstr = (
+        f"MAE  : {mae:.2f} m\s\n"
+        f"RMSE : {rmse:.2f} m\s\n"
+        f"Bias : {bias:.2f} m\s\n"
+    )
+    plt.figure(figsize=(7, 7))
+    plt.scatter(true_values, pred_values, alpha=0.5, color="#1f77b4", edgecolors="none")
+    min_v = min(true_values.min(), pred_values.min())
+    max_v = max(true_values.max(), pred_values.max())
+    plt.plot([min_v, max_v], [min_v, max_v], "r--", linewidth=2)
+    plt.xlabel(xlabel, fontsize=12)
+    plt.ylabel(ylabel, fontsize=12)
+    plt.title(title, fontsize=14)
+    ax = plt.gca()
+    ax.text(0.02, 0.98, textstr,
+            transform=ax.transAxes,
+            fontsize=11,
+            verticalalignment="top",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.savefig(os.path.join(output_path,file_name+"png"), dpi=150)
+    plt.close()
