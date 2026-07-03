@@ -15,6 +15,9 @@ cmap_sar = CMAP.cmap_sar()
 
 def plot_sar(tensor, fig=None, ax=None, cmap=cmap_sar, title=None,
              x_lim=300, x=None, y=None):
+    
+    if len(tensor.shape) == 3:
+        tensor = tensor.squeeze()
     if ax is None:
         ax = plt.gca()
     if x is None:
@@ -42,6 +45,8 @@ def plot_sar(tensor, fig=None, ax=None, cmap=cmap_sar, title=None,
     ax.set_aspect("equal")
 
 def plot_aam(tensor, fig=None, ax=None,title=None,x_lim=300):
+    if len(tensor.shape) == 3:
+        tensor = tensor.squeeze()
     if ax is None:
         ax = plt.gca()
     x_sar,y_sar = np.linspace(-x_lim,x_lim,tensor.shape[0]) , np.linspace(-x_lim,x_lim,tensor.shape[1])
@@ -56,6 +61,8 @@ def plot_aam(tensor, fig=None, ax=None,title=None,x_lim=300):
 
 def plot_ir(tensor, fig=None, x=None, y=None, ax=None, x_lim=300,
             cmap=cmap_ir, vmin=-100, vmax=50):
+    if len(tensor.shape) == 3:
+        tensor = tensor.squeeze()
     if ax is None:
         ax = plt.gca()
     tensor = np.squeeze(tensor)
@@ -386,7 +393,13 @@ def rmax_compare(analysis_rmax, predict_sars, output_dir, set, epoch, plot=False
 
     
 
-def plot_comparison(ir_input, sar_target, mask, stats,
+def plot_comparison(
+                    clbk,
+                    norm,
+                    ir_input, 
+                    sar_target, 
+                    mask, 
+                    stats,
                     reg_pred,
                     residual_ensemble,
                     title=""
@@ -394,8 +407,7 @@ def plot_comparison(ir_input, sar_target, mask, stats,
 
     sar_mean = stats["mean"]
     sar_std  = stats["std"]
-    def denorm(x):
-        return x.squeeze() * sar_std + sar_mean
+    
     def stdmap(ens):
         return ens.std(0).squeeze() * sar_std  # std scales with std
     # Apply mask
@@ -405,9 +417,14 @@ def plot_comparison(ir_input, sar_target, mask, stats,
             return np.where(valid_np, arr, np.nan)
         return arr
     tgt_np   = apply_mask(sar_target)
-    reg_np   = denorm(reg_pred)
-    res_np   = denorm(residual_ensemble.mean(0))
-    res_std  = stdmap(residual_ensemble)
+    if norm == "z_score":
+        reg_np   = reg_pred*sar_std + sar_mean
+        res_np   = residual_ensemble.mean(0)*sar_std + sar_mean
+    elif norm == "annular":
+        reg_np = clbk.annular_denormalization(reg_pred.squeeze(), stats={"mean":sar_mean, "std": sar_std})
+        res_np = clbk.annular_denormalization(residual_ensemble.mean(0), stats={"mean":sar_mean, "std": sar_std})
+
+    # res_std  = stdmap(residual_ensemble)
     ir_np    = ir_input.squeeze()
 
     fig, axes = plt.subplots(1, 4, figsize=(20, 5))

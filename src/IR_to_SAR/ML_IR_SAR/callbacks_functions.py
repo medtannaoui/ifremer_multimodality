@@ -44,6 +44,9 @@ def denorm(t, mean, std):
     return t * (std + 1e-10) + mean
 
 def annular_denormalization(images_norm, stats, bin_size=1):
+    if len(images_norm.shape) == 2 :
+        w,h  = images_norm.shape
+        images_norm = images_norm.reshape((1,w,h))
     N, H, W = images_norm.shape
     cx, cy = H // 2, W // 2
     y, x_idx = np.indices((H, W))

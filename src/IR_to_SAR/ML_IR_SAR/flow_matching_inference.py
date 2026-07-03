@@ -67,20 +67,12 @@ def generate_ensemble(model, ir_input, n_members=20, num_steps=50, device=None):
     return ensemble   # (n_members, 1, H, W)
 
 def compute_uncertainty_maps(ensemble):
-    """
-    Compute ensemble mean and std.
-
-    Args:
-        ensemble: (n_members, 1, H, W)
-
-    Returns:
-        mean: (1, H, W),  std: (1, H, W)
-    """
     return ensemble.mean(0), ensemble.std(0)
 
 
 
-def plot_ensemble_results(ir_input, sar_target, ensemble, stats, mask=None, save_path=None,cmap_sar=None, cmap_ir=None,save_pic=False,
+def plot_ensemble_results(clbk, norm, ir_input, sar_target, ensemble, stats, mask=None, 
+                          save_path=None,cmap_sar=None, cmap_ir=None,save_pic=False,
                           title=""):
     """
     4-panel figure: IR | SAR target | FM mean | FM uncertainty.
@@ -101,9 +93,12 @@ def plot_ensemble_results(ir_input, sar_target, ensemble, stats, mask=None, save
     ens_mean, ens_std = compute_uncertainty_maps(ensemble)
 
     # Denormalise to physical units (m/s)
-    ens_mean_phys = ens_mean[0].cpu().numpy() * sar_std_stat + sar_mean_stat
-    ens_std_phys  = ens_std[0].cpu().numpy()  * sar_std_stat   # std scales with std
-
+    if norm == "z_score":
+        ens_mean_phys = ens_mean[0].cpu().numpy() * sar_std_stat + sar_mean_stat
+        ens_std_phys  = ens_std[0].cpu().numpy()  * sar_std_stat.mean()   # std scales with std
+    elif norm == "annular" : 
+        ens_mean_phys = clbk.annular_denormalization(ens_mean[0].cpu().numpy(), stats={"mean": sar_mean_stat, "std": sar_std_stat}).squeeze()
+        ens_std_phys  = clbk.annular_denormalization(ens_std[0].cpu().numpy(), stats={"mean": sar_mean_stat, "std": sar_std_stat}).squeeze()
 
     if save_pic :
         n_panels = 4 if sar_target is not None else 3
@@ -119,7 +114,10 @@ def plot_ensemble_results(ir_input, sar_target, ensemble, stats, mask=None, save
                 sar_target = sar_target[0, 0]
             elif sar_target.ndim == 3:
                 sar_target = sar_target[0]
-            sar_phys = sar_target.cpu().numpy() * sar_std_stat + sar_mean_stat
+            if norm == "z_score":
+                sar_phys = sar_target.cpu().numpy() * sar_std_stat + sar_mean_stat
+            elif norm == "annular" : 
+                sar_phys = clbk.annular_denormalization(sar_target.cpu().numpy(), stats={"mean": sar_mean_stat, "std": sar_std_stat})
             if mask is not None:
                 if mask.ndim == 4: mask = mask[0, 0]
                 sar_phys = np.where(mask.cpu().numpy() > 0, sar_phys, np.nan)
@@ -133,7 +131,7 @@ def plot_ensemble_results(ir_input, sar_target, ensemble, stats, mask=None, save
         plt.colorbar(im, ax=axes[panel], fraction=0.046)
         panel += 1
 
-        im = axes[panel].imshow(ens_std_phys, cmap=cmap_sar or "hot",vmin=0,vmax=160/1.94384449)
+        im = axes[panel].imshow(ens_std_phys, cmap="hot")
         axes[panel].set_title("FM uncertainty (std, m/s)")
         plt.colorbar(im, ax=axes[panel], fraction=0.046)
 

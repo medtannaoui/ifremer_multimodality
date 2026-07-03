@@ -252,16 +252,10 @@ class LogValidationSamples:
             os.path.join(self.output_dir, "predictions_denormalisees", set, "predictions_denormalisées.pkl"), "wb"
         ) as f:
             pkl.dump({f"{set}": [ir_np, sar_2d, pred_2d, mask_2d, infos_np], "model": model}, f)
-        if not self.cfg.code_test:
-            for vmin_cat, vmax_cat in zip([19, 63, 83, 96, 113], [63, 83, 96, 113, 200]):
-                distdata.vmax_compare(analysis_vmax, pred_2d * mask_2d, self.output_dir,
-                                        set=set, epoch=epoch, min=vmin_cat, max=vmax_cat)
+        
         distdata.vmax_compare(analysis_vmax, pred_2d * mask_2d, self.output_dir, set=set, epoch=epoch)
 
-        if not self.cfg.code_test:
-            for rmin_cat, rmax_cat in zip([0, 30, 60], [30, 60, 100]):
-                distdata.rmax_compare(analysis_rmax, pred_2d * mask_2d, self.output_dir,
-                                    set=set, epoch=epoch, min=rmin_cat, max=rmax_cat)
+
         distdata.rmax_compare(analysis_rmax, pred_2d * mask_2d, self.output_dir, set=set, epoch=epoch)
 
         distdata.compare_radial_vmax(sar_2d, pred_2d * mask_2d, output_dir=self.output_dir,
@@ -315,28 +309,28 @@ class LogValidationSamples:
         if self.cfg.use_flow_matching:
             os.makedirs(os.path.join(self.output_dir, f"fm_diagnostics_{set}", "rank_hist_and_samples"), exist_ok=True)
             rank_smple_path = os.path.join(self.output_dir, f"fm_diagnostics_{set}", "rank_hist_and_samples")
+
             print(f"starting fm diagnostics for {set} set")
             mean_ph, std_ph = [], []
-            check_indices = [len(x) // k for k in [8, 7, 6, 5, 4]]  # indices pour lesquels on sauvegarde les samples et rank histogram
+            check_indices = [len(x) // k for k in [1,2,3,4]]  # indices pour lesquels on sauvegarde les samples et rank histogram
             x_fm, sar_fm, mask_fm, infos_fm = x, sar, mask, infos
             for i, (x_ir, sar_target, mask_i, infos_i) in enumerate(zip(x_fm, sar_fm, mask_fm, infos_fm)):
                 x_ir = x_ir.unsqueeze(0).to(device)
                 sar_target = torch.from_numpy(np.expand_dims(sar_target, axis=0)).to(device)
                 mask_i = mask_i.unsqueeze(0).to(device)
                 stats = {"mean": self.mean_sar, "std": self.std_sar}
-                if not self.cfg.use_residu:
-                    ensemble = fm_inf.generate_ensemble(model=model, ir_input=x_ir, n_members=20, device=device)
-                else:
-                    mean_pred = reg_model(x_ir, timestep=0).sample
-                    ensemble = fm_inf.generate_residual_ensemble(
-                        model, mean_pred,
-                        residual_mean=resid_stats["mean"],
-                        residual_std=resid_stats["std"],
-                    )
+                
+
+                mean_pred = reg_model(x_ir, timestep=0).sample
+                ensemble = fm_inf.generate_residual_ensemble(
+                    model, mean_pred,
+                    residual_mean=resid_stats["mean"],
+                    residual_std=resid_stats["std"],
+                )
                 if i in check_indices:
                     save_dir_sample = os.path.join(rank_smple_path, f"{cyclone_id[i]}_{sar_time[i]}")
                     os.makedirs(save_dir_sample, exist_ok=True)
-                    ens_mean_phys, ens_std_phys = fm_inf.plot_ensemble_results(
+                    ens_mean_phys, ens_std_phys = fm_inf.plot_ensemble_results(clbk_func,self.cfg.norm,
                         x_ir, sar_target=sar_target, ensemble=ensemble, stats=stats, mask=mask_i,
                         save_path=os.path.join(save_dir_sample, "samples.png"),
                         cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir, save_pic=True,
@@ -345,7 +339,7 @@ class LogValidationSamples:
                     fm_inf.plot_rank_histogram(ranks, n_members=n_members,
                                               save_pth=os.path.join(save_dir_sample, "rank_histogram.png"))
                 else:
-                    ens_mean_phys, ens_std_phys = fm_inf.plot_ensemble_results(
+                    ens_mean_phys, ens_std_phys = fm_inf.plot_ensemble_results(clbk_func,self.cfg.norm,
                         x_ir, sar_target=sar_target, ensemble=ensemble, stats=stats, mask=mask_i,
                         save_path=None, cmap_sar=self.cmap_sar, cmap_ir=self.cmap_ir, save_pic=False,
                     )
@@ -426,13 +420,18 @@ class LogValidationSamples:
             axes = axes[None]
         for i in range(B):
             im_ir = x_ir[i, 0].cpu().numpy() * self.std_X[0] + self.mean_X[0]
-            im_tgt = sar_tgt[i, 0].cpu().numpy() * sar_std + sar_mean
-            im_fm = fm_out[i, 0].cpu().numpy() * sar_std + sar_mean
-            im_vel = (
-                vel05[i, 0].cpu().numpy()
-                if not self.cfg.use_residu
-                else (resid_norm[i, 0] * sar_std + sar_mean).cpu().numpy()
-            )
+            if self.cfg.norm == "z_score" : 
+                im_tgt = sar_tgt[i, 0].cpu().numpy() * sar_std + sar_mean
+                im_fm = fm_out[i, 0].cpu().numpy() * sar_std + sar_mean
+                im_vel = (
+                        vel05[i, 0].cpu().numpy()
+                        if not self.cfg.use_residu
+                        else (resid_norm[i, 0] * sar_std + sar_mean).cpu().numpy()
+                            )
+            elif self.cfg.norm == "annular" : 
+                im_tgt = clbk_func.annular_denormalization(sar_tgt[i, 0].cpu().numpy(), stats={"mean":sar_mean,"std":sar_std})
+                im_fm = clbk_func.annular_denormalization(fm_out[i, 0].cpu().numpy(), stats={"mean":sar_mean,"std":sar_std})
+                im_vel = clbk_func.annular_denormalization(resid_norm[i, 0].cpu().numpy(), stats={"mean":sar_mean,"std":sar_std})
             distdata.plot_ir(im_ir, fig=fig, ax=axes[i, 0], cmap=cmap_ir)
             axes[i, 0].set_title("IR (ch 0)")
             distdata.plot_sar(im_tgt, fig=fig, ax=axes[i, 1], cmap=cmap_sar or "RdBu_r")
@@ -450,8 +449,12 @@ class LogValidationSamples:
         if self.cfg.use_residu:
             for i in range(B):
                 im_ir = x_ir[i, 0].cpu().numpy() * self.std_X[0] + self.mean_X[0]
-                im_tgt = sar_tgt[i, 0].cpu().numpy() * sar_std + sar_mean
-                im_fm = fm_out[i, 0].cpu().numpy() * sar_std + sar_mean
+                if self.cfg.norm == "z_score" : 
+                    im_tgt = sar_tgt[i, 0].cpu().numpy() * sar_std + sar_mean
+                    im_fm = fm_out[i, 0].cpu().numpy() * sar_std + sar_mean
+                elif self.cfg.norm == "annular":
+                    im_tgt = clbk_func.annular_denormalization(sar_tgt[i, 0].cpu().numpy(), stats={"mean": sar_mean, "std": sar_std}).squeeze()
+                    im_fm = clbk_func.annular_denormalization(fm_out[i, 0].cpu().numpy(), stats={"mean": sar_mean, "std": sar_std}).squeeze()
                 reg_pred = reg_model(x_ir[i].unsqueeze(0), timestep=0).sample
                 residual_ensemble = fm_inf.generate_residual_ensemble(
                     model, reg_pred, 20,
@@ -459,7 +462,7 @@ class LogValidationSamples:
                     resid_stats["mean"],
                     resid_stats["std"],
                 ).cpu().numpy()
-                fig2 = distdata.plot_comparison(im_ir, im_tgt, mask_v[i, 0].cpu().numpy(),
+                fig2 = distdata.plot_comparison(clbk_func, self.cfg.norm, im_ir, im_tgt, mask_v[i, 0].cpu().numpy(),
                                                 stats, reg_pred.cpu().numpy(), residual_ensemble)
                 plt.savefig(os.path.join(fm_diag_dir, f"plot_comparison_residual_sample_{i}.png"))
                 plt.close(fig2)
@@ -603,6 +606,7 @@ class LogValidationSamples:
         infos_ord = [infos[i] for i in order]
 
         if not add_mean_std_fm:
+            print("fm diagnostics for anggrek ......")
             x_np = x.detach().cpu().numpy()
             pred_np = pred.detach().squeeze().cpu().numpy() if pred.ndim == 4 else pred.detach().cpu().numpy()
             if pred_np.ndim == 2:
@@ -656,7 +660,7 @@ class LogValidationSamples:
                         residual_mean=resid_stats["mean"],
                         residual_std=resid_stats["std"],
                     )
-                mean_fm, std_fm = fm_inf.plot_ensemble_results(
+                mean_fm, std_fm = fm_inf.plot_ensemble_results(clbk_func,self.cfg.norm,
                     x_fm, sar_target=None, ensemble=ensemble,
                     stats={"mean": self.mean_sar, "std": self.std_sar},
                     mask=None,

@@ -11,9 +11,6 @@ def create_model(
     conditional_model=False,
     in_channels = None
 ):
-    """
-    Creates a UNet2DModel with the specified configuration.
-    """
     if not conditional_model:
         model = UNet2DModel(
             sample_size=cfg.img_size,
@@ -41,20 +38,12 @@ def create_model(
     return model
 
 def create_fm_model_direct(cfg, in_channels_ir):
-    """
-    Create a UNet2DModel for direct flow matching.
-
-    The only difference from the deterministic model:
-      in_channels = in_channels_ir + 1   (extra channel for x_t)
-      out_channels = 1                   (velocity in SAR space)
-    """
     in_channels_fm = in_channels_ir + 1   # x_t (1 ch) + IR (C_ir ch)
     return create_model(
         cfg=cfg,
         conditional_model=False,
         in_channels=in_channels_fm
             )
-
 
 class ConditionalUNet(nn.Module):
     def __init__(self, unet, cond_dim, cross_attention_dim):
@@ -66,7 +55,6 @@ class ConditionalUNet(nn.Module):
             nn.SiLU(),
             nn.Linear(cross_attention_dim*2, cross_attention_dim),
         )
-
     def forward(self, x, timestep, cond):
         cond_embed = self.mlp(cond)      # (B, D)
         cond_embed = cond_embed.unsqueeze(1)  #-B,1,D)
@@ -80,37 +68,22 @@ class ConditionalUNet(nn.Module):
 #Use Residu 
 def load_regression_model(checkpoint_path, cfg, 
                            device = "cpu"):
-    """
-    Load the existing regression model from best_regression_model.pt.
-    Returns it frozen (requires_grad=False).
-    """
     model = create_model(
         in_channels=cfg.in_channels,
         cfg=cfg,
         conditional_model=False,
 
     )
-
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
     state_dict = ckpt.get("model", ckpt)
     model.load_state_dict(state_dict)
-
-    # Freeze all parameters — this model will NOT be trained
     model.eval()
     for p in model.parameters():
         p.requires_grad_(False)
-
     return model.to(device)
 
-def create_fm_residual_model(cfg):
-    """
-    Create FM model for residual learning.
 
-    in_channels = 2:
-      channel 0 = x_t   (noisy normalised residual)
-      channel 1 = mean_prediction  (regression output, the conditioning signal)
-    out_channels = 1: predicted velocity in residual space
-    """
+def create_fm_residual_model(cfg):
     return create_model(
         in_channels=2,         # x_t_resid (1) + mean_pred (1)
         cfg=cfg,
@@ -123,59 +96,29 @@ def apply_random_channel_dropout(
     min_keep_channels=4,
     protect_channels=None,
 ):
-    """
-    Randomly drops input channels for each sample in the batch.
-
-    Args:
-        x: Tensor of shape (B, C, H, W)
-        drop_prob: probability of dropping each channel
-        min_keep_channels: minimum number of channels to keep per sample
-        protect_channels: list of channel indices that must never be dropped
-
-    Returns:
-        x_dropped: Tensor of same shape
-    """
     if drop_prob <= 0.0:
         return x
-
     B, C, H, W = x.shape
     device = x.device
-
     if protect_channels is None:
         protect_channels = []
-
     x_out = x.clone()
-
     for b in range(B):
         keep_mask = torch.ones(C, dtype=torch.bool, device=device)
-
-        # candidate channels that are allowed to be dropped
         droppable = [c for c in range(C) if c not in protect_channels]
-
         if len(droppable) == 0:
             continue
-
         rand_mask = torch.rand(len(droppable), device=device) > drop_prob
-
-        # assign random keep/drop to droppable channels
         for i, c in enumerate(droppable):
             keep_mask[c] = rand_mask[i]
-
-        # enforce protected channels
         for c in protect_channels:
             keep_mask[c] = True
-
-        # ensure enough channels remain
         if keep_mask.sum() < min_keep_channels:
             missing = min_keep_channels - int(keep_mask.sum().item())
-
             dropped_candidates = [c for c in droppable if not keep_mask[c]]
             if len(dropped_candidates) > 0:
                 perm = torch.randperm(len(dropped_candidates), device=device)
                 for idx in perm[:missing]:
                     keep_mask[dropped_candidates[int(idx.item())]] = True
-
-        # zero dropped channels
         x_out[b, ~keep_mask, :, :] = 0.0
-
     return x_out

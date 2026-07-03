@@ -1,7 +1,6 @@
 # This script wil be used to test a simple U-NET for a regression simple (IR -> SAR)
 
 import os
-import gc
 import sys
 
 
@@ -578,7 +577,6 @@ def custom_collate(batch):
 def main(cfg: IR_SAR_Config,test=False):
     cfg.use_residu = cfg.use_residu if cfg.use_flow_matching else False
     cfg.protect_channels = cfg.protect_channels if not cfg.add_era5 else [cfg.in_channels -1 ]
-    cfg.norm = cfg.norm if not cfg.use_flow_matching else "z_score"  # FM models are trained on z-score normalised data for stability
     
     cfg.early_stop_patience = 2 if cfg.code_test else cfg.early_stop_patience
     cfg.batch_size = cfg.batch_size if not cfg.code_test else 8

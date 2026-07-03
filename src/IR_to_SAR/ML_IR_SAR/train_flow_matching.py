@@ -1,5 +1,3 @@
-# This script wil be used to test a simple U-NET for a regression simple (IR -> SAR)
-
 import os
 import sys
 os.chdir("/scale/user/mtannaou/alternance")
@@ -55,8 +53,6 @@ from src.set_seed import set_seed
 set_seed(0)
 
 
-
-
 class IRSARDataset(Dataset):
     """
     Dataset for IR → SAR prediction.
@@ -100,16 +96,28 @@ class PairedDataset(Dataset):
         self.infos[idx]  
     )
 
-def train_one_epoch(fabric, model, dataloader, optimizer, cfg, scheduler=None):
-    model.train()
-    total_loss = 0
-    BIN_EDGES = compute_bin_edges_quantiles(dataloader, device=fabric.device, num_bins=5)
-    BIN_WEIGHTS, BIN_PROBS, BIN_COUNTS = compute_bin_weights_from_loader(
-        train_loader=dataloader, bin_edges=BIN_EDGES, device=fabric.device, alpha=0.5
-    )
-    print("BIN_WEIGHTS:", BIN_WEIGHTS)
-    for x, sar, mask, infos in tqdm(dataloader, desc="Training"):  #infos is a dictionanry
-        x, sar, mask= x.to(fabric.device), sar.to(fabric.device), mask.to(fabric.device)
+
+def train_one_epoch(
+    fabric,
+    fm_model,
+    regression_model,
+    dataloader,
+    optimizer,
+    residual_mean: float,
+    residual_std: float,
+    scheduler=None,
+    scheduler_name=None,
+    cfg=None
+):
+    fm_model.train()
+    regression_model.eval()
+    total_loss = 0.0
+    resid_mean_t = torch.tensor(residual_mean, dtype=torch.float32)
+    resid_std_t  = torch.tensor(residual_std,  dtype=torch.float32)
+    for x, sar, mask, infos in tqdm(dataloader, desc="Resid-FM train", leave=False):
+        x    = x.to(fabric.device)
+        sar  = sar.to(fabric.device)
+        mask = mask.to(fabric.device)
         if cfg.channel_dropout:
                         x = model_ir_sar.apply_random_channel_dropout(
                         x,
@@ -117,86 +125,88 @@ def train_one_epoch(fabric, model, dataloader, optimizer, cfg, scheduler=None):
                         min_keep_channels=cfg.min_keep_channels,
                         protect_channels=getattr(cfg, "protect_channels", None),
                     )
-        if cfg.conditional_model:  
-            shear_infos = torch.stack([
-            torch.as_tensor(d["shear"], dtype=torch.float32)
-                                for d in infos
-                            ]).to(fabric.device)
-        optimizer.zero_grad()
-        if not cfg.conditional_model:
-            pred = model(x, timestep=0).sample  # (B,1,H,W)
-        else:
-            pred = model.forward(x, timestep=0, cond=shear_infos).sample
-        B,H,W = sar.shape
-        sar_valid  = sar.nan_to_num()
-        pred_valid = pred
-        loss, l_pix, l_grad, l_radial = combined_sar_loss(
-                                                        sar_valid, 
-                                                        pred_valid, 
-                                                        mask,
-                                                        w_pix=cfg.w_pix, 
-                                                        w_grad=cfg.w_grad,
-                                                        w_radial=cfg.w_radial,
-                                                        bin_edges=BIN_EDGES,
-                                                        bin_weights=BIN_WEIGHTS,
-                                                        use_weighted_pix=True
-                                                        )
-        if sar_valid.ndim == 3:
-            sar_valid = sar_valid.unsqueeze(1)
+        if sar.ndim == 3:
+            sar  = sar.unsqueeze(1)
         if mask.ndim == 3:
             mask = mask.unsqueeze(1)
+        with torch.no_grad():
+            t0        = torch.zeros(x.shape[0], device=fabric.device)
+            mean_pred = regression_model(x, t0).sample   # (B, 1, H, W)
+        rm = resid_mean_t.to(fabric.device)
+        rs = resid_std_t.to(fabric.device)
 
+        residual = (sar - mean_pred).nan_to_num(0.0)
+        x_1      = (residual - rm) / rs     # normalised residual ∈ ~N(0, 1)
+        B   = x_1.shape[0]
+        z   = torch.randn_like(x_1)
+        t   = torch.rand(B, device=fabric.device)
+        x_t = t.view(-1,1,1,1) * x_1 + (1 - t.view(-1,1,1,1)) * z
+        model_input   = torch.cat([x_t, mean_pred], dim=1)   # (B, 2, H, W)
+
+        optimizer.zero_grad()
+        pred_velocity = fm_model(model_input, t).sample
+        true_velocity = x_1 - z
+        valid = (mask > 0) & sar.isfinite()
+        valid = valid.expand_as(pred_velocity)
+        loss  = F.mse_loss(pred_velocity[valid], true_velocity[valid])
         fabric.backward(loss)
-        fabric.clip_gradients(model, optimizer, max_norm=1.0)
+        fabric.clip_gradients(fm_model, optimizer, max_norm=1.0)
         optimizer.step()
+        if scheduler is not None and scheduler_name == "onecycle":
+            scheduler.step()
         total_loss += loss.item()
-    return total_loss / len(dataloader), l_pix, l_grad, l_radial
+    if scheduler is not None and scheduler_name not in (None, "onecycle"):
+        scheduler.step()
+    return total_loss / max(len(dataloader), 1)
 
-def validate(fabric, model, dataloader, cfg):
-    model.eval()
-    total_loss = 0
-    BIN_EDGES = compute_bin_edges_quantiles(dataloader, device=fabric.device, num_bins=5)
-    BIN_WEIGHTS, BIN_PROBS, BIN_COUNTS = compute_bin_weights_from_loader(
-        train_loader=dataloader, bin_edges=BIN_EDGES, device=fabric.device, alpha=0.5
-    )
+def validate(
+    fabric,
+    fm_model,
+    regression_model,
+    dataloader,
+    residual_mean: float,
+    residual_std: float,
+):
+    fm_model.eval()
+    regression_model.eval()
+    total_loss = 0.0
+    n_batches = 0
+    resid_mean_t = torch.tensor(residual_mean, dtype=torch.float32, device=fabric.device)
+    resid_std_t  = torch.tensor(residual_std, dtype=torch.float32, device=fabric.device)
     with torch.no_grad():
-        for x, sar, mask, infos in tqdm(dataloader, desc="Validating"):
-            x, sar, mask = x.to(fabric.device), sar.to(fabric.device), mask.to(fabric.device)
-            if not cfg.conditional_model:
-                pred = model(x, timestep=0).sample  # (B,1,H,W)
-            else:
-                shear_infos = torch.stack([
-                torch.as_tensor(d["shear"], dtype=torch.float32)
-                                for d in infos
-                            ]).to(fabric.device)
-                pred = model.forward(x, timestep=0, cond=shear_infos).sample
-            B,H,W = sar.shape
-            sar_valid  = sar.nan_to_num()
-            pred_valid = pred
-            loss,l_pix,l_grad,l_radial = combined_sar_loss(sar_valid,
-                                                           pred_valid,
-                                                           mask,
-                                                           w_pix=cfg.w_pix,
-                                                           w_grad= cfg.w_grad,
-                                                           w_radial=cfg.w_radial,
-                                                           bin_edges=BIN_EDGES, 
-                                                           bin_weights=BIN_WEIGHTS,
-                                                           use_weighted_pix=True
-                                                           )
-            if sar_valid.ndim == 3:
-                sar_valid = sar_valid.unsqueeze(1)
+        for x, sar, mask, infos in tqdm(dataloader, desc="Resid-FM val", leave=False):
+            x    = x.to(fabric.device)
+            sar  = sar.to(fabric.device)
+            mask = mask.to(fabric.device)
+            if sar.ndim == 3:
+                sar = sar.unsqueeze(1)
             if mask.ndim == 3:
                 mask = mask.unsqueeze(1)
+            t0 = torch.zeros(x.shape[0], device=fabric.device)
+            mean_pred = regression_model(x, t0).sample   # (B, 1, H, W)
+            residual = (sar - mean_pred).nan_to_num(0.0)
+            x_1 = (residual - resid_mean_t) / resid_std_t
+            B = x_1.shape[0]
+            z = torch.randn_like(x_1)
+            t = torch.rand(B, device=fabric.device)
+            x_t = t.view(-1, 1, 1, 1) * x_1 + (1 - t.view(-1, 1, 1, 1)) * z
+            model_input = torch.cat([x_t, mean_pred], dim=1)   # (B, 2, H, W)
+            pred_velocity = fm_model(model_input, t).sample
+            true_velocity = x_1 - z
+            valid = (mask > 0) & sar.isfinite()
+            valid = valid.expand_as(pred_velocity)
+            loss = F.mse_loss(pred_velocity[valid], true_velocity[valid])
             total_loss += loss.item()
-    return total_loss / len(dataloader), l_pix, l_grad,l_radial
+            n_batches += 1
+    return total_loss / max(n_batches, 1)
 
 
-def main(cfg: config.IR_SAR_Config,test=False):
-    cfg.use_residu = False
-    cfg.use_flow_matching = False
+def main(cfg: config.IR_SAR_Config, test=False):
+    cfg.use_residu = True
+    cfg.use_flow_matching = True
     cfg.protect_channels = cfg.protect_channels if not cfg.add_era5 else [cfg.in_channels -1 ]
-    cfg.early_stop_patience = 2 if cfg.code_test else cfg.early_stop_patience
-    cfg.batch_size = cfg.batch_size if not cfg.code_test else 1
+    cfg.early_stop_patience = 5 if cfg.code_test else cfg.early_stop_patience
+    cfg.batch_size = cfg.batch_size if not cfg.code_test else 8
 
     logger.info(f"Starting training with config:\n{cfg.__dict__}")
     base_dir = Path(cfg.save_dir)
@@ -208,17 +218,25 @@ def main(cfg: config.IR_SAR_Config,test=False):
 
     full_data = IRSARDataset(
                              target_dir = target_dir,
-                             cfg=cfg)
-    
+                             cfg=cfg
+                             )
+        
+    ckpt_filename = (
+                        "best_fm_resid_model.pt" if cfg.use_residu
+                        else "best_fm_model.pt" if cfg.use_flow_matching
+                        else "best_regression_model.pt"
+                    )
     fabric = L.Fabric(
         accelerator=cfg.accelerator,
         devices= cfg.devices,
-        strategy= DDPStrategy(start_method="spawn", process_group_backend="gloo", timeout=timedelta(minutes=120)) if len(cfg.devices) > 1 else "auto",
+        strategy= DDPStrategy(start_method="spawn", process_group_backend="gloo", 
+                              timeout=timedelta(minutes=120)) if len(cfg.devices) > 1 else "auto",
+
         callbacks=[
             callbacks.EarlyStopping(patience=cfg.early_stop_patience, 
                           min_delta=cfg.early_stop_delta),
             callbacks.ModelCheckpoint(cfg.save_dir, 
-                            filename="best_regression_model.pt", 
+                            filename=ckpt_filename, 
                             target_dir= target_dir),
             callbacks.LogValidationSamples(
                 base_dir= cfg.save_dir,
@@ -242,16 +260,11 @@ def main(cfg: config.IR_SAR_Config,test=False):
     fabric.launch(train, cfg, full_data, target_dir)
 
 
-
-
 def train(fabric : L.fabric, cfg: config, full_data, target_dir ):
 
-    # X_all, sar_all = full_data.dataset.X, full_data.dataset.sar
-
-    cfg.in_channels = full_data.dataset.X_train.shape[1]
     stop_training = False
+    cfg.in_channels = full_data.dataset.X_train.shape[1]
 
-    
     train_ds = PairedDataset(*(full_data.dataset.X_train,
                                full_data.dataset.sar_train),
                                full_data.dataset.mask_train, 
@@ -266,22 +279,14 @@ def train(fabric : L.fabric, cfg: config, full_data, target_dir ):
         anggrek_ds   = PairedDataset(*(full_data.dataset.X_anggrek,full_data.dataset.X_anggrek),full_data.dataset.X_anggrek, full_data.dataset.infos_anggrek)
         anggrek_loader = DataLoader(anggrek_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn= dataprep.custom_collate)
 
-    # --- Model & Optimizer & Scheduler ---
-    in_channels = train_ds.X.shape[1] if isinstance(train_ds.X, np.ndarray) else train_ds.X[0].shape[0]
-    
-    model = model_ir_sar.create_model(
-                                    cfg=cfg,
-                                    conditional_model=cfg.conditional_model,
-                                    in_channels=in_channels
-                                    ).to(fabric.device)
-        
+    model = model_ir_sar.create_fm_residual_model(cfg)
     optimizer = torch.optim.AdamW(model.parameters(), 
-                                  lr=cfg.fm_lr if cfg.use_flow_matching else cfg.learning_rate, weight_decay=1e-3
-                                  )   #add regularisation
+                                  lr=cfg.fm_lr, 
+                                  weight_decay=1e-3
+                                  )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 
                                                                T_max=cfg.num_epochs, 
                                                                eta_min=1e-6)
-
     model, optimizer = fabric.setup(model, optimizer)
     if cfg.anggrek_test:
         train_loader, val_loader, test_loader, anggrek_loader = fabric.setup_dataloaders(
@@ -296,42 +301,67 @@ def train(fabric : L.fabric, cfg: config, full_data, target_dir ):
                                                                         val_loader, 
                                                                         test_loader
                                                                         )
-
-    # --- Training Loop ---
     train_loss_history = []
     val_loss_history = []
     pix2pix_loss_history = []
     gradient_loss_history = []
     radial_loss_history = []
+    best_reg_model = None
 
+    best_reg_model = model_ir_sar.load_regression_model(
+                                            cfg.best_regression_model_pt,
+                                            cfg=cfg
+                                            ) 
+    
+    best_reg_model = best_reg_model.to(fabric.device)
+    json_file_name = (
+        f"residual_stats" if not cfg.code_test else "residual_stats_test" 
+    )
+
+    path_resid_stats = (
+        f"{target_dir}/{json_file_name}.json"
+    )
+
+    if os.path.exists(path_resid_stats):
+        resid_stats = dataprep.load_residual_stats(path_resid_stats)
+    else : 
+        stats = dataprep.compute_residual_stats(
+                                        train_loader=train_loader, 
+                                        regression_model=best_reg_model,
+                                        device=fabric.device
+                                        )
+        
+        dataprep.save_residual_stats(stats,
+                            path_resid_stats
+                            )
+        resid_stats  = stats
+    
     for epoch in range(cfg.num_epochs):
         logger.info(f"===== Epoch {epoch+1}/{cfg.num_epochs} =====")
+        train_loss = train_one_epoch(fabric=fabric,
+                                    fm_model=model,
+                                    regression_model=best_reg_model,
+                                    dataloader=train_loader,
+                                    optimizer=optimizer,
+                                    residual_mean=resid_stats["mean"],
+                                    residual_std=resid_stats["std"],
+                                    scheduler=scheduler,
+                                    scheduler_name=cfg.scheduler,
+                                    cfg=cfg
+                                    )
         
-        train_loss,l_pix, l_grad, l_radial = train_one_epoch(
-                                                            fabric, 
-                                                            model, 
-                                                            train_loader, 
-                                                            optimizer, 
-                                                            scheduler=scheduler,
-                                                            cfg = cfg
-                                                            )
+        val_loss = validate(fabric,
+                            model,
+                            best_reg_model,
+                            val_loader,
+                            resid_stats["mean"],
+                            resid_stats["std"]
+                            )
         
-        val_loss, l_pix_val,l_grad_val, l_radial_val = validate(
-                                                                fabric, 
-                                                                model, 
-                                                                val_loader,
-                                                                cfg = cfg
-                                                                )
-            
-        # torch.cuda.empty_cache()
-        # gc.collect()
         train_loss_history.append(train_loss)
         val_loss_history.append(val_loss)
-        pix2pix_loss_history.append((l_pix,l_pix_val))
-        gradient_loss_history.append((l_grad,l_grad_val))
-        radial_loss_history.append((l_radial,l_radial_val))
 
-        scheduler.step()           # epoch-based, no metric
+        scheduler.step()   
 
         fabric.call(
             "on_validation_epoch_end",
@@ -349,53 +379,52 @@ def train(fabric : L.fabric, cfg: config, full_data, target_dir ):
                 model=model,
                 epoch=epoch,
                 dataloader= [test_loader if not cfg.code_test else train_loader, 
-                            anggrek_loader] if cfg.anggrek_test else [test_loader if not cfg.code_test else train_loader],
+                             anggrek_loader] if cfg.anggrek_test 
+                             else [test_loader if not cfg.code_test 
+                             else train_loader],
                 device=fabric.device,
+                reg_model = best_reg_model,
+                resid_stats = resid_stats
             )
             print("----- plots saved")
 
-
         fabric.print(
             f"📊 Epoch {epoch+1}: Train Loss={train_loss:.6f}, "
-            
             f"LR={scheduler.get_last_lr()[0]:.6f}, "
             f"Val Loss={val_loss:.6f},  "
         )
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
-      
         for callback in fabric._callbacks:
             if getattr(callback, "should_stop", False):
                 fabric.print("\n⛔ Early stopping activated — stopping training.")
                 early_stop_epoch = epoch
                 stop_training = True
                 break
-
         if stop_training or epoch == cfg.num_epochs - 1:
-            ckpt_name = "best_regression_model.pt"
+            ckpt_name = (
+                            "best_fm_model.pt"
+                        )
             best_ckpt_path = target_dir / ckpt_name
-
             if best_ckpt_path.exists():
                 fabric.print("✅ Loading best model for final visualization...")
                 ckpt = torch.load(best_ckpt_path, map_location=fabric.device)
                 model.load_state_dict(ckpt["model"])
             else:
                 fabric.print("⚠️ Best checkpoint not found, using last model.")
-
             fabric.print("📸 Final plot using BEST model")
-
             fabric.call(
                 "on_validation_plots",
                 model=model,
                 epoch=epoch,   # dernier epoch
-                dataloader=[test_loader if not cfg.code_test else train_loader, anggrek_loader] if cfg.anggrek_test 
-                            else [test_loader if not cfg.code_test 
-                            else train_loader
-                            ],
-                device=fabric.device
-                                        )
+                dataloader=[test_loader if not cfg.code_test else train_loader, anggrek_loader] if cfg.anggrek_test else [test_loader if not cfg.code_test else train_loader],
+                device=fabric.device,
+                reg_model = best_reg_model,
+                resid_stats = resid_stats
+
+            )
             break
-        
+    
     distdata.training_completed(
                        cfg,
                        train_loss_history, 
@@ -404,11 +433,10 @@ def train(fabric : L.fabric, cfg: config, full_data, target_dir ):
                        gradient_loss_history,
                        radial_loss_history,  
                        target_dir
-                       )       
-
+                       )     
 
 if __name__ == "__main__":
-
+    
     config_path = "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/config.yaml"
     cfg = config.IR_SAR_Config.from_yaml(config_path)
     main(cfg, test=False)
