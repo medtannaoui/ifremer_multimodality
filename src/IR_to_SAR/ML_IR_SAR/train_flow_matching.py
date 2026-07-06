@@ -148,15 +148,14 @@ def train_one_epoch(
         true_velocity = x_1 - z
         valid = (mask > 0) & sar.isfinite()
         valid = valid.expand_as(pred_velocity)
+        if valid.sum() == 0:
+            continue
         loss  = F.mse_loss(pred_velocity[valid], true_velocity[valid])
         fabric.backward(loss)
         fabric.clip_gradients(fm_model, optimizer, max_norm=1.0)
         optimizer.step()
-        if scheduler is not None and scheduler_name == "onecycle":
-            scheduler.step()
-        total_loss += loss.item()
-    if scheduler is not None and scheduler_name not in (None, "onecycle"):
         scheduler.step()
+        total_loss += loss.item()
     return total_loss / max(len(dataloader), 1)
 
 def validate(
@@ -195,6 +194,8 @@ def validate(
             true_velocity = x_1 - z
             valid = (mask > 0) & sar.isfinite()
             valid = valid.expand_as(pred_velocity)
+            if valid.sum() == 0:
+                continue
             loss = F.mse_loss(pred_velocity[valid], true_velocity[valid])
             total_loss += loss.item()
             n_batches += 1
@@ -221,11 +222,8 @@ def main(cfg: config.IR_SAR_Config, test=False):
                              cfg=cfg
                              )
         
-    ckpt_filename = (
-                        "best_fm_resid_model.pt" if cfg.use_residu
-                        else "best_fm_model.pt" if cfg.use_flow_matching
-                        else "best_regression_model.pt"
-                    )
+    ckpt_filename = "best_fm_resid_model.pt"
+
     fabric = L.Fabric(
         accelerator=cfg.accelerator,
         devices= cfg.devices,
@@ -269,15 +267,32 @@ def train(fabric : L.fabric, cfg: config, full_data, target_dir ):
                                full_data.dataset.sar_train),
                                full_data.dataset.mask_train, 
                                full_data.dataset.infos_train)  #X (multi-channel input), SAR target
-    val_ds   = PairedDataset(*(full_data.dataset.X_val,full_data.dataset.sar_val),full_data.dataset.mask_val, full_data.dataset.infos_val)
-    test_ds   = PairedDataset(*(full_data.dataset.X_test,full_data.dataset.sar_test),full_data.dataset.mask_test, full_data.dataset.infos_test)
+    val_ds   = PairedDataset(*(full_data.dataset.X_val,full_data.dataset.sar_val),
+                             full_data.dataset.mask_val, 
+                             full_data.dataset.infos_val)
+    test_ds   = PairedDataset(*(full_data.dataset.X_test,full_data.dataset.sar_test),
+                              full_data.dataset.mask_test, 
+                              full_data.dataset.infos_test)
     
-    val_loader   = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn= dataprep.custom_collate)
-    test_loader = DataLoader(test_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn= dataprep.custom_collate)
-    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, collate_fn= dataprep.custom_collate)
+    val_loader   = DataLoader(val_ds, batch_size=cfg.batch_size, 
+                              shuffle=False, 
+                              collate_fn= dataprep.custom_collate)
+    test_loader = DataLoader(test_ds, 
+                             batch_size=cfg.batch_size, 
+                             shuffle=False, 
+                             collate_fn= dataprep.custom_collate)
+    train_loader = DataLoader(train_ds, 
+                              batch_size=cfg.batch_size, 
+                              shuffle=True, 
+                              collate_fn= dataprep.custom_collate)
     if cfg.anggrek_test:
-        anggrek_ds   = PairedDataset(*(full_data.dataset.X_anggrek,full_data.dataset.X_anggrek),full_data.dataset.X_anggrek, full_data.dataset.infos_anggrek)
-        anggrek_loader = DataLoader(anggrek_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn= dataprep.custom_collate)
+        anggrek_ds   = PairedDataset(*(full_data.dataset.X_anggrek,full_data.dataset.X_anggrek),
+                                     full_data.dataset.X_anggrek, 
+                                     full_data.dataset.infos_anggrek)
+        anggrek_loader = DataLoader(anggrek_ds, 
+                                    batch_size=cfg.batch_size, 
+                                    shuffle=False, 
+                                    collate_fn= dataprep.custom_collate)
 
     model = model_ir_sar.create_fm_residual_model(cfg)
     optimizer = torch.optim.AdamW(model.parameters(), 
@@ -287,7 +302,8 @@ def train(fabric : L.fabric, cfg: config, full_data, target_dir ):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 
                                                                T_max=cfg.num_epochs, 
                                                                eta_min=1e-6)
-    model, optimizer = fabric.setup(model, optimizer)
+    model, optimizer = fabric.setup(model, 
+                                    optimizer)
     if cfg.anggrek_test:
         train_loader, val_loader, test_loader, anggrek_loader = fabric.setup_dataloaders(
                                                                                         train_loader, 
@@ -360,8 +376,6 @@ def train(fabric : L.fabric, cfg: config, full_data, target_dir ):
         
         train_loss_history.append(train_loss)
         val_loss_history.append(val_loss)
-
-        scheduler.step()   
 
         fabric.call(
             "on_validation_epoch_end",
