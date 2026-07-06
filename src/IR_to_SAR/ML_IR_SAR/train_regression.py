@@ -191,220 +191,326 @@ def validate(fabric, model, dataloader, cfg):
     return total_loss / len(dataloader), l_pix, l_grad,l_radial
 
 
-def main(cfg: config.IR_SAR_Config,test=False):
+def main(cfg: config.IR_SAR_Config, test=False):
     cfg.use_residu = False
     cfg.use_flow_matching = False
-    cfg.protect_channels = cfg.protect_channels if not cfg.add_era5 else [cfg.in_channels -1 ]
+    cfg.protect_channels = cfg.protect_channels if not cfg.add_era5 else [cfg.in_channels - 1]
     cfg.early_stop_patience = 2 if cfg.code_test else cfg.early_stop_patience
     cfg.batch_size = cfg.batch_size if not cfg.code_test else 1
 
     logger.info(f"Starting training with config:\n{cfg.__dict__}")
+
     base_dir = Path(cfg.save_dir)
     i = 1
     while (base_dir / f"train_ir_sar_{i}").exists():
         i += 1
+
     target_dir = base_dir / f"train_ir_sar_{i}"
     os.makedirs(target_dir, exist_ok=True)
 
     full_data = IRSARDataset(
-                             target_dir = target_dir,
-                             cfg=cfg)
-    
+        target_dir=target_dir,
+        cfg=cfg
+    )
+
+    if isinstance(cfg.devices, int):
+        n_devices = cfg.devices
+    else:
+        n_devices = len(cfg.devices)
+
     fabric = L.Fabric(
         accelerator=cfg.accelerator,
-        devices= cfg.devices,
-        strategy= DDPStrategy(start_method="spawn", process_group_backend="gloo", timeout=timedelta(minutes=120)) if len(cfg.devices) > 1 else "auto",
-        callbacks=[
-            callbacks.EarlyStopping(patience=cfg.early_stop_patience, 
-                          min_delta=cfg.early_stop_delta),
-            callbacks.ModelCheckpoint(cfg.save_dir, 
-                            filename="best_regression_model.pt", 
-                            target_dir= target_dir),
-            callbacks.LogValidationSamples(
-                base_dir= cfg.save_dir,
-                mean_X=full_data.dataset.mean_X,
-                mean_sar=full_data.dataset.mean_sar,
-                std_X=full_data.dataset.std_X,
-                std_sar=full_data.dataset.std_sar,
-                cmap_ir=cmap_ir,
-                cmap_sar=cmap_sar,   
-                mask_train = full_data.dataset.mask_train,
-                mask_val = full_data.dataset.mask_val,
-                mask_test=full_data.dataset.mask_test,
-                infos_train = full_data.dataset.infos_train,
-                infos_val = full_data.dataset.infos_val,
-                infos_test = full_data.dataset.infos_test,
-                target_dir = target_dir,
-                cfg=cfg
-            )
-        ],
+        devices=cfg.devices,
+        strategy=DDPStrategy(
+            start_method="spawn",
+            process_group_backend="gloo",
+            timeout=timedelta(minutes=120)
+        ) if n_devices > 1 else "auto",
     )
-    fabric.launch(train, cfg, full_data, target_dir)
 
+    fabric.launch(
+        train,
+        cfg,
+        full_data,
+        target_dir
+    )
 
-
-
-def train(fabric : L.fabric, cfg: config, full_data, target_dir ):
-
-    # X_all, sar_all = full_data.dataset.X, full_data.dataset.sar
-
+def train(fabric, cfg, full_data, target_dir):
+    
     cfg.in_channels = full_data.dataset.X_train.shape[1]
-    stop_training = False
 
-    
-    train_ds = PairedDataset(*(full_data.dataset.X_train,
-                               full_data.dataset.sar_train),
-                               full_data.dataset.mask_train, 
-                               full_data.dataset.infos_train)  #X (multi-channel input), SAR target
-    val_ds   = PairedDataset(*(full_data.dataset.X_val,full_data.dataset.sar_val),full_data.dataset.mask_val, full_data.dataset.infos_val)
-    test_ds   = PairedDataset(*(full_data.dataset.X_test,full_data.dataset.sar_test),full_data.dataset.mask_test, full_data.dataset.infos_test)
-    
-    val_loader   = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn= dataprep.custom_collate)
-    test_loader = DataLoader(test_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn= dataprep.custom_collate)
-    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, collate_fn= dataprep.custom_collate)
+    if fabric.is_global_zero:
+        logger.info(f"Running on device: {fabric.device}")
+        logger.info(f"num_epochs = {cfg.num_epochs}")
+        logger.info(f"code_test = {cfg.code_test}")
+        logger.info(f"batch_size = {cfg.batch_size}")
+        logger.info(f"early_stop_patience = {cfg.early_stop_patience}")
+
+    train_ds = PairedDataset(
+        *(full_data.dataset.X_train, full_data.dataset.sar_train),
+        full_data.dataset.mask_train,
+        full_data.dataset.infos_train
+    )
+
+    val_ds = PairedDataset(
+        *(full_data.dataset.X_val, full_data.dataset.sar_val),
+        full_data.dataset.mask_val,
+        full_data.dataset.infos_val
+    )
+
+    test_ds = PairedDataset(
+        *(full_data.dataset.X_test, full_data.dataset.sar_test),
+        full_data.dataset.mask_test,
+        full_data.dataset.infos_test
+    )
+
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=cfg.batch_size,
+        shuffle=True,
+        collate_fn=dataprep.custom_collate
+    )
+
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=cfg.batch_size,
+        shuffle=False,
+        collate_fn=dataprep.custom_collate
+    )
+
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=cfg.batch_size,
+        shuffle=False,
+        collate_fn=dataprep.custom_collate
+    )
+
+    anggrek_loader = None
+
     if cfg.anggrek_test:
-        anggrek_ds   = PairedDataset(*(full_data.dataset.X_anggrek,full_data.dataset.X_anggrek),full_data.dataset.X_anggrek, full_data.dataset.infos_anggrek)
-        anggrek_loader = DataLoader(anggrek_ds, batch_size=cfg.batch_size, shuffle=False, collate_fn= dataprep.custom_collate)
+        anggrek_ds = PairedDataset(
+            *(full_data.dataset.X_anggrek, full_data.dataset.X_anggrek),
+            full_data.dataset.X_anggrek,
+            full_data.dataset.infos_anggrek
+        )
 
-    # --- Model & Optimizer & Scheduler ---
-    in_channels = train_ds.X.shape[1] if isinstance(train_ds.X, np.ndarray) else train_ds.X[0].shape[0]
-    
+        anggrek_loader = DataLoader(
+            anggrek_ds,
+            batch_size=cfg.batch_size,
+            shuffle=False,
+            collate_fn=dataprep.custom_collate
+        )
+
+    in_channels = (
+        train_ds.X.shape[1]
+        if isinstance(train_ds.X, np.ndarray)
+        else train_ds.X[0].shape[0]
+    )
+
     model = model_ir_sar.create_model(
-                                    cfg=cfg,
-                                    conditional_model=cfg.conditional_model,
-                                    in_channels=in_channels
-                                    ).to(fabric.device)
-        
-    optimizer = torch.optim.AdamW(model.parameters(), 
-                                  lr=cfg.fm_lr if cfg.use_flow_matching else cfg.learning_rate, weight_decay=1e-3
-                                  )   #add regularisation
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 
-                                                               T_max=cfg.num_epochs, 
-                                                               eta_min=1e-6)
+        cfg=cfg,
+        conditional_model=cfg.conditional_model,
+        in_channels=in_channels
+    )
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=cfg.fm_lr if cfg.use_flow_matching else cfg.learning_rate,
+        weight_decay=1e-3
+    )
+
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=cfg.num_epochs,
+        eta_min=1e-6
+    )
 
     model, optimizer = fabric.setup(model, optimizer)
+
     if cfg.anggrek_test:
         train_loader, val_loader, test_loader, anggrek_loader = fabric.setup_dataloaders(
-                                                                                        train_loader, 
-                                                                                        val_loader, 
-                                                                                        test_loader, 
-                                                                                        anggrek_loader
-                                                                                )
-    else : 
+            train_loader,
+            val_loader,
+            test_loader,
+            anggrek_loader
+        )
+    else:
         train_loader, val_loader, test_loader = fabric.setup_dataloaders(
-                                                                        train_loader, 
-                                                                        val_loader, 
-                                                                        test_loader
-                                                                        )
+            train_loader,
+            val_loader,
+            test_loader
+        )
 
-    # --- Training Loop ---
     train_loss_history = []
     val_loss_history = []
     pix2pix_loss_history = []
     gradient_loss_history = []
     radial_loss_history = []
 
+    best_val_loss = float("inf")
+    patience_counter = 0
+    stop_training = False
+
+    best_ckpt_path = target_dir / "best_regression_model.pt"
+
+    plot_callback = callbacks.LogValidationSamples(
+        base_dir=cfg.save_dir,
+        mean_X=full_data.dataset.mean_X,
+        mean_sar=full_data.dataset.mean_sar,
+        std_X=full_data.dataset.std_X,
+        std_sar=full_data.dataset.std_sar,
+        cmap_ir=cmap_ir,
+        cmap_sar=cmap_sar,
+        mask_train=full_data.dataset.mask_train,
+        mask_val=full_data.dataset.mask_val,
+        mask_test=full_data.dataset.mask_test,
+        infos_train=full_data.dataset.infos_train,
+        infos_val=full_data.dataset.infos_val,
+        infos_test=full_data.dataset.infos_test,
+        target_dir=target_dir,
+        cfg=cfg
+    )
+
     for epoch in range(cfg.num_epochs):
-        logger.info(f"===== Epoch {epoch+1}/{cfg.num_epochs} =====")
-        
-        train_loss,l_pix, l_grad, l_radial = train_one_epoch(
-                                                            fabric, 
-                                                            model, 
-                                                            train_loader, 
-                                                            optimizer, 
-                                                            scheduler=scheduler,
-                                                            cfg = cfg
-                                                            )
-        
-        val_loss, l_pix_val,l_grad_val, l_radial_val = validate(
-                                                                fabric, 
-                                                                model, 
-                                                                val_loader,
-                                                                cfg = cfg
-                                                                )
-            
-        # torch.cuda.empty_cache()
-        # gc.collect()
+
+        if fabric.is_global_zero:
+            logger.info(f"===== Epoch {epoch + 1}/{cfg.num_epochs} =====")
+
+        train_loss, l_pix, l_grad, l_radial = train_one_epoch(
+            fabric,
+            model,
+            train_loader,
+            optimizer,
+            scheduler=scheduler,
+            cfg=cfg
+        )
+
+        val_loss, l_pix_val, l_grad_val, l_radial_val = validate(
+            fabric,
+            model,
+            val_loader,
+            cfg=cfg
+        )
+
+        scheduler.step()
+
         train_loss_history.append(train_loss)
         val_loss_history.append(val_loss)
-        pix2pix_loss_history.append((l_pix,l_pix_val))
-        gradient_loss_history.append((l_grad,l_grad_val))
-        radial_loss_history.append((l_radial,l_radial_val))
+        pix2pix_loss_history.append((l_pix, l_pix_val))
+        gradient_loss_history.append((l_grad, l_grad_val))
+        radial_loss_history.append((l_radial, l_radial_val))
 
-        scheduler.step()           # epoch-based, no metric
+        if fabric.is_global_zero:
 
-        fabric.call(
-            "on_validation_epoch_end",
-            val_loss=val_loss,
-            epoch=epoch,
-            model=model,
-            fabric=fabric
-        )
-
-        if epoch == 0:
-            fabric.print("📸 Plot at epoch 1")
-
-            fabric.call(
-                "on_validation_plots",
-                model=model,
-                epoch=epoch,
-                dataloader= [test_loader if not cfg.code_test else train_loader, 
-                            anggrek_loader] if cfg.anggrek_test else [test_loader if not cfg.code_test else train_loader],
-                device=fabric.device,
+            fabric.print(
+                f"📊 Epoch {epoch + 1}: "
+                f"Train Loss={train_loss:.6f}, "
+                f"Val Loss={val_loss:.6f}, "
+                f"LR={scheduler.get_last_lr()[0]:.6f}"
             )
-            print("----- plots saved")
 
+            if val_loss < best_val_loss - cfg.early_stop_delta:
+                best_val_loss = val_loss
+                patience_counter = 0
 
-        fabric.print(
-            f"📊 Epoch {epoch+1}: Train Loss={train_loss:.6f}, "
-            
-            f"LR={scheduler.get_last_lr()[0]:.6f}, "
-            f"Val Loss={val_loss:.6f},  "
-        )
-        torch.cuda.empty_cache()
-        torch.cuda.ipc_collect()
-      
-        for callback in fabric._callbacks:
-            if getattr(callback, "should_stop", False):
+                torch.save(
+                    {
+                        "model": model.module.state_dict() if hasattr(model, "module") else model.state_dict(),
+                        "epoch": epoch,
+                        "val_loss": val_loss,
+                        "cfg": cfg.__dict__,
+                    },
+                    best_ckpt_path
+                )
+
+                fabric.print(f"✅ Best regression model saved: val_loss={val_loss:.6f}")
+
+            else:
+                patience_counter += 1
+                fabric.print(
+                    f"Early stopping counter: "
+                    f"{patience_counter}/{cfg.early_stop_patience}"
+                )
+
+            if epoch == 0:
+                fabric.print("📸 Plot at epoch 1")
+
+                plot_callback.on_validation_plots(
+                    model=model,
+                    epoch=epoch,
+                    dataloader=(
+                        [test_loader if not cfg.code_test else train_loader, anggrek_loader]
+                        if cfg.anggrek_test
+                        else [test_loader if not cfg.code_test else train_loader]
+                    ),
+                    device=fabric.device
+                )
+
+                fabric.print("----- plots saved")
+
+            if patience_counter >= cfg.early_stop_patience:
                 fabric.print("\n⛔ Early stopping activated — stopping training.")
-                early_stop_epoch = epoch
                 stop_training = True
-                break
+
+        fabric.barrier()
+
+        stop_tensor = torch.tensor(
+            int(stop_training),
+            device=fabric.device
+        )
+
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            torch.distributed.broadcast(stop_tensor, src=0)
+
+        stop_training = bool(stop_tensor.item())
+
+        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.ipc_collect()
 
         if stop_training or epoch == cfg.num_epochs - 1:
-            ckpt_name = "best_regression_model.pt"
-            best_ckpt_path = target_dir / ckpt_name
 
-            if best_ckpt_path.exists():
-                fabric.print("✅ Loading best model for final visualization...")
-                ckpt = torch.load(best_ckpt_path, map_location=fabric.device)
-                model.load_state_dict(ckpt["model"])
-            else:
-                fabric.print("⚠️ Best checkpoint not found, using last model.")
+            if fabric.is_global_zero:
 
-            fabric.print("📸 Final plot using BEST model")
+                if best_ckpt_path.exists():
+                    fabric.print("✅ Loading best model for final visualization...")
+                    ckpt = torch.load(best_ckpt_path, map_location=fabric.device)
 
-            fabric.call(
-                "on_validation_plots",
-                model=model,
-                epoch=epoch,   # dernier epoch
-                dataloader=[test_loader if not cfg.code_test else train_loader, anggrek_loader] if cfg.anggrek_test 
-                            else [test_loader if not cfg.code_test 
-                            else train_loader
-                            ],
-                device=fabric.device
-                                        )
+                    state_dict = ckpt["model"]
+
+                    if hasattr(model, "module"):
+                        model.module.load_state_dict(state_dict)
+                    else:
+                        model.load_state_dict(state_dict)
+
+                else:
+                    fabric.print("⚠️ Best checkpoint not found, using last model.")
+
+                fabric.print("📸 Final plot using BEST model")
+
+                plot_callback.on_validation_plots(
+                    model=model,
+                    epoch=epoch,
+                    dataloader=(
+                        [test_loader if not cfg.code_test else train_loader, anggrek_loader]
+                        if cfg.anggrek_test
+                        else [test_loader if not cfg.code_test else train_loader]
+                    ),
+                    device=fabric.device
+                )
+
+                distdata.training_completed(
+                    cfg,
+                    train_loss_history,
+                    val_loss_history,
+                    pix2pix_loss_history,
+                    gradient_loss_history,
+                    radial_loss_history,
+                    target_dir
+                )
+
+            fabric.barrier()
             break
-        
-    distdata.training_completed(
-                       cfg,
-                       train_loss_history, 
-                       val_loss_history,
-                       pix2pix_loss_history, 
-                       gradient_loss_history,
-                       radial_loss_history,  
-                       target_dir
-                       )       
 
 
 if __name__ == "__main__":
