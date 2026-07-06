@@ -62,8 +62,8 @@ tmp*/
 *tmp*
 *history*
 *.save*
-# *.yaml*
-# config.yaml
+*.yaml*
+config.yaml
 first_test/
 combined_loss
 training_results
