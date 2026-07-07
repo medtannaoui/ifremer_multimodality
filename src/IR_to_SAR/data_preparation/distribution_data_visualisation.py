@@ -451,7 +451,7 @@ def training_completed(cfg, train_loss_history, val_loss_history,pix2pix_loss_hi
     "train_loss": train_loss_history,
     "val_loss": val_loss_history,
     "pix2pix_history": pix2pix_loss_history,
-    "gradient_loss_history" : gradient_loss_history,
+    #"gradient_loss_history" : gradient_loss_history,
     "radial_loss_history" : radial_loss_history
     })
     csv_path = target_dir / "training_history.csv" 

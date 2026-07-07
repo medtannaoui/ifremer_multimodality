@@ -154,7 +154,6 @@ def train_one_epoch(
         fabric.backward(loss)
         fabric.clip_gradients(fm_model, optimizer, max_norm=1.0)
         optimizer.step()
-        scheduler.step()
         total_loss += loss.item()
     return total_loss / max(len(dataloader), 1)
 
@@ -432,6 +431,8 @@ def train(fabric, cfg, full_data, target_dir, train_loader, val_loader, test_loa
             resid_stats["mean"],
             resid_stats["std"]
         )
+
+        scheduler.step()
 
         train_loss_history.append(train_loss)
         val_loss_history.append(val_loss)
