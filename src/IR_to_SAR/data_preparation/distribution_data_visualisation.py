@@ -132,7 +132,7 @@ def vmax_compare(analysis_vmax, predict_sars, output_dir, set, epoch, plot=False
     ax.plot(x_line, x_line, "r--", lw=2, label="Perfect prediction")
     ax.plot(x_line, y_line, "b-", lw=2,
             label=f"Regression: y={coef[0]:.2f}x+{coef[1]:.2f}")
-    ax.set_xlabel(f"Analysis Vmax (m/s)")
+    ax.set_xlabel(f"Analysis Vmax (cyclobs) (m/s)")
     ax.set_ylabel(y_label or "Predicted Vmax (m/s)")
     ax.set_title(f"Vmax Comparison — Epoch {epoch+1} ({set}) {title_end}")
     ax.grid(True, linestyle="--", alpha=0.3)
@@ -165,8 +165,8 @@ def compare_sar_distribution(sar_knots, pred_knots, output_dir, set, epoch,outpu
         if set == "train":
             return None
         plt.figure(figsize=(8, 6))
-        plt.hist(sar_knots, bins=60, alpha=0.5, density=False, label="True SAR", color="blue")
-        plt.hist(pred_knots, bins=60, alpha=0.5, density=False, label="Predicted SAR", color="orange")
+        plt.hist(sar_knots, bins=60, alpha=0.5, density=False, label="SAR Data Observation", color="blue")
+        plt.hist(pred_knots, bins=60, alpha=0.5, density=False, label="Model Reconstruction", color="orange")
         plt.legend()
         plt.xlabel("Wind Speed (m/s)")
         plt.ylabel("Count")
@@ -236,16 +236,16 @@ def compare_radial_vmax(
     rmax1d_pred /= (rmax_1d_with_norme*2)
     error = np.abs(vmax_r_true - vmax_r_pred)
     plt.figure(figsize=(10, 6))
-    plt.plot(r_norm, vmax_r_true*1.94384, color="green", linewidth=2, label="Reel SAR Radial Vmax (knots)")
-    plt.plot(r_norm, vmax_r_pred*1.94384, color="blue", linewidth=2, label="Predict SAR Radial Vmax (knots)")
+    plt.plot(r_norm, vmax_r_true*1.94384, color="green", linewidth=2, label="SAR Obs Radial Vmax (knots)")
+    plt.plot(r_norm, vmax_r_pred*1.94384, color="blue", linewidth=2, label="Reconstruction Radial Vmax (knots)")
     plt.plot(r_norm, err_of_means*1.94384, linestyle="--", linewidth=2,
          label="|Error of means| = |E(true)-E(pred)| (m/s)")
     plt.plot(r_norm, mean_of_errors*1.94384, linestyle="-.", linewidth=2, color="orange",
          label="Mean absolute error = E(|true-pred|) (m/s)")
-    plt.axvline(rmax1d_true*2, color="green", linestyle="--", linewidth=1.5, label=f"Reel Rmax1D = {rmax1d_true*2:.1f}")
-    plt.axvline(rmax1d_pred*2, color="blue", linestyle="--", linewidth=1.5, label=f"Pred Rmax1D = {rmax1d_pred*2:.1f}")
-    plt.axhline(vmax1d_true*1.94384, color="green", linestyle="--", linewidth=1.5, label=f"Reel Vmax1D = {vmax1d_true*1.94384:.1f} m/s")
-    plt.axhline(vmax1d_pred*1.94384, color="blue", linestyle="--", linewidth=1.5, label=f"Pred Vmax1D = {vmax1d_pred*1.94384:.1f} m/s")
+    plt.axvline(rmax1d_true*2, color="green", linestyle="--", linewidth=1.5, label=f"SAR Obs Rmax1D = {rmax1d_true*2:.1f}")
+    plt.axvline(rmax1d_pred*2, color="blue", linestyle="--", linewidth=1.5, label=f"Reconstruction Rmax1D = {rmax1d_pred*2:.1f}")
+    plt.axhline(vmax1d_true*1.94384, color="green", linestyle="--", linewidth=1.5, label=f"SAR Obs Vmax1D = {vmax1d_true*1.94384:.1f} m/s")
+    plt.axhline(vmax1d_pred*1.94384, color="blue", linestyle="--", linewidth=1.5, label=f"Reconstruction Vmax1D = {vmax1d_pred*1.94384:.1f} m/s")
     plt.xlabel("Radius R* (R/RMW)", fontsize=14)
     plt.ylabel("Vmax Mean (m/s)", fontsize=14)
     plt.title(f"Radial Vmax Profile — {set} (Epoch {epoch+1})", fontsize=16)
