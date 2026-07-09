@@ -73,9 +73,9 @@ class PrepareDataSet:
             irar = pd.read_csv("/scale/user/mtannaou/alternance/mnt/csvs_finaux/IRAR.csv")
             irar["date_irar"] = pd.to_datetime(irar["date_irar"])
 
-            train_df = data[data["set"] == "train"][:5 if self.cfg.code_test else None]
-            val_df = data[data["set"] == "val"][:5 if self.cfg.code_test else None]
-            test_df = data[data["set"] == "test"][:5 if self.cfg.code_test else None]
+            train_df = data[data["set"] == "train"][:100 if self.cfg.code_test else None]
+            val_df = data[data["set"] == "val"][:20 if self.cfg.code_test else None]
+            test_df = data[data["set"] == "test"][:10 if self.cfg.code_test else None]
 
             ## Train generating
             for df, name in zip([train_df, val_df, test_df], ["Train", "Val", "Test"]):
@@ -86,21 +86,29 @@ class PrepareDataSet:
                     path_l2 = row["L2M path"]
                     date_irar = datetime.strptime(os.path.basename(path_irar).split("_s")[-1].split("_")[0], "%Y%m%d%H%M%S")
 
-                    sequence_path_plus =  []
+                    sequence_path_plus = []
                     sequence_path_moins = []
+                    valid_sequence = True
+                    index_par = range(1, 5)   # sargeo frequenc (range(1, 5))
 
-                    for i in range(1,6):
-                        date_i = date_irar + timedelta(hours=i)
-                        date_j = date_irar - timedelta(hours=i)
-                        
-                        sub_i = irar[(irar["date_irar"]==date_i) & (irar["cyclone_id"] == cyclone_id)]
-                        sub_j = irar[(irar["date_irar"]==date_j) & (irar["cyclone_id"] == cyclone_id)]
+                    for i in index_par:
+                        date_i = date_irar + timedelta(minutes=i*30 if len(index_par)==4 else i*60)
+                        date_j = date_irar - timedelta(minutes=i*30 if len(index_par)==4 else i*60)
+
+                        sub_i = irar[(irar["date_irar"] == date_i) & (irar["cyclone_id"] == cyclone_id)]
+                        sub_j = irar[(irar["date_irar"] == date_j) & (irar["cyclone_id"] == cyclone_id)]
+
+                        if len(sub_i) == 0 or len(sub_j) == 0:
+                            valid_sequence = False
+                            break
 
                         sequence_path_plus.append(sub_i["path_nc"].values[0])
                         sequence_path_moins.append(sub_j["path_nc"].values[0])
-                    
-                    train_seq_paths = sequence_path_moins + [path_irar] + sequence_path_plus
 
+                    if not valid_sequence:
+                        continue
+
+                    train_seq_paths = sequence_path_moins + [path_irar] + sequence_path_plus
                     irs = []
                     winds = []
                     valide = 0
@@ -110,7 +118,7 @@ class PrepareDataSet:
                                 # ds = dataprep.build_storm_centered_dataset(ds)
 
                                 irs.append(ds["ir_aeqd"].values)   # (501,501) dxy = 2
-                                if "aeqd" in path :
+                                if j == int(len(train_seq_paths)//2) :
                                     winds.append(ds["wind_aeqd"].values)  # (501,501) dxy = 2
                                 
                                 valide += 1
@@ -118,26 +126,26 @@ class PrepareDataSet:
                                 print(f"Error loading {path}: {e}")
                                 break
                     
-                    if valide == 11:
-                        # if itr in [0,1,2,3]:
-                        #     print(f"IR shape : {np.array(irs).shape} ; SAR shape : {np.array(winds).shape}")
-                        
+                    if valide == len(train_seq_paths):                       
                         if name == "Train":
-                            irwin_train.append(irs)
-                            sar_train.append(winds)
+                            irwin_train.append(np.stack(irs))
+                            sar_train.append(np.stack(winds))
                             infos_train.append({k: row[k] for k in keys})
+
                         elif name == "Val":
-                            irwin_val.append(irs)
-                            sar_val.append(winds)
+                            irwin_val.append(np.stack(irs))
+                            sar_val.append(np.stack(winds))
                             infos_val.append({k: row[k] for k in keys})
+
                         elif name == "Test":
-                            irwin_test.append(irs)
-                            sar_test.append(winds)
+                            irwin_test.append(np.stack(irs))
+                            sar_test.append(np.stack(winds))
                             infos_test.append({k: row[k] for k in keys})
 
 
         ## Utilisation de sargeo avec une fenetre temporelle de 4h maximum avec 9 channels
         else :
+            index_par = range(0, self.cfg.irwin_channels)
             if not cfg.conditional_model:
                 
                 data = pd.read_csv(
@@ -278,7 +286,7 @@ class PrepareDataSet:
                 paths = [
                         dataprep.shift_ir_path(ir_path, 
                                                 idx=i, 
-                                                step_minutes=60 if self.cfg.irar else 30) 
+                                                step_minutes=30 if len(index_par) ==4 else 60) 
                                                 for i in indices
                         ]
 
@@ -351,8 +359,8 @@ class PrepareDataSet:
                         )
                         era5_anggrek.append(reg_era5)
         
-        self.X_train = np.array(irwin_train) ; self.X_val = np.array(irwin_val) ; self.X_test = np.array(irwin_test)
-        self.sar_train = np.array(sar_train).squeeze() ; self.sar_val = np.array(sar_val).squeeze() ; self.sar_test = np.array(sar_test).squeeze()
+        self.X_train = np.stack(irwin_train); self.X_val = np.stack(irwin_val); self.X_test = np.stack(irwin_test)
+        self.sar_train = np.stack(sar_train).squeeze(); self.sar_val = np.stack(sar_val).squeeze(); self.sar_test = np.stack(sar_test).squeeze()
         self.infos_train = np.array(infos_train) ; self.infos_val = np.array(infos_val) ; self.infos_test = np.array(infos_test)
         if self.cfg.anggrek_test:
             self.X_anggrek = np.array(irwin_anggrek) ; self.infos_anggrek = np.array(infos_anggrek)
@@ -383,7 +391,7 @@ class PrepareDataSet:
         self.sar_val = self.sar_val[:, W//2 - size//2 : W//2 + size//2, H//2 - size//2 : H//2 + size//2]
         self.sar_test = self.sar_test[:, W//2 - size//2 :  W//2 + size//2, H//2 - size//2 : H//2 + size//2]
 
-        print(f"After cropping : irwin_train shape : {self.X_train.shape} ; sar_train shape : {self.sar_train.shape}")
+        print(f"After Data resize : irwin_train shape : {self.X_train.shape} ; sar_train shape : {self.sar_train.shape}")
 
         ## conversion Kelvin -> Celsius
         self.X_train = self.X_train - 273.15 ; self.X_val = self.X_val - 273.15 ; self.X_test = self.X_test - 273.15
@@ -469,9 +477,4 @@ class PrepareDataSet:
                 f,
             )
         
-
         print("Data Preparation finished.")
-
-
-
-

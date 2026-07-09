@@ -102,93 +102,170 @@ class PairedDataset(Dataset):
 
 def train_one_epoch(fabric, model, dataloader, optimizer, cfg, scheduler=None):
     model.train()
-    total_loss = 0
-    BIN_EDGES = compute_bin_edges_quantiles(dataloader, device=fabric.device, num_bins=5)
-    BIN_WEIGHTS, BIN_PROBS, BIN_COUNTS = compute_bin_weights_from_loader(
-        train_loader=dataloader, bin_edges=BIN_EDGES, device=fabric.device, alpha=0.5
+
+    total_loss = 0.0
+    total_l_pix = 0.0
+    total_l_grad = 0.0
+    total_l_radial = 0.0
+
+    BIN_EDGES = compute_bin_edges_quantiles(
+        dataloader,
+        device=fabric.device,
+        num_bins=5
     )
-    print("BIN_WEIGHTS:", BIN_WEIGHTS)
-    for x, sar, mask, infos in tqdm(dataloader, desc="Training"):  #infos is a dictionanry
-        x, sar, mask= x.to(fabric.device), sar.to(fabric.device), mask.to(fabric.device)
+
+    BIN_WEIGHTS, BIN_PROBS, BIN_COUNTS = compute_bin_weights_from_loader(
+        train_loader=dataloader,
+        bin_edges=BIN_EDGES,
+        device=fabric.device,
+        alpha=0.5
+    )
+
+    for x, sar, mask, infos in tqdm(dataloader, desc="Training"):
+        x = x.to(fabric.device)
+        sar = sar.to(fabric.device)
+        mask = mask.to(fabric.device)
+
         if cfg.channel_dropout:
-                        x = model_ir_sar.apply_random_channel_dropout(
-                        x,
-                        drop_prob=cfg.channel_drop_prob,
-                        min_keep_channels=cfg.min_keep_channels,
-                        protect_channels=getattr(cfg, "protect_channels", None),
-                    )
-        if cfg.conditional_model:  
+            x = model_ir_sar.apply_random_channel_dropout(
+                x,
+                drop_prob=cfg.channel_drop_prob,
+                min_keep_channels=cfg.min_keep_channels,
+                protect_channels=getattr(cfg, "protect_channels", None),
+            )
+
+        if cfg.conditional_model:
             shear_infos = torch.stack([
-            torch.as_tensor(d["shear"], dtype=torch.float32)
-                                for d in infos
-                            ]).to(fabric.device)
+                torch.as_tensor(d["shear"], dtype=torch.float32)
+                for d in infos
+            ]).to(fabric.device)
+
         optimizer.zero_grad()
+
         if not cfg.conditional_model:
-            pred = model(x, timestep=0).sample  # (B,1,H,W)
+            pred = model(x, timestep=0).sample
         else:
             pred = model.forward(x, timestep=0, cond=shear_infos).sample
-        B,H,W = sar.shape
-        sar_valid  = sar.nan_to_num()
+
+        sar_valid = sar.nan_to_num()
         pred_valid = pred
+
         loss, l_pix, l_grad, l_radial = combined_sar_loss(
-                                                        sar_valid, 
-                                                        pred_valid, 
-                                                        mask,
-                                                        w_pix=cfg.w_pix, 
-                                                        w_grad=cfg.w_grad,
-                                                        w_radial=cfg.w_radial,
-                                                        bin_edges=BIN_EDGES,
-                                                        bin_weights=BIN_WEIGHTS,
-                                                        use_weighted_pix=True
-                                                        )
-        if sar_valid.ndim == 3:
-            sar_valid = sar_valid.unsqueeze(1)
-        if mask.ndim == 3:
-            mask = mask.unsqueeze(1)
+            sar_valid,
+            pred_valid,
+            mask,
+            w_pix=cfg.w_pix,
+            w_grad=cfg.w_grad,
+            w_radial=cfg.w_radial,
+            bin_edges=BIN_EDGES,
+            bin_weights=BIN_WEIGHTS,
+            use_weighted_pix=True
+        )
 
         fabric.backward(loss)
         fabric.clip_gradients(model, optimizer, max_norm=1.0)
         optimizer.step()
-        total_loss += loss.item()
-    return total_loss / len(dataloader), l_pix, l_grad, l_radial
+
+        total_loss += float(loss.detach().item())
+        total_l_pix += float(l_pix)
+        total_l_grad += float(l_grad)
+        total_l_radial += float(l_radial)
+
+    n_batches = len(dataloader)
+
+    train_loss = torch.tensor(total_loss / n_batches, device=fabric.device)
+    avg_l_pix = torch.tensor(total_l_pix / n_batches, device=fabric.device)
+    avg_l_grad = torch.tensor(total_l_grad / n_batches, device=fabric.device)
+    avg_l_radial = torch.tensor(total_l_radial / n_batches, device=fabric.device)
+
+    train_loss = fabric.all_reduce(train_loss, reduce_op="mean")
+    avg_l_pix = fabric.all_reduce(avg_l_pix, reduce_op="mean")
+    avg_l_grad = fabric.all_reduce(avg_l_grad, reduce_op="mean")
+    avg_l_radial = fabric.all_reduce(avg_l_radial, reduce_op="mean")
+
+    return (
+        train_loss.item(),
+        avg_l_pix.item(),
+        avg_l_grad.item(),
+        avg_l_radial.item()
+    )
 
 def validate(fabric, model, dataloader, cfg):
     model.eval()
-    total_loss = 0
-    BIN_EDGES = compute_bin_edges_quantiles(dataloader, device=fabric.device, num_bins=5)
-    BIN_WEIGHTS, BIN_PROBS, BIN_COUNTS = compute_bin_weights_from_loader(
-        train_loader=dataloader, bin_edges=BIN_EDGES, device=fabric.device, alpha=0.5
+
+    total_loss = 0.0
+    total_l_pix = 0.0
+    total_l_grad = 0.0
+    total_l_radial = 0.0
+
+    BIN_EDGES = compute_bin_edges_quantiles(
+        dataloader,
+        device=fabric.device,
+        num_bins=5
     )
+
+    BIN_WEIGHTS, BIN_PROBS, BIN_COUNTS = compute_bin_weights_from_loader(
+        train_loader=dataloader,
+        bin_edges=BIN_EDGES,
+        device=fabric.device,
+        alpha=0.5
+    )
+
     with torch.no_grad():
         for x, sar, mask, infos in tqdm(dataloader, desc="Validating"):
-            x, sar, mask = x.to(fabric.device), sar.to(fabric.device), mask.to(fabric.device)
-            if not cfg.conditional_model:
-                pred = model(x, timestep=0).sample  # (B,1,H,W)
-            else:
+            x = x.to(fabric.device)
+            sar = sar.to(fabric.device)
+            mask = mask.to(fabric.device)
+
+            if cfg.conditional_model:
                 shear_infos = torch.stack([
-                torch.as_tensor(d["shear"], dtype=torch.float32)
-                                for d in infos
-                            ]).to(fabric.device)
+                    torch.as_tensor(d["shear"], dtype=torch.float32)
+                    for d in infos
+                ]).to(fabric.device)
+
+            if not cfg.conditional_model:
+                pred = model(x, timestep=0).sample
+            else:
                 pred = model.forward(x, timestep=0, cond=shear_infos).sample
-            B,H,W = sar.shape
-            sar_valid  = sar.nan_to_num()
+
+            sar_valid = sar.nan_to_num()
             pred_valid = pred
-            loss,l_pix,l_grad,l_radial = combined_sar_loss(sar_valid,
-                                                           pred_valid,
-                                                           mask,
-                                                           w_pix=cfg.w_pix,
-                                                           w_grad= cfg.w_grad,
-                                                           w_radial=cfg.w_radial,
-                                                           bin_edges=BIN_EDGES, 
-                                                           bin_weights=BIN_WEIGHTS,
-                                                           use_weighted_pix=True
-                                                           )
-            if sar_valid.ndim == 3:
-                sar_valid = sar_valid.unsqueeze(1)
-            if mask.ndim == 3:
-                mask = mask.unsqueeze(1)
-            total_loss += loss.item()
-    return total_loss / len(dataloader), l_pix, l_grad,l_radial
+
+            loss, l_pix, l_grad, l_radial = combined_sar_loss(
+                sar_valid,
+                pred_valid,
+                mask,
+                w_pix=cfg.w_pix,
+                w_grad=cfg.w_grad,
+                w_radial=cfg.w_radial,
+                bin_edges=BIN_EDGES,
+                bin_weights=BIN_WEIGHTS,
+                use_weighted_pix=True
+            )
+
+            total_loss += float(loss.detach().item())
+            total_l_pix += float(l_pix)
+            total_l_grad += float(l_grad)
+            total_l_radial += float(l_radial)
+
+    n_batches = len(dataloader)
+
+    val_loss = torch.tensor(total_loss / n_batches, device=fabric.device)
+    avg_l_pix = torch.tensor(total_l_pix / n_batches, device=fabric.device)
+    avg_l_grad = torch.tensor(total_l_grad / n_batches, device=fabric.device)
+    avg_l_radial = torch.tensor(total_l_radial / n_batches, device=fabric.device)
+
+    val_loss = fabric.all_reduce(val_loss, reduce_op="mean")
+    avg_l_pix = fabric.all_reduce(avg_l_pix, reduce_op="mean")
+    avg_l_grad = fabric.all_reduce(avg_l_grad, reduce_op="mean")
+    avg_l_radial = fabric.all_reduce(avg_l_radial, reduce_op="mean")
+
+    return (
+        val_loss.item(),
+        avg_l_pix.item(),
+        avg_l_grad.item(),
+        avg_l_radial.item()
+    )
 
 
 def main(cfg: config.IR_SAR_Config, test=False):
@@ -327,6 +404,20 @@ def train(fabric, cfg, full_data, target_dir):
 
     model, optimizer = fabric.setup(model, optimizer)
 
+    test_loader_full_for_plot = DataLoader(
+                                            test_ds,
+                                            batch_size=cfg.batch_size,
+                                            shuffle=False,
+                                            collate_fn=dataprep.custom_collate
+                                            )
+    if cfg.code_test : 
+        train_loader_full_for_plot = DataLoader(
+                                                train_ds,
+                                                batch_size=cfg.batch_size,
+                                                shuffle=False,
+                                                collate_fn=dataprep.custom_collate
+                                                )
+
     if cfg.anggrek_test:
         train_loader, val_loader, test_loader, anggrek_loader = fabric.setup_dataloaders(
             train_loader,
@@ -334,6 +425,12 @@ def train(fabric, cfg, full_data, target_dir):
             test_loader,
             anggrek_loader
         )
+        anggrek_loader_full_for_plot = DataLoader(
+                                                anggrek_ds,
+                                                batch_size=cfg.batch_size,
+                                                shuffle=False,
+                                                collate_fn=dataprep.custom_collate
+                                                )
     else:
         train_loader, val_loader, test_loader = fabric.setup_dataloaders(
             train_loader,
@@ -439,9 +536,9 @@ def train(fabric, cfg, full_data, target_dir):
                     model=model,
                     epoch=epoch,
                     dataloader=(
-                        [test_loader if not cfg.code_test else train_loader, anggrek_loader]
+                        [test_loader_full_for_plot if not cfg.code_test else train_loader_full_for_plot, anggrek_loader_full_for_plot]
                         if cfg.anggrek_test
-                        else [test_loader if not cfg.code_test else train_loader]
+                        else [test_loader_full_for_plot if not cfg.code_test else train_loader_full_for_plot]
                     ),
                     device=fabric.device
                 )
@@ -492,9 +589,9 @@ def train(fabric, cfg, full_data, target_dir):
                     model=model,
                     epoch=epoch,
                     dataloader=(
-                        [test_loader if not cfg.code_test else train_loader, anggrek_loader]
+                        [test_loader_full_for_plot if not cfg.code_test else train_loader_full_for_plot, anggrek_loader_full_for_plot]
                         if cfg.anggrek_test
-                        else [test_loader if not cfg.code_test else train_loader]
+                        else [test_loader_full_for_plot if not cfg.code_test else train_loader_full_for_plot]
                     ),
                     device=fabric.device
                 )

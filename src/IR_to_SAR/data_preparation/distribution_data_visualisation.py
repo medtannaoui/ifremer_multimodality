@@ -447,46 +447,47 @@ def training_completed(cfg, train_loss_history, val_loss_history,pix2pix_loss_hi
     plot_path = os.path.join(target_dir, "loss_history.png")
     plt.savefig(plot_path)
     plt.close()    
-    history_df = pd.DataFrame({
-    "train_loss": train_loss_history,
-    "val_loss": val_loss_history,
-    "pix2pix_history": pix2pix_loss_history,
-    #"gradient_loss_history" : gradient_loss_history,
-    "radial_loss_history" : radial_loss_history
-    })
-    csv_path = target_dir / "training_history.csv" 
-    history_df.to_csv(csv_path, index=False)
-    pix_train = [x[0] for x in pix2pix_loss_history]
-    pix_val   = [x[1] for x in pix2pix_loss_history]
-    grad_train = [x[0] for x in gradient_loss_history]
-    grad_val   = [x[1] for x in gradient_loss_history]
-    rad_train = [x[0] for x in radial_loss_history]
-    rad_val   = [x[1] for x in radial_loss_history]
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharex=True)
-    axes[0].plot(pix_train, label="Train")
-    axes[0].plot(pix_val, label="Val")
-    axes[0].set_title("Pix2Pix Loss")
-    axes[0].set_xlabel("Epoch")
-    axes[0].set_ylabel("Loss")
-    axes[0].legend()
-    axes[0].grid(True)
-    axes[1].plot(grad_train, label="Train")
-    axes[1].plot(grad_val, label="Val")
-    axes[1].set_title("Gradient Loss")
-    axes[1].set_xlabel("Epoch")
-    axes[1].legend()
-    axes[1].grid(True)
-    axes[2].plot(rad_train, label="Train")
-    axes[2].plot(rad_val, label="Val")
-    axes[2].set_title("Radial Loss (Vmax)")
-    axes[2].set_xlabel("Epoch")
-    axes[2].legend()
-    axes[2].grid(True)
-    plt.suptitle("Loss Components Evolution", fontsize=14)
-    plt.tight_layout()
-    plot_path = os.path.join(target_dir, "3_losses_history.png")
-    plt.savefig(plot_path)
-    plt.close()
+    if not cfg.use_flow_matching : 
+        history_df = pd.DataFrame({
+        "train_loss": train_loss_history,
+        "val_loss": val_loss_history,
+        "pix2pix_history": pix2pix_loss_history,
+        #"gradient_loss_history" : gradient_loss_history,
+        "radial_loss_history" : radial_loss_history
+        })
+        csv_path = target_dir / "training_history.csv" 
+        history_df.to_csv(csv_path, index=False)
+        pix_train = [x[0] for x in pix2pix_loss_history]
+        pix_val   = [x[1] for x in pix2pix_loss_history]
+        grad_train = [x[0] for x in gradient_loss_history]
+        grad_val   = [x[1] for x in gradient_loss_history]
+        rad_train = [x[0] for x in radial_loss_history]
+        rad_val   = [x[1] for x in radial_loss_history]
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharex=True)
+        axes[0].plot(pix_train, label="Train")
+        axes[0].plot(pix_val, label="Val")
+        axes[0].set_title("Pix2Pix Loss")
+        axes[0].set_xlabel("Epoch")
+        axes[0].set_ylabel("Loss")
+        axes[0].legend()
+        axes[0].grid(True)
+        axes[1].plot(grad_train, label="Train")
+        axes[1].plot(grad_val, label="Val")
+        axes[1].set_title("Gradient Loss")
+        axes[1].set_xlabel("Epoch")
+        axes[1].legend()
+        axes[1].grid(True)
+        axes[2].plot(rad_train, label="Train")
+        axes[2].plot(rad_val, label="Val")
+        axes[2].set_title("Radial Loss (Vmax)")
+        axes[2].set_xlabel("Epoch")
+        axes[2].legend()
+        axes[2].grid(True)
+        plt.suptitle("Loss Components Evolution", fontsize=14)
+        plt.tight_layout()
+        plot_path = os.path.join(target_dir, "3_losses_history.png")
+        plt.savefig(plot_path)
+        plt.close()
     logger.info("🎯 Training Complete!")
     dst_cfg = os.path.join(target_dir, "config.yaml")
     config_path ="/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/config.yaml"

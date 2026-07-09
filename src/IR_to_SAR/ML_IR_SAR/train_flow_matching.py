@@ -111,51 +111,73 @@ def train_one_epoch(
 ):
     fm_model.train()
     regression_model.eval()
+
     total_loss = 0.0
-    resid_mean_t = torch.tensor(residual_mean, dtype=torch.float32)
-    resid_std_t  = torch.tensor(residual_std,  dtype=torch.float32)
+    n_batches = 0
+
+    resid_mean_t = torch.tensor(residual_mean, dtype=torch.float32, device=fabric.device)
+    resid_std_t  = torch.tensor(residual_std, dtype=torch.float32, device=fabric.device)
+
     for x, sar, mask, infos in tqdm(dataloader, desc="Resid-FM train", leave=True):
-        x    = x.to(fabric.device)
-        sar  = sar.to(fabric.device)
+        x = x.to(fabric.device)
+        sar = sar.to(fabric.device)
         mask = mask.to(fabric.device)
+
         if cfg.channel_dropout:
-                        x = model_ir_sar.apply_random_channel_dropout(
-                        x,
-                        drop_prob=cfg.channel_drop_prob,
-                        min_keep_channels=cfg.min_keep_channels,
-                        protect_channels=getattr(cfg, "protect_channels", None),
-                    )
+            x = model_ir_sar.apply_random_channel_dropout(
+                x,
+                drop_prob=cfg.channel_drop_prob,
+                min_keep_channels=cfg.min_keep_channels,
+                protect_channels=getattr(cfg, "protect_channels", None),
+            )
+
         if sar.ndim == 3:
-            sar  = sar.unsqueeze(1)
+            sar = sar.unsqueeze(1)
         if mask.ndim == 3:
             mask = mask.unsqueeze(1)
+
         with torch.no_grad():
-            t0        = torch.zeros(x.shape[0], device=fabric.device)
-            mean_pred = regression_model(x, t0).sample   # (B, 1, H, W)
-        rm = resid_mean_t.to(fabric.device)
-        rs = resid_std_t.to(fabric.device)
+            t0 = torch.zeros(x.shape[0], device=fabric.device)
+            mean_pred = regression_model(x, t0).sample
 
         residual = (sar - mean_pred).nan_to_num(0.0)
-        x_1      = (residual - rm) / rs     # normalised residual ∈ ~N(0, 1)
-        B   = x_1.shape[0]
-        z   = torch.randn_like(x_1)
-        t   = torch.rand(B, device=fabric.device)
-        x_t = t.view(-1,1,1,1) * x_1 + (1 - t.view(-1,1,1,1)) * z
-        model_input   = torch.cat([x_t, mean_pred], dim=1)   # (B, 2, H, W)
+        x_1 = (residual - resid_mean_t) / resid_std_t
+
+        B = x_1.shape[0]
+        z = torch.randn_like(x_1)
+        t = torch.rand(B, device=fabric.device)
+
+        x_t = t.view(-1, 1, 1, 1) * x_1 + (1 - t.view(-1, 1, 1, 1)) * z
+        model_input = torch.cat([x_t, mean_pred], dim=1)
 
         optimizer.zero_grad()
+
         pred_velocity = fm_model(model_input, t).sample
         true_velocity = x_1 - z
+
         valid = (mask > 0) & sar.isfinite()
         valid = valid.expand_as(pred_velocity)
+
         if valid.sum() == 0:
             continue
-        loss  = F.mse_loss(pred_velocity[valid], true_velocity[valid])
+
+        loss = F.mse_loss(pred_velocity[valid], true_velocity[valid])
+
         fabric.backward(loss)
         fabric.clip_gradients(fm_model, optimizer, max_norm=1.0)
         optimizer.step()
-        total_loss += loss.item()
-    return total_loss / max(len(dataloader), 1)
+
+        total_loss += loss.detach().item()
+        n_batches += 1
+
+    local_loss = torch.tensor(
+        total_loss / max(n_batches, 1),
+        device=fabric.device
+    )
+
+    train_loss = fabric.all_reduce(local_loss, reduce_op="mean")
+
+    return train_loss.item()
 
 def validate(
     fabric,
@@ -167,38 +189,59 @@ def validate(
 ):
     fm_model.eval()
     regression_model.eval()
+
     total_loss = 0.0
     n_batches = 0
+
     resid_mean_t = torch.tensor(residual_mean, dtype=torch.float32, device=fabric.device)
     resid_std_t  = torch.tensor(residual_std, dtype=torch.float32, device=fabric.device)
+
     with torch.no_grad():
         for x, sar, mask, infos in tqdm(dataloader, desc="Resid-FM val", leave=True):
-            x    = x.to(fabric.device)
-            sar  = sar.to(fabric.device)
+            x = x.to(fabric.device)
+            sar = sar.to(fabric.device)
             mask = mask.to(fabric.device)
+
             if sar.ndim == 3:
                 sar = sar.unsqueeze(1)
             if mask.ndim == 3:
                 mask = mask.unsqueeze(1)
+
             t0 = torch.zeros(x.shape[0], device=fabric.device)
-            mean_pred = regression_model(x, t0).sample   # (B, 1, H, W)
+            mean_pred = regression_model(x, t0).sample
+
             residual = (sar - mean_pred).nan_to_num(0.0)
             x_1 = (residual - resid_mean_t) / resid_std_t
+
             B = x_1.shape[0]
             z = torch.randn_like(x_1)
             t = torch.rand(B, device=fabric.device)
+
             x_t = t.view(-1, 1, 1, 1) * x_1 + (1 - t.view(-1, 1, 1, 1)) * z
-            model_input = torch.cat([x_t, mean_pred], dim=1)   # (B, 2, H, W)
+            model_input = torch.cat([x_t, mean_pred], dim=1)
+
             pred_velocity = fm_model(model_input, t).sample
             true_velocity = x_1 - z
+
             valid = (mask > 0) & sar.isfinite()
             valid = valid.expand_as(pred_velocity)
+
             if valid.sum() == 0:
                 continue
+
             loss = F.mse_loss(pred_velocity[valid], true_velocity[valid])
-            total_loss += loss.item()
+
+            total_loss += loss.detach().item()
             n_batches += 1
-    return total_loss / max(n_batches, 1)
+
+    local_loss = torch.tensor(
+        total_loss / max(n_batches, 1),
+        device=fabric.device
+    )
+
+    val_loss = fabric.all_reduce(local_loss, reduce_op="mean")
+
+    return val_loss.item()
 
 
 def main(cfg: config.IR_SAR_Config, test=False):
@@ -327,6 +370,21 @@ def train(fabric, cfg, full_data, target_dir, train_loader, val_loader, test_loa
         T_max=cfg.num_epochs,
         eta_min=1e-6
     )
+
+    test_loader_full_for_plot = DataLoader(
+                                        test_loader.dataset,
+                                        batch_size=cfg.batch_size,
+                                        shuffle=False,
+                                        collate_fn=dataprep.custom_collate
+                                        )
+
+    if cfg.code_test :
+        train_loader_full_for_plot = DataLoader(
+                                                train_loader.dataset,
+                                                batch_size=cfg.batch_size,
+                                                shuffle=False,
+                                                collate_fn=dataprep.custom_collate
+                                                )
 
     model, optimizer = fabric.setup(model, optimizer)
 
@@ -475,9 +533,9 @@ def train(fabric, cfg, full_data, target_dir, train_loader, val_loader, test_loa
                     model=model,
                     epoch=epoch,
                     dataloader=(
-                        [test_loader if not cfg.code_test else train_loader, anggrek_loader]
+                        [test_loader_full_for_plot if not cfg.code_test else train_loader_full_for_plot, anggrek_loader]
                         if cfg.anggrek_test
-                        else [test_loader if not cfg.code_test else train_loader]
+                        else [test_loader_full_for_plot if not cfg.code_test else train_loader_full_for_plot]
                     ),
                     device=fabric.device,
                     reg_model=best_reg_model,
@@ -528,9 +586,9 @@ def train(fabric, cfg, full_data, target_dir, train_loader, val_loader, test_loa
                     model=model,
                     epoch=epoch,
                     dataloader=(
-                        [test_loader if not cfg.code_test else train_loader, anggrek_loader]
+                        [test_loader_full_for_plot if not cfg.code_test else train_loader_full_for_plot, anggrek_loader]
                         if cfg.anggrek_test
-                        else [test_loader if not cfg.code_test else train_loader]
+                        else [test_loader_full_for_plot if not cfg.code_test else train_loader_full_for_plot]
                     ),
                     device=fabric.device,
                     reg_model=best_reg_model,
