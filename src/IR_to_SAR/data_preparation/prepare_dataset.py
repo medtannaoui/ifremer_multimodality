@@ -73,8 +73,8 @@ class PrepareDataSet:
             irar = pd.read_csv("/scale/user/mtannaou/alternance/mnt/csvs_finaux/IRAR.csv")
             irar["date_irar"] = pd.to_datetime(irar["date_irar"])
 
-            train_df = data[data["set"] == "train"][:100 if self.cfg.code_test else None]
-            val_df = data[data["set"] == "val"][:20 if self.cfg.code_test else None]
+            train_df = data[data["set"] == "train"][:10 if self.cfg.code_test else None]
+            val_df = data[data["set"] == "val"][:10 if self.cfg.code_test else None]
             test_df = data[data["set"] == "test"][:10 if self.cfg.code_test else None]
 
             ## Train generating

@@ -631,10 +631,10 @@ class LogValidationSamples:
             ir_den = ir_den[order]
             pred_den = pred_den[order]
 
-            os.makedirs(os.path.join(self.output_dir, "predictions_denormalisees", "anggrek"), exist_ok=True)
-            with open(os.path.join(self.output_dir, "predictions_denormalisees", "anggrek",
-                                   "predictions_denormalisées.pkl"), "wb") as f:
-                pkl.dump({"anggrek": [ir_den, pred_den, infos_ord], "model": model}, f)
+            os.makedirs(os.path.join(self.output_dir, "model"), exist_ok=True)
+            with open(os.path.join(self.output_dir, "model",
+                                   "weights.pkl"), "wb") as f:
+                pkl.dump({"model": model}, f)
 
             out_root = Path(self.output_dir) / "anggrek_monitoring"
             field_dir = out_root / "field_plots"

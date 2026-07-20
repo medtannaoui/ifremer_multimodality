@@ -395,6 +395,12 @@ def train(fabric, cfg, full_data, target_dir, train_loader, val_loader, test_loa
             test_loader,
             anggrek_loader
         )
+        anggrek_loader_full_for_plot = DataLoader(
+                                                anggrek_ds,
+                                                batch_size=cfg.batch_size,
+                                                shuffle=False,
+                                                collate_fn=dataprep.custom_collate
+                                                )
     else:
         train_loader, val_loader, test_loader = fabric.setup_dataloaders(
             train_loader,
@@ -533,7 +539,7 @@ def train(fabric, cfg, full_data, target_dir, train_loader, val_loader, test_loa
                     model=model,
                     epoch=epoch,
                     dataloader=(
-                        [test_loader_full_for_plot if not cfg.code_test else train_loader_full_for_plot, anggrek_loader]
+                        [test_loader_full_for_plot if not cfg.code_test else train_loader_full_for_plot, anggrek_loader_full_for_plot]
                         if cfg.anggrek_test
                         else [test_loader_full_for_plot if not cfg.code_test else train_loader_full_for_plot]
                     ),
@@ -586,7 +592,7 @@ def train(fabric, cfg, full_data, target_dir, train_loader, val_loader, test_loa
                     model=model,
                     epoch=epoch,
                     dataloader=(
-                        [test_loader_full_for_plot if not cfg.code_test else train_loader_full_for_plot, anggrek_loader]
+                        [test_loader_full_for_plot if not cfg.code_test else train_loader_full_for_plot, anggrek_loader_full_for_plot]
                         if cfg.anggrek_test
                         else [test_loader_full_for_plot if not cfg.code_test else train_loader_full_for_plot]
                     ),
