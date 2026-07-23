@@ -32,11 +32,22 @@ def min_max(tensor, eps = 1e-10):
     return normalized_tensor, min_val, max_val
 
 
-def z_score(tensor, eps = 1e-10,mean_value=None,std_value=None):
+def z_score(tensor, eps=1e-10, mean_value=None, std_value=None, mask=None):
+    
     if mean_value is None:
-        mean_value = np.mean(tensor)
-        std_value = np.std(tensor)
-    normalized_tensor = (tensor - mean_value)/(std_value + eps)
+        if mask is None:
+            mean_value = np.nanmean(tensor)
+            std_value = np.nanstd(tensor)
+        else:
+            valid = tensor[mask.astype(bool)]
+            mean_value = valid.mean()
+            std_value = valid.std()
+
+    normalized_tensor = (tensor - mean_value) / (std_value + eps)
+
+    if mask is not None:
+        normalized_tensor = np.where(mask, normalized_tensor, 0)
+
     return normalized_tensor, mean_value, std_value
             
 

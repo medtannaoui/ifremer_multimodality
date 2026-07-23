@@ -175,6 +175,13 @@ class PrepareDataSet:
             print(self.sar_test.shape)
             print(wind_mask_test.shape)
 
+            try:
+                with open(os.path.join(self.target_dir,"sequence_data.pkl"),"wb") as f:
+                    pkl.dump({"x_train":self.X_train, "x_val":self.X_val, "x_test":self.X_test,
+                            "y_train":self.sar_train, "y_val":self.sar_val, "y_test":self.sar_test})
+            except Exception as e : 
+                print("erreur dans la sauvgarde des sequences :",e)
+
             # Spatial mask (NaN)
             self.mask_train = np.isfinite(self.sar_train).astype(np.float32)
             self.mask_val   = np.isfinite(self.sar_val).astype(np.float32)
@@ -281,49 +288,23 @@ class PrepareDataSet:
 
             # Calcul d'UNE statistique par anneau avec tous les canaux
             # du train réunis
-            sar_train_flat, annular_stats = dataprep.annular_normalization(
+            sar_train_flat, mean_sar, std_sar = dataprep.z_score(
                 sar_train_flat,
-                bin_size=1,
-                mask=mask_train_flat,
+                mask = mask_train_flat
             )
-            # Vérification des statistiques annulaires
-            annular_mean = np.asarray(annular_stats["mean"])
-            annular_std = np.asarray(annular_stats["std"])
-
-            if not np.all(np.isfinite(annular_mean)):
-                bad_indices = np.where(~np.isfinite(annular_mean))[0]
-
-                raise RuntimeError(
-                    "Moyennes annulaires SAR non finies pour les anneaux : "
-                    f"{bad_indices.tolist()}"
-                )
-            if not np.all(np.isfinite(annular_std)):
-                bad_indices = np.where(~np.isfinite(annular_std))[0]
-
-                raise RuntimeError(
-                    "Écarts-types annulaires SAR non finis pour les anneaux : "
-                    f"{bad_indices.tolist()}"
-                )
-            if np.any(annular_std < 1e-6):
-                bad_indices = np.where(annular_std < 1e-6)[0]
-
-                raise RuntimeError(
-                    "Écarts-types annulaires SAR trop faibles pour les anneaux : "
-                    f"{bad_indices.tolist()}"
-                )
             # Normalisation de validation et test avec les statistiques
             # calculées uniquement sur le train
-            sar_val_flat, _ = dataprep.annular_normalization(
+            sar_val_flat, _, _ = dataprep.z_score(
                 sar_val_flat,
-                bin_size=1,
-                mask=mask_val_flat,
-                stats=annular_stats,
+                mean_value= mean_sar,
+                std_value = std_sar,
+                mask=mask_val_flat
             )
-            sar_test_flat, _ = dataprep.annular_normalization(
+            sar_test_flat, _, _ = dataprep.z_score(
                 sar_test_flat,
-                bin_size=1,
-                mask=mask_test_flat,
-                stats=annular_stats,
+                mean_value = mean_sar,
+                std_value = std_sar,
+                mask = mask_test_flat
             )
             # Retour aux formes temporelles originales
             self.sar_train = sar_train_flat.reshape(
@@ -348,8 +329,8 @@ class PrepareDataSet:
             self.sar_train *= self.mask_train
             self.sar_val *= self.mask_val
             self.sar_test *= self.mask_test
-            self.mean_sar = annular_stats["mean"]
-            self.std_sar = annular_stats["std"]
+            self.mean_sar = mean_sar
+            self.std_sar = std_sar
             # Vérifications finales
             for name, sar_array, mask_array in [
                 ("train", self.sar_train, self.mask_train),
@@ -784,16 +765,16 @@ class PrepareDataSet:
                     )
             
             if self.cfg.norm == "z_score":
-                self.sar_train, self.mean_sar, self.std_sar = dataprep.z_score(self.sar_train)
-                self.sar_val, _, _ = dataprep.z_score(self.sar_val, mean_value=self.mean_sar, std_value=self.std_sar)
-                self.sar_test, _, _ = dataprep.z_score(self.sar_test, mean_value=self.mean_sar, std_value=self.std_sar)
+                self.sar_train, self.mean_sar, self.std_sar = dataprep.z_score(self.sar_train, mask= self.mask_train)
+                self.sar_val, _, _ = dataprep.z_score(self.sar_val, mean_value=self.mean_sar, std_value=self.std_sar, mask = self.mask_val)
+                self.sar_test, _, _ = dataprep.z_score(self.sar_test, mean_value=self.mean_sar, std_value=self.std_sar, mask = self.mask_test)
 
             elif self.cfg.norm == "annular":
-                self.sar_train, stats = dataprep.annular_normalization(self.sar_train, bin_size=1, mask=None)
+                self.sar_train, stats = dataprep.annular_normalization(self.sar_train, bin_size=1, mask=self.mask_train)
                 self.mean_sar = stats["mean"]
                 self.std_sar = stats["std"]
-                self.sar_val, _ = dataprep.annular_normalization(self.sar_val, bin_size=1, mask=None, stats=stats)
-                self.sar_test, _ = dataprep.annular_normalization(self.sar_test, mask=None, stats=stats)
+                self.sar_val, _ = dataprep.annular_normalization(self.sar_val, bin_size=1, mask=self.mask_val, stats=stats)
+                self.sar_test, _ = dataprep.annular_normalization(self.sar_test, mask=self.mask_test, stats=stats)
 
             ## sauvgarde des données et les stats de normlisation 
             data_saved = os.path.join(self.target_dir, "Test_data_stats")
