@@ -127,6 +127,7 @@ class LogValidationSamples:
             x, sar, mask, infos = batch
         else:
             x, sar, mask, infos, ode_pred = batch
+
         cyclone_id = [d["cyclone_id"] for d in infos]
         sar_time = [d["sar_time"] for d in infos]
         #vmax = [d["vmax"] for d in infos]
@@ -598,7 +599,7 @@ class LogValidationSamples:
                         [torch.as_tensor(d["shear"], dtype=torch.float32) for d in infos]
                     ).to(device)
                     pred = model(x, timestep=0, cond=shear).sample
-
+        
         sar_time = [d.get("date") for d in infos]
         time_parsed = pd.to_datetime(sar_time, errors="coerce")
         order = np.argsort(time_parsed.values.astype("datetime64[ns]"))

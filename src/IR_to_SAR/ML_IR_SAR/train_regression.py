@@ -10,7 +10,7 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
-
+import pickle as pkl
 
 from datetime import datetime, timedelta
 from loguru import logger
@@ -147,7 +147,18 @@ def train_one_epoch(fabric, model, dataloader, optimizer, cfg, scheduler=None):
         else:
             pred = model.forward(x, timestep=0, cond=shear_infos).sample
 
-        sar_valid = sar.nan_to_num()
+        # Exclure tous les pixels SAR non finis
+        finite_sar = torch.isfinite(sar)
+        mask = mask * finite_sar.to(mask.dtype)
+        # Remplacer NaN et Inf avant toute opération arithmétique
+        sar_valid = torch.nan_to_num(
+            sar,
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
+        # Mettre réellement à zéro les zones exclues
+        sar_valid = sar_valid * mask
         pred_valid = pred
 
         loss, l_pix, l_grad, l_radial = combined_sar_loss(
@@ -228,7 +239,18 @@ def validate(fabric, model, dataloader, cfg):
             else:
                 pred = model.forward(x, timestep=0, cond=shear_infos).sample
 
-            sar_valid = sar.nan_to_num()
+            # Exclure tous les pixels SAR non finis
+            finite_sar = torch.isfinite(sar)
+            mask = mask * finite_sar.to(mask.dtype)
+            # Remplacer NaN et Inf avant toute opération arithmétique
+            sar_valid = torch.nan_to_num(
+                sar,
+                nan=0.0,
+                posinf=0.0,
+                neginf=0.0,
+            )
+            # Mettre réellement à zéro les zones exclues
+            sar_valid = sar_valid * mask
             pred_valid = pred
 
             loss, l_pix, l_grad, l_radial = combined_sar_loss(
@@ -274,6 +296,7 @@ def main(cfg: config.IR_SAR_Config, test=False):
     cfg.protect_channels = cfg.protect_channels if not cfg.add_era5 else [cfg.in_channels - 1]
     cfg.early_stop_patience = 2 if cfg.code_test else cfg.early_stop_patience
     cfg.batch_size = cfg.batch_size if not cfg.code_test else 1
+    cfg.out_channels = 12 if cfg.temporal_mode else cfg.out_channels
 
     logger.info(f"Starting training with config:\n{cfg.__dict__}")
 
@@ -315,6 +338,7 @@ def main(cfg: config.IR_SAR_Config, test=False):
 def train(fabric, cfg, full_data, target_dir):
     
     cfg.in_channels = full_data.dataset.X_train.shape[1]
+    cfg.anggrek_test = False if cfg.temporal_mode else cfg.anggrek_test
 
     if fabric.is_global_zero:
         logger.info(f"Running on device: {fabric.device}")
@@ -334,7 +358,7 @@ def train(fabric, cfg, full_data, target_dir):
         full_data.dataset.mask_val,
         full_data.dataset.infos_val
     )
-
+    
     test_ds = PairedDataset(
         *(full_data.dataset.X_test, full_data.dataset.sar_test),
         full_data.dataset.mask_test,
@@ -529,7 +553,7 @@ def train(fabric, cfg, full_data, target_dir):
                     f"{patience_counter}/{cfg.early_stop_patience}"
                 )
 
-            if epoch == 0:
+            if epoch == 0 and not cfg.temporal_mode:
                 fabric.print("📸 Plot at epoch 1")
 
                 plot_callback.on_validation_plots(
@@ -579,22 +603,27 @@ def train(fabric, cfg, full_data, target_dir):
                         model.module.load_state_dict(state_dict)
                     else:
                         model.load_state_dict(state_dict)
+                    
 
                 else:
                     fabric.print("⚠️ Best checkpoint not found, using last model.")
+                
+                with open(os.path.join(target_dir, "model.pkl"),"wb") as f:
+                    pkl.dump(model, f)
 
-                fabric.print("📸 Final plot using BEST model")
+                if not cfg.temporal_mode:
+                    fabric.print("📸 Final plot using BEST model")
 
-                plot_callback.on_validation_plots(
-                    model=model,
-                    epoch=epoch,
-                    dataloader=(
-                        [test_loader_full_for_plot if not cfg.code_test else train_loader_full_for_plot, anggrek_loader_full_for_plot]
-                        if cfg.anggrek_test
-                        else [test_loader_full_for_plot if not cfg.code_test else train_loader_full_for_plot]
-                    ),
-                    device=fabric.device
-                )
+                    plot_callback.on_validation_plots(
+                        model=model,
+                        epoch=epoch,
+                        dataloader=(
+                            [test_loader_full_for_plot if not cfg.code_test else train_loader_full_for_plot, anggrek_loader_full_for_plot]
+                            if cfg.anggrek_test
+                            else [test_loader_full_for_plot if not cfg.code_test else train_loader_full_for_plot]
+                        ),
+                        device=fabric.device
+                    )
 
                 distdata.training_completed(
                     cfg,

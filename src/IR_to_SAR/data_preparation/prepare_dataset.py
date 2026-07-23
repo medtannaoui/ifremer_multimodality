@@ -54,6 +54,7 @@ class PrepareDataSet:
         sar_train, sar_val, sar_test = [], [], []
         infos_train, infos_val, infos_test, infos_anggrek = [], [], [], []
         era5_train, era5_val, era5_test, era5_anggrek = [], [], [], []
+        wind_mask_train, wind_mask_val, wind_mask_test = [], [], []
         keys = [
                 "cyclone_name",
                 "cyclone_id",
@@ -61,420 +62,756 @@ class PrepareDataSet:
                 "analysis_vmax",
                 "analysis_rmax",
                 # "analysis_center_quality_flag",
-            ]  # corilis
-        ## prmeier cas : utilisation de la nouvelle base de données IRAR 
-        if self.cfg.irar:
-            data = pd.read_csv(
-                "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/IRAR_L2_dataset.csv"
-            )
-            data = data[(data["valide"] == True) & (data["ir_regrided"] == True)]
-            print("Len Data IRAR Valide :", len(data))
-
-            irar = pd.read_csv("/scale/user/mtannaou/alternance/mnt/csvs_finaux/IRAR.csv")
-            irar["date_irar"] = pd.to_datetime(irar["date_irar"])
-
-            train_df = data[data["set"] == "train"][:10 if self.cfg.code_test else None]
-            val_df = data[data["set"] == "val"][:10 if self.cfg.code_test else None]
-            test_df = data[data["set"] == "test"][:10 if self.cfg.code_test else None]
-
-            ## Train generating
-            for df, name in zip([train_df, val_df, test_df], ["Train", "Val", "Test"]):
-                for itr, row in tqdm(df.iterrows(), total=len(df), desc=f"Generating {name} data Using IRAR Dataset : ..............."):
-                    cyclone_id = row["cyclone_id"]
-                    year = row["year"]
-                    path_irar = row["path_irar"]
-                    path_l2 = row["L2M path"]
-                    date_irar = datetime.strptime(os.path.basename(path_irar).split("_s")[-1].split("_")[0], "%Y%m%d%H%M%S")
-
-                    sequence_path_plus = []
-                    sequence_path_moins = []
-                    valid_sequence = True
-                    index_par = range(1, 5)   # sargeo frequenc (range(1, 5))
-
-                    for i in index_par:
-                        date_i = date_irar + timedelta(minutes=i*30 if len(index_par)==4 else i*60)
-                        date_j = date_irar - timedelta(minutes=i*30 if len(index_par)==4 else i*60)
-
-                        sub_i = irar[(irar["date_irar"] == date_i) & (irar["cyclone_id"] == cyclone_id)]
-                        sub_j = irar[(irar["date_irar"] == date_j) & (irar["cyclone_id"] == cyclone_id)]
-
-                        if len(sub_i) == 0 or len(sub_j) == 0:
-                            valid_sequence = False
-                            break
-
-                        sequence_path_plus.append(sub_i["path_nc"].values[0])
-                        sequence_path_moins.append(sub_j["path_nc"].values[0])
-
-                    if not valid_sequence:
-                        continue
-
-                    train_seq_paths = sequence_path_moins + [path_irar] + sequence_path_plus
-                    irs = []
-                    winds = []
-                    valide = 0
-                    for j, path in enumerate(train_seq_paths):
-                            try : 
-                                ds = xr.open_dataset(path)
-                                # ds = dataprep.build_storm_centered_dataset(ds)
-
-                                irs.append(ds["ir_aeqd"].values)   # (501,501) dxy = 2
-                                if j == int(len(train_seq_paths)//2) :
-                                    winds.append(ds["wind_aeqd"].values)  # (501,501) dxy = 2
-                                
-                                valide += 1
-                            except Exception as e:
-                                print(f"Error loading {path}: {e}")
-                                break
-                    
-                    if valide == len(train_seq_paths):                       
-                        if name == "Train":
-                            irwin_train.append(np.stack(irs))
-                            sar_train.append(np.stack(winds))
-                            infos_train.append({k: row[k] for k in keys})
-
-                        elif name == "Val":
-                            irwin_val.append(np.stack(irs))
-                            sar_val.append(np.stack(winds))
-                            infos_val.append({k: row[k] for k in keys})
-
-                        elif name == "Test":
-                            irwin_test.append(np.stack(irs))
-                            sar_test.append(np.stack(winds))
-                            infos_test.append({k: row[k] for k in keys})
-
-
-        ## Utilisation de sargeo avec une fenetre temporelle de 4h maximum avec 9 channels
-        else :
-            index_par = range(0, self.cfg.irwin_channels)
-            if not cfg.conditional_model:
+            ] 
+        
+        if cfg.temporal_mode : 
+            print("Using temporal mode .....")
+            with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/tempral_data_with_infos.pkl","rb") as f:
+                all_sequences = pkl.load(f)
+                error_paths =  []
+            
+            for enu, ind in tqdm(enumerate(all_sequences), desc="Generating sequences for training : ....",total=len(all_sequences)):
+                cyclone_id = all_sequences[enu]["cyc_id"]
+                sequence = all_sequences[enu]["sequence"]
+                ir_sequence, wind_sequence = [], []
+                wind_mask = []
+                for tmp in sequence:
+                    path = tmp["path"]
+                    try : 
+                        with xr.open_dataset(path, engine="netcdf4") as ds:
+                            ir_sequence.append(ds["ir_aeqd"].values)
+                            if tmp["has_wind"] : 
+                                wind_sequence.append(ds["wind_aeqd"].values)
+                                wind_mask.append(True)
+                            else : 
+                                wind_sequence.append(
+                                                    np.zeros((501, 501), dtype=np.float32)
+                                                    )
+                                wind_mask.append(False)
+                    except Exception as e: 
+                        error_paths.append(path)
+                        # print("error :", path)
+                        break
                 
-                data = pd.read_csv(
-                        "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/"
-                        "TCVA_matched_with_SARGEO_v3_split_by_year.csv"
-                    )[: 50 if self.cfg.code_test else None]
-                
-            else:
-                data = pd.read_csv(
-                    "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/"
-                    "TCVA_matched_with_SARGEO_tcprimed.csv"
-                )
-                data = data[~data["tcprimed_env_path"].isna()]
+                if len(ir_sequence) != 12:
+                    continue
+                if not any(wind_mask):
+                    continue
 
-            # On ne garde que les lignes dont le split (train/val/test) est défini
-            data = data[~data["split"].isna()]
-            print("data after filtering", len(data))
-            data = data.reset_index(drop=True)
+                ir_sequence = np.stack(
+                    ir_sequence,
+                    axis=0,
+                )  - 273.15 # (12, 501, 501)   (K to °C)
 
-            # --- Normalisation des features de cisaillement (shear) si modèle conditionnel ---
-            if cfg.conditional_model:
-                mag_cols = [f"shear_magnitude_{i}" for i in range(1, 9)]
-                dir_cols = [f"shear_direction_{i}" for i in range(1, 9)]
-                shear_cols = dir_cols + mag_cols
+                wind_sequence = np.stack(
+                    wind_sequence,
+                    axis=0,
+                )  # (12, 501, 501)
 
-                train_shear = data[data["split"] == "train"][shear_cols].to_numpy(dtype=np.float32)
-                train_shear = np.nan_to_num(train_shear, nan=0.0)
+                wind_mask = np.asarray(
+                    wind_mask,
+                    dtype=bool,
+                )  # (12,)
 
-                shear_mean = train_shear.mean(axis=0)  # (16,)
-                shear_std = train_shear.std(axis=0)    # (16,)
+                if int(all_sequences[enu]["year"]) in  [2017]:
+                    irwin_test.append(ir_sequence);sar_test.append(wind_sequence)
+                    wind_mask_test.append(wind_mask)
+                    infos_test.append({k: ind[k] for k in keys})
+                elif int(all_sequences[enu]["year"]) in [2019, 2020]:
+                    irwin_val.append(ir_sequence); sar_val.append(wind_sequence)
+                    wind_mask_val.append(wind_mask)
+                    infos_val.append({k: ind[k] for k in keys})
+                else : 
+                    irwin_train.append(ir_sequence), sar_train.append(wind_sequence)
+                    wind_mask_train.append(wind_mask)
+                    infos_train.append({k: ind[k] for k in keys})
+
+            with open("error_temprale_paths.pkl","wb") as f:
+                pkl.dump(error_paths, f)
+
+            irwin_train = np.stack(irwin_train, axis=0).astype(np.float32)
+            sar_train = np.stack(sar_train, axis=0).astype(np.float32)
+            wind_mask_train = np.stack(wind_mask_train, axis=0)
+            self.infos_train = infos_train
+            # Validation
+            irwin_val = np.stack(irwin_val, axis=0).astype(np.float32)
+            sar_val = np.stack(sar_val, axis=0).astype(np.float32)
+            wind_mask_val = np.stack(wind_mask_val, axis=0)
+            self.infos_val = infos_val
+            # Test
+            irwin_test = np.stack(irwin_test, axis=0).astype(np.float32)
+            sar_test = np.stack(sar_test, axis=0).astype(np.float32)
+            wind_mask_test = np.stack(wind_mask_test, axis=0)
+            self.infos_test = infos_test
             
 
-            ### Generating Data 
-            for set_data in ["train", "val", "test"]:
-                N = len(data[data["split"] == set_data])
+            W, H = irwin_train.shape[-2:]
+            start_h = H // 2 - cfg.img_size // 2
+            end_h = H // 2 + cfg.img_size // 2
+            start_w = W // 2 - cfg.img_size // 2
+            end_w = W // 2  + cfg.img_size // 2
+            # Train
+            self.X_train = irwin_train[:, :, start_w:end_w, start_h:end_h]
+            self.sar_train = sar_train[:, :, start_w:end_w, start_h:end_h]
+            # Validation
+            self.X_val = irwin_val[:, :, start_w:end_w, start_h:end_h]
+            self.sar_val = sar_val[:, :, start_w:end_w, start_h:end_h]
+            # Test
+            self.X_test = irwin_test[:, :, start_w:end_w, start_h:end_h]
+            self.sar_test = sar_test[:, :, start_w:end_w, start_h:end_h]
 
-                for i, row in tqdm(data[data["split"] == set_data].iterrows(), total=N, desc=f"Generating {set_data} data : ..............."):
-                    try:
-                        with xr.open_dataset(row["sargeo_path"]) as sargeo:
-                            if "IRWIN" not in sargeo:
-                                raise KeyError("Missing IRWIN")
+            print("Train")
+            print(self.X_train.shape)
+            print(self.sar_train.shape)
+            print(wind_mask_train.shape)
 
-                        with xr.open_dataset(row["sar_aeqd_path"]) as ds_aeqd:
-                            if "owiWindSpeed" not in ds_aeqd:
-                                raise KeyError("Missing owiWindSpeed")
+            print("\nValidation")
+            print(self.X_val.shape)
+            print(self.sar_val.shape)
+            print(wind_mask_val.shape)
 
-                            # --- Récupération éventuelle des données ERA5 colocalisées ---
-                            if self.add_era5:
-                                sar_path = row["sar_aeqd_path"]
-                                list_sar_path = [sar_path]
-                                cyclone_id = row["cyclone_id"]
-                                date = str(sar_path.split("/")[-1].split("-")[5])
-                                year = date[0:4]
-                                month = date[4:6]
-                                day = date[6:8]
-                                hour = date[9:11]
-                                minute = date[11:13]
-                                year_path = os.path.join(era5_path, str(year))
-                                fevrier = np.arange(1, 29, 1) if int(year) % 4 != 0 else np.arange(1, 30, 1)
-                                months = [
-                                    janvier, fevrier, mars, avril, mai, juin,
-                                    juillet, aout, septembre, octobre, novembre, decembre,
-                                ]
-                                ndays = 0
-                                for i in range(int(month) - 1):
-                                    ndays += len(months[i])
-                                ndays += int(day)
-                                ndays_str = "0" + str(ndays) if len(str(ndays)) < 3 else str(ndays)
-                                dayera5_path = os.path.join(year_path, ndays_str)
-                                nc_path = ""
-                                for nc_file in os.listdir(dayera5_path):
-                                    if cyclone_id in nc_file:
-                                        nc_path = os.path.join(dayera5_path, nc_file)
-                                        break
-                                reg_era5 = regrid_colocs.regrid_files_era5(
-                                    [nc_path],
-                                    "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_preparation/"
-                                    "regrid_era5/regridded_era5",
-                                    resolution_km=2,
-                                    grid_size_km=300,
-                                    list_sar_path=list_sar_path,
-                                    index_hour=int(hour) - 1 + int(minute) // 30,
-                                )[0]
+            print("\nTest")
+            print(self.X_test.shape)
+            print(self.sar_test.shape)
+            print(wind_mask_test.shape)
 
-                                if set_data == "train":
-                                    era5_train.append(reg_era5)
-                                elif set_data == "val":
-                                    era5_val.append(reg_era5)
-                                elif set_data == "test":
-                                    era5_test.append(reg_era5)
-                            
-                            if set_data == "train":
-                                sar_train.append(ds_aeqd["owiWindSpeed"].values)
-                                irwin_train.append(sargeo["IRWIN"].values)
-                            elif set_data == "val":
-                                sar_val.append(ds_aeqd["owiWindSpeed"].values)
-                                irwin_val.append(sargeo["IRWIN"].values)
-                            elif set_data == "test":
-                                sar_test.append(ds_aeqd["owiWindSpeed"].values)
-                                irwin_test.append(sargeo["IRWIN"].values)
+            # Spatial mask (NaN)
+            self.mask_train = np.isfinite(self.sar_train).astype(np.float32)
+            self.mask_val   = np.isfinite(self.sar_val).astype(np.float32)
+            self.mask_test  = np.isfinite(self.sar_test).astype(np.float32)
 
-                        # --- Ajout des features environnementales (shear) si modèle conditionnel ---
-                        if cfg.conditional_model:
-                            shear_vec = row[shear_cols].to_numpy(dtype=np.float32)
-                            shear_vec = np.nan_to_num(shear_vec, nan=0.0)
-                            shear_vec = (shear_vec - shear_mean) / shear_std
-                            if set_data == "train":
-                                infos_train.append({**{k: row[k] for k in keys}, "shear": shear_vec})
-                            elif set_data == "val":
-                                infos_val.append({**{k: row[k] for k in keys}, "shear": shear_vec})
-                            elif set_data == "test":
-                                infos_test.append({**{k: row[k] for k in keys}, "shear": shear_vec})
-                        else:
-                            if set_data == "train":
-                                infos_train.append({k: row[k] for k in keys})
-                            elif set_data == "val":
-                                infos_val.append({k: row[k] for k in keys})
-                            elif set_data == "test":
-                                infos_test.append({k: row[k] for k in keys})
+            # Temporal mask -> (N, 12, 1, 1)
+            train_temporal = wind_mask_train[:, :, None, None].astype(np.float32)
+            val_temporal   = wind_mask_val[:, :, None, None].astype(np.float32)
+            test_temporal  = wind_mask_test[:, :, None, None].astype(np.float32)
 
-                    except Exception as e:
-                        print(e)
-                        continue
-        if self.cfg.anggrek_test:
-            # Données du cyclone "Anggrek" (jeu de test additionnel)
-            anggrek_csv = pd.read_csv(
-                "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/"
-                "anggrek_coloc_sar_ir.csv"
-            )[:10 if self.cfg.code_test else None]
+            # Final mask -> (N, 12, H, W)
+            self.mask_train *= train_temporal
+            self.mask_val   *= val_temporal
+            self.mask_test  *= test_temporal
 
-            N = len(anggrek_csv)
-            # Indices relatifs (-C/2 ... +C/2) des canaux IR temporels à charger
-            indices = list(range(-(self.irwin_channels // 2), (self.irwin_channels // 2) + 1))
-          
-            for row_idx, row in tqdm(anggrek_csv.iterrows(), total=N, desc="Generating Anggrek data : ..............."):
+            self.X_train = np.nan_to_num(self.X_train, nan=0.0, posinf=0.0, neginf=0.0)
+            self.X_val = np.nan_to_num(self.X_val, nan=0.0, posinf=0.0, neginf=0.0)
+            self.X_test = np.nan_to_num(self.X_test, nan=0.0, posinf=0.0, neginf=0.0)
+            self.sar_train = np.nan_to_num(self.sar_train, nan=0.0, posinf=0.0, neginf=0.0)
+            self.sar_val = np.nan_to_num(self.sar_val, nan=0.0, posinf=0.0, neginf=0.0)
+            self.sar_test = np.nan_to_num(self.sar_test, nan=0.0, posinf=0.0, neginf=0.0)
 
-                ir_path = row["ir_path"]
-                paths = [
-                        dataprep.shift_ir_path(ir_path, 
-                                                idx=i, 
-                                                step_minutes=30 if len(index_par) ==4 else 60) 
-                                                for i in indices
-                        ]
+            # Data Augmentation
+            if self.cfg.augmentation : 
+                print("Start Data Augmentation for train set : ----------")
+                self.X_train, self.sar_train, self.mask_train, self.infos_train = dataprep.data_augmentation(
+                                                                                                self.X_train, 
+                                                                                                self.sar_train, 
+                                                                                                self.mask_train,
+                                                                                                self.infos_train
+                                                                                            )
+                print("New Size after augmentation :",self.X_train.shape,self.sar_train.shape)
+            
+            print("Start normalisation : .......................")
 
-                sample_imgs = []
-                ok = True
+            mean_x, std_x = [], []
+            for c in range(self.X_train.shape[1]):
+                self.X_train[:, c], mean, std = dataprep.z_score(self.X_train[:, c])
+                mean_x.append(mean)
+                std_x.append(std)
+            self.mean_X, self.std_X = mean_x, std_x
+            for c in range(self.X_train.shape[1]):
+                self.X_val[:, c], _, _ = dataprep.z_score(self.X_val[:, c], mean_value=mean_x[c], std_value=std_x[c])
+                self.X_test[:, c], _, _ = dataprep.z_score(self.X_test[:, c], mean_value=mean_x[c], std_value=std_x[c])
+                
+            # Normalisation SAR annulaire globale sur les 12 canaux
+            N_train, C, H, W = self.sar_train.shape
+            N_val = self.sar_val.shape[0]
+            N_test = self.sar_test.shape[0]
+            # Affichage de la disponibilité SAR par canal
+            for c in range(C):
+                n_valid_pixels = self.mask_train[:, c].sum()
 
-                for path in paths:
-                    try:
-                        with xr.open_dataset(path) as ir_ds:
-                            if "IR" not in ir_ds:
-                                ok = False
-                                break
-                            arr = np.squeeze(ir_ds["IR"].values)
-                            sample_imgs.append(arr)
-                    except FileNotFoundError:
-                        ok = False
-                        break
+                n_valid_sequences = np.sum(
+                    self.mask_train[:, c]
+                    .reshape(N_train, -1)
+                    .sum(axis=1) > 0
+                )
+                print(
+                    f"Canal SAR {c}: "
+                    f"pixels valides={n_valid_pixels}, "
+                    f"séquences avec SAR={n_valid_sequences}"
+                )
+            # Fusion des dimensions séquence et canal
+            # (N, 12, H, W) -> (N * 12, H, W)
+            sar_train_flat = self.sar_train.reshape(
+                N_train * C,
+                H,
+                W,
+            )
+            mask_train_flat = self.mask_train.reshape(
+                N_train * C,
+                H,
+                W,
+            ).astype(bool)
 
-                # On n'ajoute le sample que si on a bien C canaux
-                if ok and len(sample_imgs) == len(indices):
-                    # empile en (C, H, W)
-                    irwin_anggrek.append(np.stack(sample_imgs, axis=0))
+            sar_val_flat = self.sar_val.reshape(
+                N_val * C,
+                H,
+                W,
+            )
+            mask_val_flat = self.mask_val.reshape(
+                N_val * C,
+                H,
+                W,
+            ).astype(bool)
 
-                    infos_anggrek.append(
-                        {
-                            "sid": row["sid"],
-                            "date": row["date"],
-                            "vmax": row["wind_speed (m/s)"],
-                            "lat": row["lat"],
-                            "lon": row["lon"],
-                            "analysis_vmax_cyclobs": row["analysis_vmax_cyclobs"],
-                            "vmax_cyclobs": row["vmax_cyclobs"],
-                            "ibtracs_vmax": row["ibtracs_vmax"],
-                            "satcon_vmax": row["satcon_vmax"],
-                            "era5_vmax": row["era5_vmax"],
-                        }
+            sar_test_flat = self.sar_test.reshape(
+                N_test * C,
+                H,
+                W,
+            )
+            mask_test_flat = self.mask_test.reshape(
+                N_test * C,
+                H,
+                W,
+            ).astype(bool)
+
+            # Vérification : au moins une observation SAR valide
+            if not mask_train_flat.any():
+                raise RuntimeError(
+                    "Aucun pixel SAR valide dans le jeu d'entraînement."
+                )
+
+            # Calcul d'UNE statistique par anneau avec tous les canaux
+            # du train réunis
+            sar_train_flat, annular_stats = dataprep.annular_normalization(
+                sar_train_flat,
+                bin_size=1,
+                mask=mask_train_flat,
+            )
+            # Vérification des statistiques annulaires
+            annular_mean = np.asarray(annular_stats["mean"])
+            annular_std = np.asarray(annular_stats["std"])
+
+            if not np.all(np.isfinite(annular_mean)):
+                bad_indices = np.where(~np.isfinite(annular_mean))[0]
+
+                raise RuntimeError(
+                    "Moyennes annulaires SAR non finies pour les anneaux : "
+                    f"{bad_indices.tolist()}"
+                )
+            if not np.all(np.isfinite(annular_std)):
+                bad_indices = np.where(~np.isfinite(annular_std))[0]
+
+                raise RuntimeError(
+                    "Écarts-types annulaires SAR non finis pour les anneaux : "
+                    f"{bad_indices.tolist()}"
+                )
+            if np.any(annular_std < 1e-6):
+                bad_indices = np.where(annular_std < 1e-6)[0]
+
+                raise RuntimeError(
+                    "Écarts-types annulaires SAR trop faibles pour les anneaux : "
+                    f"{bad_indices.tolist()}"
+                )
+            # Normalisation de validation et test avec les statistiques
+            # calculées uniquement sur le train
+            sar_val_flat, _ = dataprep.annular_normalization(
+                sar_val_flat,
+                bin_size=1,
+                mask=mask_val_flat,
+                stats=annular_stats,
+            )
+            sar_test_flat, _ = dataprep.annular_normalization(
+                sar_test_flat,
+                bin_size=1,
+                mask=mask_test_flat,
+                stats=annular_stats,
+            )
+            # Retour aux formes temporelles originales
+            self.sar_train = sar_train_flat.reshape(
+                N_train,
+                C,
+                H,
+                W,
+            ).astype(np.float32)
+            self.sar_val = sar_val_flat.reshape(
+                N_val,
+                C,
+                H,
+                W,
+            ).astype(np.float32)
+            self.sar_test = sar_test_flat.reshape(
+                N_test,
+                C,
+                H,
+                W,
+            ).astype(np.float32)
+            # Remise à zéro des pixels et canaux sans SAR
+            self.sar_train *= self.mask_train
+            self.sar_val *= self.mask_val
+            self.sar_test *= self.mask_test
+            self.mean_sar = annular_stats["mean"]
+            self.std_sar = annular_stats["std"]
+            # Vérifications finales
+            for name, sar_array, mask_array in [
+                ("train", self.sar_train, self.mask_train),
+                ("val", self.sar_val, self.mask_val),
+                ("test", self.sar_test, self.mask_test),
+            ]:
+                if not np.isfinite(sar_array).all():
+                    raise RuntimeError(
+                        f"sar_{name} contient des NaN ou des Inf "
+                        "après normalisation annulaire."
                     )
 
-                    cyclone_id = anggrek_csv.iloc[row_idx]["sid"]
-                    if self.add_era5:
-                        date = anggrek_csv.iloc[row_idx]["date"]
-                        year = date[0:4]
-                        month = date[5:7]
-                        day = date[8:10]
-                        year_path = os.path.join(era5_path, str(year))
-                        fevrier = np.arange(1, 29, 1) if int(year) % 4 != 0 else np.arange(1, 30, 1)
-                        months = [
-                            janvier, fevrier, mars, avril, mai, juin,
-                            juillet, aout, septembre, octobre, novembre, decembre,
-                        ]
-                        ndays = 0
-                        for i in range(int(month) - 1):
-                            ndays += len(months[i])
-                        ndays += int(day)
-                        ndays_str = "0" + str(ndays) if len(str(ndays)) < 3 else str(ndays)
-                        dayera5_path = os.path.join(year_path, ndays_str)
-                        nc_path = ""
-                        for nc_file in os.listdir(dayera5_path):
-                            if cyclone_id in nc_file:
-                                nc_path = os.path.join(dayera5_path, nc_file)
-                                break
-                        reg_era5 = regrid_colocs.regrid_files_era5(
-                            [nc_path],
-                            "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_preparation/"
-                            "regrid_era5/regridded_era5",
-                            resolution_km=2,
-                            grid_size_km=300,
-                            list_sar_path=list_sar_path,
-                            index_hour=int(hour) - 1 + int(minute) // 30,
-                        )
-                        era5_anggrek.append(reg_era5)
-        
-        self.X_train = np.stack(irwin_train); self.X_val = np.stack(irwin_val); self.X_test = np.stack(irwin_test)
-        self.sar_train = np.stack(sar_train).squeeze(); self.sar_val = np.stack(sar_val).squeeze(); self.sar_test = np.stack(sar_test).squeeze()
-        self.infos_train = np.array(infos_train) ; self.infos_val = np.array(infos_val) ; self.infos_test = np.array(infos_test)
-        if self.cfg.anggrek_test:
-            self.X_anggrek = np.array(irwin_anggrek) ; self.infos_anggrek = np.array(infos_anggrek)
-        if self.add_era5:
-            self.era5_train = np.array(era5_train) ; self.era5_val = np.array(era5_val) ; self.era5_test = np.array(era5_test)
-            if self.cfg.anggrek_test:    
-                self.era5_anggrek = np.array(era5_anggrek)
-        
-        print(f"irwin_train shape : {self.X_train.shape} ; sar_train shape : {self.sar_train.shape} ; infos_train shape : {self.infos_train.shape}")
-        print(f"irwin_val shape : {self.X_val.shape} ; sar_val shape : {self.sar_val.shape} ; infos_val shape : {self.infos_val.shape}")
-        print(f"irwin_test shape : {self.X_test.shape} ; sar_test shape : {self.sar_test.shape} ; infos_test shape : {self.infos_test.shape}")
-        if self.cfg.anggrek_test:
-            print(f"irwin_anggrek shape : {self.X_anggrek.shape} ; infos_anggrek shape : {self.infos_anggrek.shape}")
-            if self.add_era5:
-                print(f"era5_anggrek shape : {self.era5_anggrek.shape}")
+                if not np.all(sar_array[mask_array == 0] == 0):
+                    raise RuntimeError(
+                        f"sar_{name} contient des valeurs non nulles "
+                        "dans les zones masquées."
+                    )
 
+                valid_values = sar_array[mask_array.astype(bool)]
 
-        ## recadrage et centrage autour du cnetre et redimensionnement
-        size = self.cfg.img_size
-        N,C,H,W = self.X_train.shape
-        self.X_train = self.X_train[:,:, W//2 - size//2 : W//2 + size//2, H//2 - size//2 : H//2 + size//2]
-        self.X_val = self.X_val[:,:, W//2 - size//2 : W//2 + size//2, H//2 - size//2 : H//2 + size//2]
-        self.X_test = self.X_test[:,:, W//2 - size//2 : W//2 + size//2, H//2 - size//2 : H//2 + size//2]
-        if self.cfg.anggrek_test:
-            N,C,H,W = self.X_anggrek.shape
-            self.X_anggrek = self.X_anggrek[:,:, W//2 - size//2 : W//2 + size//2, H//2 - size//2 : H//2 + size//2]  
-        self.sar_train = self.sar_train[:, W//2 - size//2 : W//2 + size//2, H//2 - size//2 : H//2 + size//2]
-        self.sar_val = self.sar_val[:, W//2 - size//2 : W//2 + size//2, H//2 - size//2 : H//2 + size//2]
-        self.sar_test = self.sar_test[:, W//2 - size//2 :  W//2 + size//2, H//2 - size//2 : H//2 + size//2]
+                if valid_values.size > 0:
+                    print(
+                        f"SAR {name} normalisé : "
+                        f"min={valid_values.min():.6f}, "
+                        f"max={valid_values.max():.6f}, "
+                        f"mean={valid_values.mean():.6f}, "
+                        f"std={valid_values.std():.6f}"
+                    )
+            
+            stats = {
+                "mean_ir": self.mean_X,
+                "std_ir": self.std_X,
+                "mean_sar": self.mean_sar,
+                "std_sar": self.std_sar,
+            }
 
-        print(f"After Data resize : irwin_train shape : {self.X_train.shape} ; sar_train shape : {self.sar_train.shape}")
+            with open(
+                os.path.join(self.target_dir, "stats_normalisation.pkl"),
+                "wb",
+            ) as f:
+                pkl.dump(stats, f)
 
-        ## conversion Kelvin -> Celsius
-        self.X_train = self.X_train - 273.15 ; self.X_val = self.X_val - 273.15 ; self.X_test = self.X_test - 273.15
-        if self.cfg.anggrek_test:
-            self.X_anggrek = self.X_anggrek - 273.15
-        
-
-        ## masking NaN values for sar data
-        self.mask_train = np.isfinite(self.sar_train).astype(np.float32)
-        self.mask_val = np.isfinite(self.sar_val).astype(np.float32)
-        self.mask_test = np.isfinite(self.sar_test).astype(np.float32)
-
-        ## remplacement des nan par 0
-        self.X_train = np.nan_to_num(self.X_train, nan=0.0, posinf=0.0, neginf=0.0)
-        self.X_val = np.nan_to_num(self.X_val, nan=0.0, posinf=0.0, neginf=0.0)
-        self.X_test = np.nan_to_num(self.X_test, nan=0.0, posinf=0.0, neginf=0.0)
-        if self.cfg.anggrek_test:
-            self.X_anggrek = np.nan_to_num(self.X_anggrek, nan=0.0, posinf=0.0, neginf=0.0)
-
-        self.sar_train = np.nan_to_num(self.sar_train, nan=0.0, posinf=0.0, neginf=0.0)
-        self.sar_val = np.nan_to_num(self.sar_val, nan=0.0, posinf=0.0, neginf=0.0)
-        self.sar_test = np.nan_to_num(self.sar_test, nan=0.0, posinf=0.0, neginf=0.0)
-
-
-        # Data Augmentation
-        if self.cfg.augmentation : 
-            print("Start Data Augmentation for train set : ----------")
-            self.X_train, self.sar_train, self.mask_train, self.infos_train = dataprep.data_augmentation(
-                                                                                            self.X_train, 
-                                                                                            self.sar_train, 
-                                                                                            self.mask_train, 
-                                                                                            self.infos_train
-                                                                                        )
-            print("New Size after augmentation :",self.X_train.shape,self.sar_train.shape)
-        
-
-        ### Normalisation des entrées
-        print("Start normalisation : .......................")
-
-        mean_x, std_x = [], []
-        for c in range(self.X_train.shape[1]):
-            self.X_train[:, c], mean, std = dataprep.z_score(self.X_train[:, c])
-            mean_x.append(mean)
-            std_x.append(std)
-        self.mean_X, self.std_X = mean_x, std_x
-
-        for c in range(self.X_train.shape[1]):
-            self.X_val[:, c], _, _ = dataprep.z_score(self.X_val[:, c], mean_value=mean_x[c], std_value=std_x[c])
-            self.X_test[:, c], _, _ = dataprep.z_score(self.X_test[:, c], mean_value=mean_x[c], std_value=std_x[c])
-            if self.cfg.anggrek_test:
-                self.X_anggrek[:, c], _, _ = dataprep.z_score(
-                    self.X_anggrek[:, c], mean_value=mean_x[c], std_value=std_x[c]
-                )
-        
-        if self.cfg.norm == "z_score":
-            self.sar_train, self.mean_sar, self.std_sar = dataprep.z_score(self.sar_train)
-            self.sar_val, _, _ = dataprep.z_score(self.sar_val, mean_value=self.mean_sar, std_value=self.std_sar)
-            self.sar_test, _, _ = dataprep.z_score(self.sar_test, mean_value=self.mean_sar, std_value=self.std_sar)
-
-        elif self.cfg.norm == "annular":
-            self.sar_train, stats = dataprep.annular_normalization(self.sar_train, bin_size=1, mask=None)
-            self.mean_sar = stats["mean"]
-            self.std_sar = stats["std"]
-            self.sar_val, _ = dataprep.annular_normalization(self.sar_val, bin_size=1, mask=None, stats=stats)
-            self.sar_test, _ = dataprep.annular_normalization(self.sar_test, mask=None, stats=stats)
-
-        ## sauvgarde des données et les stats de normlisation 
-        data_saved = os.path.join(self.target_dir, "Test_data_stats")
-        os.makedirs(data_saved, exist_ok=True)
-
-        with open(os.path.join(data_saved, "Tets_data_stats.pkl"), "wb") as f:
-            pkl.dump(
-                {
-                    "normalisation_type": str(self.cfg.norm),
-                    "std_sar": self.std_sar,
-                    "mean_sar": self.mean_sar,
-                    "mean_x": mean_x,
-                    "std_x": std_x,
-                    "test_set_irwin": self.X_test,
-                    "test_set_sar": self.sar_test,
-                    "anggrek": self.X_anggrek
-                },
-                f,
+            print(
+                "Nombre d'anneaux normalisés :",
+                len(np.asarray(self.mean_sar))
             )
+            
+
+        else:
+            ## prmeier cas : utilisation de la nouvelle base de données IRAR 
+            if self.cfg.irar:
+                data = pd.read_csv(
+                    "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/IRAR_L2_dataset.csv"
+                )
+                data = data[(data["valide"] == True) & (data["ir_regrided"] == True)]
+                print("Len Data IRAR Valide :", len(data))
+
+                irar = pd.read_csv("/scale/user/mtannaou/alternance/mnt/csvs_finaux/IRAR.csv")
+                irar["date_irar"] = pd.to_datetime(irar["date_irar"])
+
+                train_df = data[data["set"] == "train"][:10 if self.cfg.code_test else None]
+                val_df = data[data["set"] == "val"][:10 if self.cfg.code_test else None]
+                test_df = data[data["set"] == "test"][:10 if self.cfg.code_test else None]
+
+                ## Train generating
+                for df, name in zip([train_df, val_df, test_df], ["Train", "Val", "Test"]):
+                    for itr, row in tqdm(df.iterrows(), total=len(df), desc=f"Generating {name} data Using IRAR Dataset : ..............."):
+                        cyclone_id = row["cyclone_id"]
+                        year = row["year"]
+                        path_irar = row["path_irar"]
+                        path_l2 = row["L2M path"]
+                        date_irar = datetime.strptime(os.path.basename(path_irar).split("_s")[-1].split("_")[0], "%Y%m%d%H%M%S")
+
+                        sequence_path_plus = []
+                        sequence_path_moins = []
+                        valid_sequence = True
+                        index_par = range(1, 5)   # sargeo frequenc (range(1, 5))
+
+                        for i in index_par:
+                            date_i = date_irar + timedelta(minutes=i*30 if len(index_par)==4 else i*60)
+                            date_j = date_irar - timedelta(minutes=i*30 if len(index_par)==4 else i*60)
+
+                            sub_i = irar[(irar["date_irar"] == date_i) & (irar["cyclone_id"] == cyclone_id)]
+                            sub_j = irar[(irar["date_irar"] == date_j) & (irar["cyclone_id"] == cyclone_id)]
+
+                            if len(sub_i) == 0 or len(sub_j) == 0:
+                                valid_sequence = False
+                                break
+
+                            sequence_path_plus.append(sub_i["path_nc"].values[0])
+                            sequence_path_moins.append(sub_j["path_nc"].values[0])
+
+                        if not valid_sequence:
+                            continue
+
+                        train_seq_paths = sequence_path_moins + [path_irar] + sequence_path_plus
+                        irs = []
+                        winds = []
+                        valide = 0
+                        for j, path in enumerate(train_seq_paths):
+                                try : 
+                                    ds = xr.open_dataset(path)
+                                    # ds = dataprep.build_storm_centered_dataset(ds)
+
+                                    irs.append(ds["ir_aeqd"].values)   # (501,501) dxy = 2
+                                    if j == int(len(train_seq_paths)//2) :
+                                        winds.append(ds["wind_aeqd"].values)  # (501,501) dxy = 2
+                                    
+                                    valide += 1
+                                except Exception as e:
+                                    print(f"Error loading {path}: {e}")
+                                    break
+                        
+                        if valide == len(train_seq_paths):                       
+                            if name == "Train":
+                                irwin_train.append(np.stack(irs))
+                                sar_train.append(np.stack(winds))
+                                infos_train.append({k: row[k] for k in keys})
+
+                            elif name == "Val":
+                                irwin_val.append(np.stack(irs))
+                                sar_val.append(np.stack(winds))
+                                infos_val.append({k: row[k] for k in keys})
+
+                            elif name == "Test":
+                                irwin_test.append(np.stack(irs))
+                                sar_test.append(np.stack(winds))
+                                infos_test.append({k: row[k] for k in keys})
+
+
+            ## Utilisation de sargeo avec une fenetre temporelle de 4h maximum avec 9 channels
+            else :
+                index_par = range(0, self.cfg.irwin_channels)
+                if not cfg.conditional_model:
+                    
+                    data = pd.read_csv(
+                            "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/"
+                            "TCVA_matched_with_SARGEO_v3_split_by_year.csv"
+                        )[: 50 if self.cfg.code_test else None]
+                    
+                else:
+                    data = pd.read_csv(
+                        "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/"
+                        "TCVA_matched_with_SARGEO_tcprimed.csv"
+                    )
+                    data = data[~data["tcprimed_env_path"].isna()]
+
+                # On ne garde que les lignes dont le split (train/val/test) est défini
+                data = data[~data["split"].isna()]
+                print("data after filtering", len(data))
+                data = data.reset_index(drop=True)
+
+                # --- Normalisation des features de cisaillement (shear) si modèle conditionnel ---
+                if cfg.conditional_model:
+                    mag_cols = [f"shear_magnitude_{i}" for i in range(1, 9)]
+                    dir_cols = [f"shear_direction_{i}" for i in range(1, 9)]
+                    shear_cols = dir_cols + mag_cols
+
+                    train_shear = data[data["split"] == "train"][shear_cols].to_numpy(dtype=np.float32)
+                    train_shear = np.nan_to_num(train_shear, nan=0.0)
+
+                    shear_mean = train_shear.mean(axis=0)  # (16,)
+                    shear_std = train_shear.std(axis=0)    # (16,)
+                
+
+                ### Generating Data 
+                for set_data in ["train", "val", "test"]:
+                    N = len(data[data["split"] == set_data])
+
+                    for i, row in tqdm(data[data["split"] == set_data].iterrows(), total=N, desc=f"Generating {set_data} data : ..............."):
+                        try:
+                            with xr.open_dataset(row["sargeo_path"]) as sargeo:
+                                if "IRWIN" not in sargeo:
+                                    raise KeyError("Missing IRWIN")
+
+                            with xr.open_dataset(row["sar_aeqd_path"]) as ds_aeqd:
+                                if "owiWindSpeed" not in ds_aeqd:
+                                    raise KeyError("Missing owiWindSpeed")
+
+                                # --- Récupération éventuelle des données ERA5 colocalisées ---
+                                if self.add_era5:
+                                    sar_path = row["sar_aeqd_path"]
+                                    list_sar_path = [sar_path]
+                                    cyclone_id = row["cyclone_id"]
+                                    date = str(sar_path.split("/")[-1].split("-")[5])
+                                    year = date[0:4]
+                                    month = date[4:6]
+                                    day = date[6:8]
+                                    hour = date[9:11]
+                                    minute = date[11:13]
+                                    year_path = os.path.join(era5_path, str(year))
+                                    fevrier = np.arange(1, 29, 1) if int(year) % 4 != 0 else np.arange(1, 30, 1)
+                                    months = [
+                                        janvier, fevrier, mars, avril, mai, juin,
+                                        juillet, aout, septembre, octobre, novembre, decembre,
+                                    ]
+                                    ndays = 0
+                                    for i in range(int(month) - 1):
+                                        ndays += len(months[i])
+                                    ndays += int(day)
+                                    ndays_str = "0" + str(ndays) if len(str(ndays)) < 3 else str(ndays)
+                                    dayera5_path = os.path.join(year_path, ndays_str)
+                                    nc_path = ""
+                                    for nc_file in os.listdir(dayera5_path):
+                                        if cyclone_id in nc_file:
+                                            nc_path = os.path.join(dayera5_path, nc_file)
+                                            break
+                                    reg_era5 = regrid_colocs.regrid_files_era5(
+                                        [nc_path],
+                                        "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_preparation/"
+                                        "regrid_era5/regridded_era5",
+                                        resolution_km=2,
+                                        grid_size_km=300,
+                                        list_sar_path=list_sar_path,
+                                        index_hour=int(hour) - 1 + int(minute) // 30,
+                                    )[0]
+
+                                    if set_data == "train":
+                                        era5_train.append(reg_era5)
+                                    elif set_data == "val":
+                                        era5_val.append(reg_era5)
+                                    elif set_data == "test":
+                                        era5_test.append(reg_era5)
+                                
+                                if set_data == "train":
+                                    sar_train.append(ds_aeqd["owiWindSpeed"].values)
+                                    irwin_train.append(sargeo["IRWIN"].values)
+                                elif set_data == "val":
+                                    sar_val.append(ds_aeqd["owiWindSpeed"].values)
+                                    irwin_val.append(sargeo["IRWIN"].values)
+                                elif set_data == "test":
+                                    sar_test.append(ds_aeqd["owiWindSpeed"].values)
+                                    irwin_test.append(sargeo["IRWIN"].values)
+
+                            # --- Ajout des features environnementales (shear) si modèle conditionnel ---
+                            if cfg.conditional_model:
+                                shear_vec = row[shear_cols].to_numpy(dtype=np.float32)
+                                shear_vec = np.nan_to_num(shear_vec, nan=0.0)
+                                shear_vec = (shear_vec - shear_mean) / shear_std
+                                if set_data == "train":
+                                    infos_train.append({**{k: row[k] for k in keys}, "shear": shear_vec})
+                                elif set_data == "val":
+                                    infos_val.append({**{k: row[k] for k in keys}, "shear": shear_vec})
+                                elif set_data == "test":
+                                    infos_test.append({**{k: row[k] for k in keys}, "shear": shear_vec})
+                            else:
+                                if set_data == "train":
+                                    infos_train.append({k: row[k] for k in keys})
+                                elif set_data == "val":
+                                    infos_val.append({k: row[k] for k in keys})
+                                elif set_data == "test":
+                                    infos_test.append({k: row[k] for k in keys})
+
+                        except Exception as e:
+                            print(e)
+                            continue
+            if self.cfg.anggrek_test:
+                # Données du cyclone "Anggrek" (jeu de test additionnel)
+                anggrek_csv = pd.read_csv(
+                    "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/"
+                    "anggrek_coloc_sar_ir.csv"
+                )[:10 if self.cfg.code_test else None]
+
+                N = len(anggrek_csv)
+                # Indices relatifs (-C/2 ... +C/2) des canaux IR temporels à charger
+                indices = list(range(-(self.irwin_channels // 2), (self.irwin_channels // 2) + 1))
+            
+                for row_idx, row in tqdm(anggrek_csv.iterrows(), total=N, desc="Generating Anggrek data : ..............."):
+
+                    ir_path = row["ir_path"]
+                    paths = [
+                            dataprep.shift_ir_path(ir_path, 
+                                                    idx=i, 
+                                                    step_minutes=30 if len(index_par) ==4 else 60) 
+                                                    for i in indices
+                            ]
+
+                    sample_imgs = []
+                    ok = True
+
+                    for path in paths:
+                        try:
+                            with xr.open_dataset(path) as ir_ds:
+                                if "IR" not in ir_ds:
+                                    ok = False
+                                    break
+                                arr = np.squeeze(ir_ds["IR"].values)
+                                sample_imgs.append(arr)
+                        except FileNotFoundError:
+                            ok = False
+                            break
+
+                    # On n'ajoute le sample que si on a bien C canaux
+                    if ok and len(sample_imgs) == len(indices):
+                        # empile en (C, H, W)
+                        irwin_anggrek.append(np.stack(sample_imgs, axis=0))
+
+                        infos_anggrek.append(
+                            {
+                                "sid": row["sid"],
+                                "date": row["date"],
+                                "vmax": row["wind_speed (m/s)"],
+                                "lat": row["lat"],
+                                "lon": row["lon"],
+                                "analysis_vmax_cyclobs": row["analysis_vmax_cyclobs"],
+                                "vmax_cyclobs": row["vmax_cyclobs"],
+                                "ibtracs_vmax": row["ibtracs_vmax"],
+                                "satcon_vmax": row["satcon_vmax"],
+                                "era5_vmax": row["era5_vmax"],
+                            }
+                        )
+
+                        cyclone_id = anggrek_csv.iloc[row_idx]["sid"]
+                        if self.add_era5:
+                            date = anggrek_csv.iloc[row_idx]["date"]
+                            year = date[0:4]
+                            month = date[5:7]
+                            day = date[8:10]
+                            year_path = os.path.join(era5_path, str(year))
+                            fevrier = np.arange(1, 29, 1) if int(year) % 4 != 0 else np.arange(1, 30, 1)
+                            months = [
+                                janvier, fevrier, mars, avril, mai, juin,
+                                juillet, aout, septembre, octobre, novembre, decembre,
+                            ]
+                            ndays = 0
+                            for i in range(int(month) - 1):
+                                ndays += len(months[i])
+                            ndays += int(day)
+                            ndays_str = "0" + str(ndays) if len(str(ndays)) < 3 else str(ndays)
+                            dayera5_path = os.path.join(year_path, ndays_str)
+                            nc_path = ""
+                            for nc_file in os.listdir(dayera5_path):
+                                if cyclone_id in nc_file:
+                                    nc_path = os.path.join(dayera5_path, nc_file)
+                                    break
+                            reg_era5 = regrid_colocs.regrid_files_era5(
+                                [nc_path],
+                                "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_preparation/"
+                                "regrid_era5/regridded_era5",
+                                resolution_km=2,
+                                grid_size_km=300,
+                                list_sar_path=list_sar_path,
+                                index_hour=int(hour) - 1 + int(minute) // 30,
+                            )
+                            era5_anggrek.append(reg_era5)
+            
+            self.X_train = np.stack(irwin_train); self.X_val = np.stack(irwin_val); self.X_test = np.stack(irwin_test)
+            self.sar_train = np.stack(sar_train).squeeze(); self.sar_val = np.stack(sar_val).squeeze(); self.sar_test = np.stack(sar_test).squeeze()
+            self.infos_train = np.array(infos_train) ; self.infos_val = np.array(infos_val) ; self.infos_test = np.array(infos_test)
+            if self.cfg.anggrek_test:
+                self.X_anggrek = np.array(irwin_anggrek) ; self.infos_anggrek = np.array(infos_anggrek)
+            if self.add_era5:
+                self.era5_train = np.array(era5_train) ; self.era5_val = np.array(era5_val) ; self.era5_test = np.array(era5_test)
+                if self.cfg.anggrek_test:    
+                    self.era5_anggrek = np.array(era5_anggrek)
+            
+            print(f"irwin_train shape : {self.X_train.shape} ; sar_train shape : {self.sar_train.shape} ; infos_train shape : {self.infos_train.shape}")
+            print(f"irwin_val shape : {self.X_val.shape} ; sar_val shape : {self.sar_val.shape} ; infos_val shape : {self.infos_val.shape}")
+            print(f"irwin_test shape : {self.X_test.shape} ; sar_test shape : {self.sar_test.shape} ; infos_test shape : {self.infos_test.shape}")
+            if self.cfg.anggrek_test:
+                print(f"irwin_anggrek shape : {self.X_anggrek.shape} ; infos_anggrek shape : {self.infos_anggrek.shape}")
+                if self.add_era5:
+                    print(f"era5_anggrek shape : {self.era5_anggrek.shape}")
+
+
+            ## recadrage et centrage autour du cnetre et redimensionnement
+            size = self.cfg.img_size
+            N,C,H,W = self.X_train.shape
+            self.X_train = self.X_train[:,:, W//2 - size//2 : W//2 + size//2, H//2 - size//2 : H//2 + size//2]
+            self.X_val = self.X_val[:,:, W//2 - size//2 : W//2 + size//2, H//2 - size//2 : H//2 + size//2]
+            self.X_test = self.X_test[:,:, W//2 - size//2 : W//2 + size//2, H//2 - size//2 : H//2 + size//2]
+            if self.cfg.anggrek_test:
+                N,C,H,W = self.X_anggrek.shape
+                self.X_anggrek = self.X_anggrek[:,:, W//2 - size//2 : W//2 + size//2, H//2 - size//2 : H//2 + size//2]  
+            self.sar_train = self.sar_train[:, W//2 - size//2 : W//2 + size//2, H//2 - size//2 : H//2 + size//2]
+            self.sar_val = self.sar_val[:, W//2 - size//2 : W//2 + size//2, H//2 - size//2 : H//2 + size//2]
+            self.sar_test = self.sar_test[:, W//2 - size//2 :  W//2 + size//2, H//2 - size//2 : H//2 + size//2]
+
+            print(f"After Data resize : irwin_train shape : {self.X_train.shape} ; sar_train shape : {self.sar_train.shape}")
+
+            ## conversion Kelvin -> Celsius
+            self.X_train = self.X_train - 273.15 ; self.X_val = self.X_val - 273.15 ; self.X_test = self.X_test - 273.15
+            if self.cfg.anggrek_test:
+                self.X_anggrek = self.X_anggrek - 273.15
+            
+
+            ## masking NaN values for sar data
+            self.mask_train = np.isfinite(self.sar_train).astype(np.float32)
+            self.mask_val = np.isfinite(self.sar_val).astype(np.float32)
+            self.mask_test = np.isfinite(self.sar_test).astype(np.float32)
+
+            ## remplacement des nan par 0
+            self.X_train = np.nan_to_num(self.X_train, nan=0.0, posinf=0.0, neginf=0.0)
+            self.X_val = np.nan_to_num(self.X_val, nan=0.0, posinf=0.0, neginf=0.0)
+            self.X_test = np.nan_to_num(self.X_test, nan=0.0, posinf=0.0, neginf=0.0)
+            if self.cfg.anggrek_test:
+                self.X_anggrek = np.nan_to_num(self.X_anggrek, nan=0.0, posinf=0.0, neginf=0.0)
+
+            self.sar_train = np.nan_to_num(self.sar_train, nan=0.0, posinf=0.0, neginf=0.0)
+            self.sar_val = np.nan_to_num(self.sar_val, nan=0.0, posinf=0.0, neginf=0.0)
+            self.sar_test = np.nan_to_num(self.sar_test, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+            # Data Augmentation
+            if self.cfg.augmentation : 
+                print("Start Data Augmentation for train set : ----------")
+                self.X_train, self.sar_train, self.mask_train, self.infos_train = dataprep.data_augmentation(
+                                                                                                self.X_train, 
+                                                                                                self.sar_train, 
+                                                                                                self.mask_train, 
+                                                                                                self.infos_train
+                                                                                            )
+                print("New Size after augmentation :",self.X_train.shape,self.sar_train.shape)
+            
+
+            ### Normalisation des entrées
+            print("Start normalisation : .......................")
+
+            mean_x, std_x = [], []
+            for c in range(self.X_train.shape[1]):
+                self.X_train[:, c], mean, std = dataprep.z_score(self.X_train[:, c])
+                mean_x.append(mean)
+                std_x.append(std)
+            self.mean_X, self.std_X = mean_x, std_x
+
+            for c in range(self.X_train.shape[1]):
+                self.X_val[:, c], _, _ = dataprep.z_score(self.X_val[:, c], mean_value=mean_x[c], std_value=std_x[c])
+                self.X_test[:, c], _, _ = dataprep.z_score(self.X_test[:, c], mean_value=mean_x[c], std_value=std_x[c])
+                if self.cfg.anggrek_test:
+                    self.X_anggrek[:, c], _, _ = dataprep.z_score(
+                        self.X_anggrek[:, c], mean_value=mean_x[c], std_value=std_x[c]
+                    )
+            
+            if self.cfg.norm == "z_score":
+                self.sar_train, self.mean_sar, self.std_sar = dataprep.z_score(self.sar_train)
+                self.sar_val, _, _ = dataprep.z_score(self.sar_val, mean_value=self.mean_sar, std_value=self.std_sar)
+                self.sar_test, _, _ = dataprep.z_score(self.sar_test, mean_value=self.mean_sar, std_value=self.std_sar)
+
+            elif self.cfg.norm == "annular":
+                self.sar_train, stats = dataprep.annular_normalization(self.sar_train, bin_size=1, mask=None)
+                self.mean_sar = stats["mean"]
+                self.std_sar = stats["std"]
+                self.sar_val, _ = dataprep.annular_normalization(self.sar_val, bin_size=1, mask=None, stats=stats)
+                self.sar_test, _ = dataprep.annular_normalization(self.sar_test, mask=None, stats=stats)
+
+            ## sauvgarde des données et les stats de normlisation 
+            data_saved = os.path.join(self.target_dir, "Test_data_stats")
+            os.makedirs(data_saved, exist_ok=True)
+
+            with open(os.path.join(data_saved, "Tets_data_stats.pkl"), "wb") as f:
+                pkl.dump(
+                    {
+                        "normalisation_type": str(self.cfg.norm),
+                        "std_sar": self.std_sar,
+                        "mean_sar": self.mean_sar,
+                        "mean_x": mean_x,
+                        "std_x": std_x,
+                        "test_set_irwin": self.X_test,
+                        "test_set_sar": self.sar_test,
+                        "anggrek": self.X_anggrek
+                    },
+                    f,
+                )
         
         print("Data Preparation finished.")

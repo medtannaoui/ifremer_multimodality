@@ -50,6 +50,7 @@ class IR_SAR_Config:
     min_keep_channels: int
     protect_channels: list[int]
     irar : bool
+    temporal_mode : bool
     @staticmethod
     def from_yaml(path: str):
         with open(path, "r") as file:
