@@ -1,7 +1,0 @@
-Python Path: ['/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR', '/home1/datahome/mtannaou/conda-env/data_env/lib/python312.zip', '/home1/datahome/mtannaou/conda-env/data_env/lib/python3.12', '/home1/datahome/mtannaou/conda-env/data_env/lib/python3.12/lib-dynload', '/home1/datahome/mtannaou/conda-env/data_env/lib/python3.12/site-packages', '/scale/user/mtannaou/alternance', '/scale/user/mtannaou/alternance/src']
-CUDA available: True
-GPU count: 8
-GPU name: NVIDIA A100-SXM4-80GB
-🔹 Loading data from csv ...
--------------------------------------------------------------
-Len Data IRAR Valide : 1058
