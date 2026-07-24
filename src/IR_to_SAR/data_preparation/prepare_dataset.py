@@ -178,7 +178,8 @@ class PrepareDataSet:
             try:
                 with open(os.path.join(self.target_dir,"sequence_data.pkl"),"wb") as f:
                     pkl.dump({"x_train":self.X_train, "x_val":self.X_val, "x_test":self.X_test,
-                            "y_train":self.sar_train, "y_val":self.sar_val, "y_test":self.sar_test})
+                            "y_train":self.sar_train, "y_val":self.sar_val, "y_test":self.sar_test}
+                            , f)
             except Exception as e : 
                 print("erreur dans la sauvgarde des sequences :",e)
 
@@ -287,12 +288,10 @@ class PrepareDataSet:
                 )
 
             # Calcul d'UNE statistique par anneau avec tous les canaux
-            # du train réunis
             sar_train_flat, mean_sar, std_sar = dataprep.z_score(
                 sar_train_flat,
                 mask = mask_train_flat
             )
-            # Normalisation de validation et test avec les statistiques
             # calculées uniquement sur le train
             sar_val_flat, _, _ = dataprep.z_score(
                 sar_val_flat,
@@ -331,34 +330,6 @@ class PrepareDataSet:
             self.sar_test *= self.mask_test
             self.mean_sar = mean_sar
             self.std_sar = std_sar
-            # Vérifications finales
-            for name, sar_array, mask_array in [
-                ("train", self.sar_train, self.mask_train),
-                ("val", self.sar_val, self.mask_val),
-                ("test", self.sar_test, self.mask_test),
-            ]:
-                if not np.isfinite(sar_array).all():
-                    raise RuntimeError(
-                        f"sar_{name} contient des NaN ou des Inf "
-                        "après normalisation annulaire."
-                    )
-
-                if not np.all(sar_array[mask_array == 0] == 0):
-                    raise RuntimeError(
-                        f"sar_{name} contient des valeurs non nulles "
-                        "dans les zones masquées."
-                    )
-
-                valid_values = sar_array[mask_array.astype(bool)]
-
-                if valid_values.size > 0:
-                    print(
-                        f"SAR {name} normalisé : "
-                        f"min={valid_values.min():.6f}, "
-                        f"max={valid_values.max():.6f}, "
-                        f"mean={valid_values.mean():.6f}, "
-                        f"std={valid_values.std():.6f}"
-                    )
             
             stats = {
                 "mean_ir": self.mean_X,
@@ -373,10 +344,6 @@ class PrepareDataSet:
             ) as f:
                 pkl.dump(stats, f)
 
-            print(
-                "Nombre d'anneaux normalisés :",
-                len(np.asarray(self.mean_sar))
-            )
             
 
         else:

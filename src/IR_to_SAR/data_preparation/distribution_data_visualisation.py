@@ -12,36 +12,47 @@ cmap_ir = CMAP.cira_ir()
 cmap_sar = CMAP.cmap_sar()
 
 
-
 def plot_sar(tensor, fig=None, ax=None, cmap=cmap_sar, title=None,
              x_lim=300, x=None, y=None):
-    
-    if len(tensor.shape) == 3:
-        tensor = tensor.squeeze()
+
+    tensor = np.asarray(tensor)
+    tensor = np.squeeze(tensor)
+
+    if tensor.ndim != 2:
+        raise ValueError(
+            f"plot_sar attend une image 2D, mais a reçu une forme {tensor.shape}"
+        )
+
     if ax is None:
         ax = plt.gca()
+
     if x is None:
         y_sar = np.linspace(-x_lim, x_lim, tensor.shape[0])
         x_sar = np.linspace(-x_lim, x_lim, tensor.shape[1])
         x_sar, y_sar = np.meshgrid(x_sar, y_sar)
     else:
-        x_sar, y_sar = x, y   # déjà 2D, pas de meshgrid
+        x_sar, y_sar = x, y
+
     im = ax.pcolormesh(
         x_sar,
         y_sar,
         tensor,
         cmap=cmap,
         vmin=0,
-        vmax=160/1.94384449,
-        shading="auto"
+        vmax=160 / 1.94384449,
+        shading="auto",
     )
+
     if x is None:
         ax.set_xlim(-x_lim, x_lim)
         ax.set_ylim(-x_lim, x_lim)
+
     if title is not None:
         ax.set_title(title)
+
     if fig is not None:
         fig.colorbar(im, ax=ax, orientation="horizontal")
+
     ax.set_aspect("equal")
 
 def plot_aam(tensor, fig=None, ax=None,title=None,x_lim=300):
@@ -61,7 +72,7 @@ def plot_aam(tensor, fig=None, ax=None,title=None,x_lim=300):
 
 def plot_ir(tensor, fig=None, x=None, y=None, ax=None, x_lim=300,
             cmap=cmap_ir, vmin=-100, vmax=50):
-    if len(tensor.shape) == 3:
+    if len(tensor.shape) > 2:
         tensor = tensor.squeeze()
     if ax is None:
         ax = plt.gca()
