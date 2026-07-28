@@ -245,6 +245,10 @@ def validate(
 
 
 def main(cfg: config.IR_SAR_Config, test=False):
+
+    import os
+    import time
+
     cfg.use_residu = True
     cfg.use_flow_matching = True
     cfg.protect_channels = cfg.protect_channels if not cfg.add_era5 else [cfg.in_channels - 1]
@@ -252,6 +256,16 @@ def main(cfg: config.IR_SAR_Config, test=False):
     cfg.batch_size = cfg.batch_size if not cfg.code_test else 8
 
     logger.info(f"Starting training with config:\n{cfg.__dict__}")
+
+    loss_file = "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/training_results/IRAR_regression/train_ir_sar_1/loss_history.png"
+
+    print(f"En attente de {loss_file}...")
+
+    while not os.path.isfile(loss_file):
+        time.sleep(200  ) 
+
+    print("Le fichier existe. Lancement du script...")
+
 
     base_dir = Path(cfg.save_dir)
     i = 1

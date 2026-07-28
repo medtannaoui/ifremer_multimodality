@@ -172,7 +172,7 @@ class LogValidationSamples:
             print("using precomputed ode pred", pred.shape)
 
         
-        ch = x.shape[1] // 2 if x.shape[1] > 4 else 0
+        ch = x.shape[1] // 4 if x.shape[1] > 4 else 0
         ir = x[:, ch, :, :].squeeze().cpu().numpy()
         sar = sar.squeeze().cpu().numpy() if sar.ndim == 4 else sar.cpu().numpy()
         pred = pred.squeeze().cpu().numpy() if pred.ndim == 4 else pred.cpu().numpy()

@@ -386,3 +386,94 @@ def custom_collate(batch):
     infos = [item[3] for item in batch]
 
     return xs, sars, masks, infos
+
+import src.IR_to_SAR.data_preparation.regrid_era5.regrid_era5 as regrid_colocs
+era5_path = "/scale/user/mtannaou/alternance/src/extract_cyclones_era5/era5_single_levels"
+janvier, mars, mai, juillet, aout, octobre, decembre = (
+    np.arange(1, 32, 1),
+    np.arange(1, 32, 1),
+    np.arange(1, 32, 1),
+    np.arange(1, 32, 1),
+    np.arange(1, 32, 1),
+    np.arange(1, 32, 1),
+    np.arange(1, 32, 1),
+)
+avril, juin, septembre, novembre = (
+    np.arange(1, 31, 1),
+    np.arange(1, 31, 1),
+    np.arange(1, 31, 1),
+    np.arange(1, 31, 1),
+)
+
+
+def add_era5_irar(path):
+    base_path = os.path.basename(path)
+    cyclone_id = str(base_path).split("_s20")[0].split("_")[-1]
+    date = str(base_path).split("_s")[-1].split("_")[0]
+    year = date[0:4]
+    month = date[4:6]
+    day = date[6:8]
+    hour = date[8:10]
+    minute = date[10:12]
+    year_path = os.path.join(era5_path, str(year))
+    fevrier = np.arange(1, 29, 1) if int(year) % 4 != 0 else np.arange(1, 30, 1)
+    months = [
+        janvier, fevrier, mars, avril, mai, juin,
+        juillet, aout, septembre, octobre, novembre, decembre,
+    ]
+    ndays = 0
+    for i in range(int(month) - 1):
+        ndays += len(months[i])
+    ndays += int(day)
+    ndays_str = "0" + str(ndays) if len(str(ndays)) < 3 else str(ndays)
+    dayera5_path = os.path.join(year_path, ndays_str)
+    nc_path = ""
+    for nc_file in os.listdir(dayera5_path):
+        if str(cyclone_id).lower() in nc_file:
+            nc_path = os.path.join(dayera5_path, nc_file)
+            break
+    reg_era5 = regrid_colocs.regrid_files_era5(
+        [nc_path],
+        "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_preparation/"
+        "regrid_era5/regridded_era5",
+        resolution_km=2,
+        grid_size_km=512,
+        index_hour=int(hour) - 1 + int(minute) // 30,
+    )[0]
+
+    return reg_era5
+
+def add_era5_anggrek(anggrek_csv, row_idx, irar):
+    cyclone_id = anggrek_csv.iloc[row_idx]["sid"]
+    date = anggrek_csv.iloc[row_idx]["date"]
+    year = date[0:4]
+    month = date[5:7]
+    day = date[8:10]
+    hour = date[11:13]
+    minute = date[14:16]
+    year_path = os.path.join(era5_path, str(year))
+    fevrier = np.arange(1, 29, 1) if int(year) % 4 != 0 else np.arange(1, 30, 1)
+    months = [
+        janvier, fevrier, mars, avril, mai, juin,
+        juillet, aout, septembre, octobre, novembre, decembre,
+    ]
+    ndays = 0
+    for i in range(int(month) - 1):
+        ndays += len(months[i])
+    ndays += int(day)
+    ndays_str = "0" + str(ndays) if len(str(ndays)) < 3 else str(ndays)
+    dayera5_path = os.path.join(year_path, ndays_str)
+    nc_path = ""
+    for nc_file in os.listdir(dayera5_path):
+        if cyclone_id in nc_file:
+            nc_path = os.path.join(dayera5_path, nc_file)
+            break
+    regrid_colocs.regrid_files_era5(
+            [nc_path],
+            "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_preparation/"
+            "regrid_era5/regridded_era5",
+            resolution_km=2,
+            grid_size_km=1000 if not irar else 512,
+            index_hour=int(hour) - 1 + int(minute) // 30,
+        )
+

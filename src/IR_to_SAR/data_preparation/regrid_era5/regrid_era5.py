@@ -452,7 +452,7 @@ def read_track_with_retry_sid(sid, retries=5, sleep=5, polite_sleep=0.1):
 #     regridded = regrid.regrid_era5(ds, df, data_vars=["wind_speed"])
 #     return regridded, sid
 
-def regrid_one_file_era5(filename, resolution_km=2, grid_size_km=300, sar_path=None):
+def regrid_one_file_era5(filename, resolution_km=2, grid_size_km=300):
     """Regrid a single ERA5 file for all timesteps and return regridded datasets."""
     sid = str(filename).split('_')[-1].split('.')[0]
     df_api = read_track_with_retry_sid(sid)
@@ -512,9 +512,9 @@ def write_regridded_files_era5(regridded, sid, output_path):
         regridded[i].to_netcdf(output, mode="w")
     
 
-def regrid_and_write_era5_file(filename, output_path, grid_size_km=300, resolution_km=2, sar_path=None):
+def regrid_and_write_era5_file(filename, output_path, grid_size_km=300, resolution_km=2):
     try:
-        regridded, sid = regrid_one_file_era5(filename, grid_size_km=grid_size_km, resolution_km=resolution_km,sar_path=sar_path)
+        regridded, sid = regrid_one_file_era5(filename, grid_size_km=grid_size_km, resolution_km=resolution_km)
         return regridded, sid
         # if regridded is not None:
         #     write_regridded_files_era5(regridded, sid, output_path)
@@ -523,9 +523,10 @@ def regrid_and_write_era5_file(filename, output_path, grid_size_km=300, resoluti
     except Exception as e:
         print(f"Error processing {filename}: {e}")
 
-def regrid_files_era5(file_list, output_path, grid_size_km=300, resolution_km=2, list_sar_path=None, index_hour=None):
+def regrid_files_era5(file_list, output_path, grid_size_km=300, resolution_km=2, index_hour=None):
     results = []
-    for filename, sar_path in zip(file_list, list_sar_path):
-        regridded, sid = regrid_and_write_era5_file(filename, output_path, grid_size_km=grid_size_km, resolution_km=resolution_km,sar_path=sar_path)
+    for filename in file_list:
+        regridded, sid = regrid_and_write_era5_file(filename, output_path, grid_size_km=grid_size_km, resolution_km=resolution_km,
+                                                    )
         results.append(regridded[index_hour]["wind_speed"].values)
     return results

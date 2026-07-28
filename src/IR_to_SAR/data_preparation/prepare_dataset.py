@@ -352,15 +352,16 @@ class PrepareDataSet:
                 data = pd.read_csv(
                     "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/IRAR_L2_dataset.csv"
                 )
+                data = data[data["year"] != 2017]
                 data = data[(data["valide"] == True) & (data["ir_regrided"] == True)]
                 print("Len Data IRAR Valide :", len(data))
 
                 irar = pd.read_csv("/scale/user/mtannaou/alternance/mnt/csvs_finaux/IRAR.csv")
                 irar["date_irar"] = pd.to_datetime(irar["date_irar"])
 
-                train_df = data[data["set"] == "train"][:10 if self.cfg.code_test else None]
-                val_df = data[data["set"] == "val"][:10 if self.cfg.code_test else None]
-                test_df = data[data["set"] == "test"][:10 if self.cfg.code_test else None]
+                train_df = data[data["set"] == "train"][:5 if self.cfg.code_test else None]
+                val_df = data[data["set"] == "val"][:5 if self.cfg.code_test else None]
+                test_df = data[data["set"] == "test"][:5 if self.cfg.code_test else None]
 
                 ## Train generating
                 for df, name in zip([train_df, val_df, test_df], ["Train", "Val", "Test"]):
@@ -374,11 +375,11 @@ class PrepareDataSet:
                         sequence_path_plus = []
                         sequence_path_moins = []
                         valid_sequence = True
-                        index_par = range(1, 5)   # sargeo frequenc (range(1, 5))
+                        index_par = range(1, 6)   # sargeo frequenc (range(1, 5))
 
                         for i in index_par:
-                            date_i = date_irar + timedelta(minutes=i*30 if len(index_par)==4 else i*60)
-                            date_j = date_irar - timedelta(minutes=i*30 if len(index_par)==4 else i*60)
+                            date_i = date_irar + timedelta(minutes=i*60)
+                            date_j = date_irar - timedelta(minutes=i*60)
 
                             sub_i = irar[(irar["date_irar"] == date_i) & (irar["cyclone_id"] == cyclone_id)]
                             sub_j = irar[(irar["date_irar"] == date_j) & (irar["cyclone_id"] == cyclone_id)]
@@ -396,16 +397,21 @@ class PrepareDataSet:
                         train_seq_paths = sequence_path_moins + [path_irar] + sequence_path_plus
                         irs = []
                         winds = []
+                        era5 = []
                         valide = 0
                         for j, path in enumerate(train_seq_paths):
                                 try : 
                                     ds = xr.open_dataset(path)
                                     # ds = dataprep.build_storm_centered_dataset(ds)
 
-                                    irs.append(ds["ir_aeqd"].values)   # (501,501) dxy = 2
+                                    irs.append(ds["ir_aeqd"].values - 273.15)   # (501,501) dxy = 2
                                     if j == int(len(train_seq_paths)//2) :
                                         winds.append(ds["wind_aeqd"].values)  # (501,501) dxy = 2
-                                    
+                                        
+                                    if self.add_era5 : 
+                                        reg_era5 = dataprep.add_era5_irar(path)
+                                        era5.append(reg_era5)
+
                                     valide += 1
                                 except Exception as e:
                                     print(f"Error loading {path}: {e}")
@@ -415,16 +421,22 @@ class PrepareDataSet:
                             if name == "Train":
                                 irwin_train.append(np.stack(irs))
                                 sar_train.append(np.stack(winds))
+                                if self.add_era5  :
+                                    era5_train.append(np.stack(era5))
                                 infos_train.append({k: row[k] for k in keys})
 
                             elif name == "Val":
                                 irwin_val.append(np.stack(irs))
                                 sar_val.append(np.stack(winds))
+                                if self.add_era5  :
+                                    era5_val.append(np.stack(era5))
                                 infos_val.append({k: row[k] for k in keys})
 
                             elif name == "Test":
                                 irwin_test.append(np.stack(irs))
                                 sar_test.append(np.stack(winds))
+                                if self.add_era5  :
+                                    era5_test.append(np.stack(era5))
                                 infos_test.append({k: row[k] for k in keys})
 
 
@@ -436,7 +448,7 @@ class PrepareDataSet:
                     data = pd.read_csv(
                             "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/"
                             "TCVA_matched_with_SARGEO_v3_split_by_year.csv"
-                        )[: 50 if self.cfg.code_test else None]
+                        )[: 100 if self.cfg.code_test else None]
                     
                 else:
                     data = pd.read_csv(
@@ -480,7 +492,6 @@ class PrepareDataSet:
                                 # --- Récupération éventuelle des données ERA5 colocalisées ---
                                 if self.add_era5:
                                     sar_path = row["sar_aeqd_path"]
-                                    list_sar_path = [sar_path]
                                     cyclone_id = row["cyclone_id"]
                                     date = str(sar_path.split("/")[-1].split("-")[5])
                                     year = date[0:4]
@@ -511,9 +522,8 @@ class PrepareDataSet:
                                         "regrid_era5/regridded_era5",
                                         resolution_km=2,
                                         grid_size_km=300,
-                                        list_sar_path=list_sar_path,
                                         index_hour=int(hour) - 1 + int(minute) // 30,
-                                    )[0]
+                                    )
 
                                     if set_data == "train":
                                         era5_train.append(reg_era5)
@@ -559,7 +569,7 @@ class PrepareDataSet:
                 anggrek_csv = pd.read_csv(
                     "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/"
                     "anggrek_coloc_sar_ir.csv"
-                )[:10 if self.cfg.code_test else None]
+                )[:5 if self.cfg.code_test else None]
 
                 N = len(anggrek_csv)
                 # Indices relatifs (-C/2 ... +C/2) des canaux IR temporels à charger
@@ -571,7 +581,7 @@ class PrepareDataSet:
                     paths = [
                             dataprep.shift_ir_path(ir_path, 
                                                     idx=i, 
-                                                    step_minutes=30 if len(index_par) ==4 else 60) 
+                                                    step_minutes=60 if self.cfg.irar else 30) 
                                                     for i in indices
                             ]
 
@@ -584,7 +594,7 @@ class PrepareDataSet:
                                 if "IR" not in ir_ds:
                                     ok = False
                                     break
-                                arr = np.squeeze(ir_ds["IR"].values)
+                                arr = np.squeeze(ir_ds["IR"].values) - 273.15
                                 sample_imgs.append(arr)
                         except FileNotFoundError:
                             ok = False
@@ -610,38 +620,8 @@ class PrepareDataSet:
                             }
                         )
 
-                        cyclone_id = anggrek_csv.iloc[row_idx]["sid"]
                         if self.add_era5:
-                            date = anggrek_csv.iloc[row_idx]["date"]
-                            year = date[0:4]
-                            month = date[5:7]
-                            day = date[8:10]
-                            year_path = os.path.join(era5_path, str(year))
-                            fevrier = np.arange(1, 29, 1) if int(year) % 4 != 0 else np.arange(1, 30, 1)
-                            months = [
-                                janvier, fevrier, mars, avril, mai, juin,
-                                juillet, aout, septembre, octobre, novembre, decembre,
-                            ]
-                            ndays = 0
-                            for i in range(int(month) - 1):
-                                ndays += len(months[i])
-                            ndays += int(day)
-                            ndays_str = "0" + str(ndays) if len(str(ndays)) < 3 else str(ndays)
-                            dayera5_path = os.path.join(year_path, ndays_str)
-                            nc_path = ""
-                            for nc_file in os.listdir(dayera5_path):
-                                if cyclone_id in nc_file:
-                                    nc_path = os.path.join(dayera5_path, nc_file)
-                                    break
-                            reg_era5 = regrid_colocs.regrid_files_era5(
-                                [nc_path],
-                                "/scale/user/mtannaou/alternance/src/IR_to_SAR/data_preparation/"
-                                "regrid_era5/regridded_era5",
-                                resolution_km=2,
-                                grid_size_km=300,
-                                list_sar_path=list_sar_path,
-                                index_hour=int(hour) - 1 + int(minute) // 30,
-                            )
+                            reg_era5 = dataprep.add_era5_anggrek(anggrek_csv, row_idx, self.cfg.irar)
                             era5_anggrek.append(reg_era5)
             
             self.X_train = np.stack(irwin_train); self.X_val = np.stack(irwin_val); self.X_test = np.stack(irwin_test)
@@ -659,8 +639,42 @@ class PrepareDataSet:
             print(f"irwin_test shape : {self.X_test.shape} ; sar_test shape : {self.sar_test.shape} ; infos_test shape : {self.infos_test.shape}")
             if self.cfg.anggrek_test:
                 print(f"irwin_anggrek shape : {self.X_anggrek.shape} ; infos_anggrek shape : {self.infos_anggrek.shape}")
-                if self.add_era5:
-                    print(f"era5_anggrek shape : {self.era5_anggrek.shape}")
+            if self.add_era5:
+                print(f"era5_train shape : {self.era5_train.shape}")
+                print(f"era5_val shape : {self.era5_val.shape}")
+                print(f"era5_test shape : {self.era5_test.shape}")
+                h_X, w_X = self.X_train.shape[-2:]
+                h_era5, w_era5 = self.era5_train.shape[-2:]
+
+                y0 = h_X // 2 - h_era5 // 2
+                y1 = y0 + h_era5
+                x0 = w_X // 2 - w_era5 // 2
+                x1 = x0 + w_era5
+
+                self.X_train = self.X_train[:, :, y0:y1, x0:x1]
+                self.X_val = self.X_val[:, :, y0:y1, x0:x1]
+                self.X_test = self.X_test[:, :, y0:y1, x0:x1]
+
+                self.X_test = np.concatenate(
+                                            [self.X_test, self.era5_test],
+                                            axis=1
+                                                )
+                self.X_train = np.concatenate(
+                                            [self.X_train, self.era5_train],
+                                            axis=1
+                                                )
+                self.X_val = np.concatenate(
+                                            [self.X_val, self.era5_val],
+                                            axis=1
+                                                )
+                if self.cfg.anggrek_test:
+                    self.X_anggrek = self.X_anggrek[:, :, y0:y1, x0:x1]
+                    self.X_anggrek = np.concatenate([self.X_anggrek, self.era5_anggrek],
+                                            axis=1
+                                                )
+                print("Train data apres concatenatiuo avec era5" , self.X_train.shape)
+                print("VAl data apres concatenatiuo avec era5" , self.X_val.shape)
+                print("Test data apres concatenatiuo avec era5" , self.X_test.shape)
 
 
             ## recadrage et centrage autour du cnetre et redimensionnement
@@ -672,18 +686,13 @@ class PrepareDataSet:
             if self.cfg.anggrek_test:
                 N,C,H,W = self.X_anggrek.shape
                 self.X_anggrek = self.X_anggrek[:,:, W//2 - size//2 : W//2 + size//2, H//2 - size//2 : H//2 + size//2]  
+            N,H,W = self.sar_train.shape
             self.sar_train = self.sar_train[:, W//2 - size//2 : W//2 + size//2, H//2 - size//2 : H//2 + size//2]
             self.sar_val = self.sar_val[:, W//2 - size//2 : W//2 + size//2, H//2 - size//2 : H//2 + size//2]
             self.sar_test = self.sar_test[:, W//2 - size//2 :  W//2 + size//2, H//2 - size//2 : H//2 + size//2]
 
             print(f"After Data resize : irwin_train shape : {self.X_train.shape} ; sar_train shape : {self.sar_train.shape}")
-
-            ## conversion Kelvin -> Celsius
-            self.X_train = self.X_train - 273.15 ; self.X_val = self.X_val - 273.15 ; self.X_test = self.X_test - 273.15
-            if self.cfg.anggrek_test:
-                self.X_anggrek = self.X_anggrek - 273.15
             
-
             ## masking NaN values for sar data
             self.mask_train = np.isfinite(self.sar_train).astype(np.float32)
             self.mask_val = np.isfinite(self.sar_val).astype(np.float32)
@@ -707,7 +716,7 @@ class PrepareDataSet:
                 self.X_train, self.sar_train, self.mask_train, self.infos_train = dataprep.data_augmentation(
                                                                                                 self.X_train, 
                                                                                                 self.sar_train, 
-                                                                                                self.mask_train, 
+                                                                                                self.mask_train.astype(bool), 
                                                                                                 self.infos_train
                                                                                             )
                 print("New Size after augmentation :",self.X_train.shape,self.sar_train.shape)
@@ -732,34 +741,39 @@ class PrepareDataSet:
                     )
             
             if self.cfg.norm == "z_score":
-                self.sar_train, self.mean_sar, self.std_sar = dataprep.z_score(self.sar_train, mask= self.mask_train)
-                self.sar_val, _, _ = dataprep.z_score(self.sar_val, mean_value=self.mean_sar, std_value=self.std_sar, mask = self.mask_val)
-                self.sar_test, _, _ = dataprep.z_score(self.sar_test, mean_value=self.mean_sar, std_value=self.std_sar, mask = self.mask_test)
+                self.sar_train, self.mean_sar, self.std_sar = dataprep.z_score(self.sar_train, mask= self.mask_train.astype(bool))
+                self.sar_val, _, _ = dataprep.z_score(self.sar_val, mean_value=self.mean_sar, std_value=self.std_sar, mask = self.mask_val.astype(bool))
+                self.sar_test, _, _ = dataprep.z_score(self.sar_test, mean_value=self.mean_sar, std_value=self.std_sar, mask = self.mask_test.astype(bool))
 
             elif self.cfg.norm == "annular":
-                self.sar_train, stats = dataprep.annular_normalization(self.sar_train, bin_size=1, mask=self.mask_train)
+                self.sar_train, stats = dataprep.annular_normalization(self.sar_train, bin_size=1, mask=self.mask_train.astype(bool))
                 self.mean_sar = stats["mean"]
                 self.std_sar = stats["std"]
-                self.sar_val, _ = dataprep.annular_normalization(self.sar_val, bin_size=1, mask=self.mask_val, stats=stats)
-                self.sar_test, _ = dataprep.annular_normalization(self.sar_test, mask=self.mask_test, stats=stats)
+                self.sar_val, _ = dataprep.annular_normalization(self.sar_val, bin_size=1, mask=self.mask_val.astype(bool), stats=stats)
+                self.sar_test, _ = dataprep.annular_normalization(self.sar_test, mask=self.mask_test.astype(bool), stats=stats)
 
             ## sauvgarde des données et les stats de normlisation 
             data_saved = os.path.join(self.target_dir, "Test_data_stats")
             os.makedirs(data_saved, exist_ok=True)
 
+            data = {
+                    "normalisation_type": str(self.cfg.norm),
+                    "std_sar": self.std_sar,
+                    "mean_sar": self.mean_sar,
+                    "mean_x": mean_x,
+                    "std_x": std_x,
+                    "test_set_irwin": self.X_test,
+                    "test_set_sar": self.sar_test
+                    }
+            
+            if self.cfg.anggrek_test : 
+                data["anggrek"] = self.X_anggrek
+
             with open(os.path.join(data_saved, "Tets_data_stats.pkl"), "wb") as f:
                 pkl.dump(
-                    {
-                        "normalisation_type": str(self.cfg.norm),
-                        "std_sar": self.std_sar,
-                        "mean_sar": self.mean_sar,
-                        "mean_x": mean_x,
-                        "std_x": std_x,
-                        "test_set_irwin": self.X_test,
-                        "test_set_sar": self.sar_test,
-                        "anggrek": self.X_anggrek
-                    },
-                    f,
+                    data,
+                    f
                 )
+
         
         print("Data Preparation finished.")
