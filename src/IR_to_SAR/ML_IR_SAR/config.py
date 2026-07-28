@@ -51,6 +51,8 @@ class IR_SAR_Config:
     protect_channels: list[int]
     irar : bool
     temporal_mode : bool
+    overlap : bool
+    stride : int
     @staticmethod
     def from_yaml(path: str):
         with open(path, "r") as file:

@@ -10,16 +10,12 @@ from tqdm import tqdm
 import pickle as pkl
 
 import src.IR_to_SAR.data_preparation.data_preprocessing as dataprep
+import src.IR_to_SAR.data_preparation.prepare_dataset_functions as dataprepfunc
 import src.IR_to_SAR.data_preparation.regrid_era5.regrid_era5 as regrid_colocs
 reload(dataprep)
 
+# données pour era5
 era5_path = "/scale/user/mtannaou/alternance/src/extract_cyclones_era5/era5_single_levels"
-
-# Tableaux représentant les jours de chaque mois (utilisés pour calculer le
-# numéro du jour dans l'année, nécessaire pour retrouver le bon sous-dossier
-# ERA5). Les mois à 31 jours et à 30 jours sont définis séparément ; le mois
-# de février est recalculé dynamiquement (année bissextile ou non) au moment
-# de son utilisation plus bas dans le code.
 janvier, mars, mai, juillet, aout, octobre, decembre = (
     np.arange(1, 32, 1),
     np.arange(1, 32, 1),
@@ -42,12 +38,9 @@ class PrepareDataSet:
         target_dir=None,
         cfg=None,
     ):
-        self.augmentation = cfg.augmentation
         self.target_dir = target_dir
-        self.output_data = cfg.output_data
-        self.irwin_channels = cfg.irwin_channels
-        self.add_era5 = cfg.add_era5
         self.cfg = cfg
+
         print("🔹 Loading data from csv ...")
         print("-------------------------------------------------------------")
         irwin_train, irwin_val, irwin_test, irwin_anggrek = [], [], [], []
@@ -61,57 +54,18 @@ class PrepareDataSet:
                 "sar_time",
                 "analysis_vmax",
                 "analysis_rmax",
-                # "analysis_center_quality_flag",
             ] 
         
         if cfg.temporal_mode : 
             print("Using temporal mode .....")
             with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/tempral_data_with_infos.pkl","rb") as f:
                 all_sequences = pkl.load(f)
-                error_paths =  []
             
             for enu, ind in tqdm(enumerate(all_sequences), desc="Generating sequences for training : ....",total=len(all_sequences)):
-                cyclone_id = all_sequences[enu]["cyc_id"]
-                sequence = all_sequences[enu]["sequence"]
-                ir_sequence, wind_sequence = [], []
-                wind_mask = []
-                for tmp in sequence:
-                    path = tmp["path"]
-                    try : 
-                        with xr.open_dataset(path, engine="netcdf4") as ds:
-                            ir_sequence.append(ds["ir_aeqd"].values)
-                            if tmp["has_wind"] : 
-                                wind_sequence.append(ds["wind_aeqd"].values)
-                                wind_mask.append(True)
-                            else : 
-                                wind_sequence.append(
-                                                    np.zeros((501, 501), dtype=np.float32)
-                                                    )
-                                wind_mask.append(False)
-                    except Exception as e: 
-                        error_paths.append(path)
-                        # print("error :", path)
-                        break
-                
-                if len(ir_sequence) != 12:
+                if dataprepfunc.generate_sequence_irar_temporal_mode(all_sequences, enu) is None:
                     continue
-                if not any(wind_mask):
-                    continue
-
-                ir_sequence = np.stack(
-                    ir_sequence,
-                    axis=0,
-                )  - 273.15 # (12, 501, 501)   (K to °C)
-
-                wind_sequence = np.stack(
-                    wind_sequence,
-                    axis=0,
-                )  # (12, 501, 501)
-
-                wind_mask = np.asarray(
-                    wind_mask,
-                    dtype=bool,
-                )  # (12,)
+                else : 
+                    ir_sequence, wind_sequence, wind_mask = dataprepfunc.generate_sequence_irar_temporal_mode(all_sequences, enu)
 
                 if int(all_sequences[enu]["year"]) in  [2017]:
                     irwin_test.append(ir_sequence);sar_test.append(wind_sequence)
@@ -126,84 +80,47 @@ class PrepareDataSet:
                     wind_mask_train.append(wind_mask)
                     infos_train.append({k: ind[k] for k in keys})
 
-            with open("error_temprale_paths.pkl","wb") as f:
-                pkl.dump(error_paths, f)
-
-            irwin_train = np.stack(irwin_train, axis=0).astype(np.float32)
-            sar_train = np.stack(sar_train, axis=0).astype(np.float32)
-            wind_mask_train = np.stack(wind_mask_train, axis=0)
-            self.infos_train = infos_train
+            irwin_train = np.stack(irwin_train, axis=0).astype(np.float32); sar_train = np.stack(sar_train, axis=0).astype(np.float32);
+            wind_mask_train = np.stack(wind_mask_train, axis=0);self.infos_train = infos_train
             # Validation
-            irwin_val = np.stack(irwin_val, axis=0).astype(np.float32)
-            sar_val = np.stack(sar_val, axis=0).astype(np.float32)
-            wind_mask_val = np.stack(wind_mask_val, axis=0)
-            self.infos_val = infos_val
+            irwin_val = np.stack(irwin_val, axis=0).astype(np.float32);sar_val = np.stack(sar_val, axis=0).astype(np.float32)
+            wind_mask_val = np.stack(wind_mask_val, axis=0);self.infos_val = infos_val
             # Test
-            irwin_test = np.stack(irwin_test, axis=0).astype(np.float32)
-            sar_test = np.stack(sar_test, axis=0).astype(np.float32)
-            wind_mask_test = np.stack(wind_mask_test, axis=0)
-            self.infos_test = infos_test
-            
-
-            W, H = irwin_train.shape[-2:]
-            start_h = H // 2 - cfg.img_size // 2
-            end_h = H // 2 + cfg.img_size // 2
-            start_w = W // 2 - cfg.img_size // 2
-            end_w = W // 2  + cfg.img_size // 2
-            # Train
-            self.X_train = irwin_train[:, :, start_w:end_w, start_h:end_h]
-            self.sar_train = sar_train[:, :, start_w:end_w, start_h:end_h]
-            # Validation
-            self.X_val = irwin_val[:, :, start_w:end_w, start_h:end_h]
-            self.sar_val = sar_val[:, :, start_w:end_w, start_h:end_h]
-            # Test
-            self.X_test = irwin_test[:, :, start_w:end_w, start_h:end_h]
-            self.sar_test = sar_test[:, :, start_w:end_w, start_h:end_h]
-
-            print("Train")
-            print(self.X_train.shape)
-            print(self.sar_train.shape)
-            print(wind_mask_train.shape)
-
-            print("\nValidation")
-            print(self.X_val.shape)
-            print(self.sar_val.shape)
-            print(wind_mask_val.shape)
-
-            print("\nTest")
-            print(self.X_test.shape)
-            print(self.sar_test.shape)
-            print(wind_mask_test.shape)
-
-            try:
-                with open(os.path.join(self.target_dir,"sequence_data.pkl"),"wb") as f:
-                    pkl.dump({"x_train":self.X_train, "x_val":self.X_val, "x_test":self.X_test,
-                            "y_train":self.sar_train, "y_val":self.sar_val, "y_test":self.sar_test}
-                            , f)
-            except Exception as e : 
-                print("erreur dans la sauvgarde des sequences :",e)
-
-            # Spatial mask (NaN)
-            self.mask_train = np.isfinite(self.sar_train).astype(np.float32)
-            self.mask_val   = np.isfinite(self.sar_val).astype(np.float32)
-            self.mask_test  = np.isfinite(self.sar_test).astype(np.float32)
-
-            # Temporal mask -> (N, 12, 1, 1)
-            train_temporal = wind_mask_train[:, :, None, None].astype(np.float32)
-            val_temporal   = wind_mask_val[:, :, None, None].astype(np.float32)
-            test_temporal  = wind_mask_test[:, :, None, None].astype(np.float32)
-
-            # Final mask -> (N, 12, H, W)
-            self.mask_train *= train_temporal
-            self.mask_val   *= val_temporal
-            self.mask_test  *= test_temporal
-
-            self.X_train = np.nan_to_num(self.X_train, nan=0.0, posinf=0.0, neginf=0.0)
-            self.X_val = np.nan_to_num(self.X_val, nan=0.0, posinf=0.0, neginf=0.0)
-            self.X_test = np.nan_to_num(self.X_test, nan=0.0, posinf=0.0, neginf=0.0)
-            self.sar_train = np.nan_to_num(self.sar_train, nan=0.0, posinf=0.0, neginf=0.0)
-            self.sar_val = np.nan_to_num(self.sar_val, nan=0.0, posinf=0.0, neginf=0.0)
-            self.sar_test = np.nan_to_num(self.sar_test, nan=0.0, posinf=0.0, neginf=0.0)
+            irwin_test = np.stack(irwin_test, axis=0).astype(np.float32);sar_test = np.stack(sar_test, axis=0).astype(np.float32)
+            wind_mask_test = np.stack(wind_mask_test, axis=0);self.infos_test = infos_test
+            ## ajout de l overlap
+            if self.cfg.overlap : 
+                irwin_train, sar_train, wind_mask_train, self.infos_train,_,_ = dataprep.create_sliding_sequences(ir=irwin_train,
+                                                                                                                sar=sar_train,
+                                                                                                                wind_mask=wind_mask_train,
+                                                                                                                infos=infos_train,
+                                                                                                                window_size=12,
+                                                                                                                stride=self.cfg.stride,
+                                                                                                            )
+                irwin_test, sar_test, wind_mask_test, self.infos_test,_,_ = dataprep.create_sliding_sequences(ir=irwin_test,
+                                                                                                            sar=sar_test,
+                                                                                                            wind_mask=wind_mask_test,
+                                                                                                            infos=infos_test,
+                                                                                                            window_size=12,
+                                                                                                            stride=self.cfg.stride,
+                                                                                                        )
+                irwin_val, sar_val, wind_mask_val, self.infos_val,_,_ = dataprep.create_sliding_sequences(ir=irwin_val,
+                                                                                                        sar=sar_val,
+                                                                                                        wind_mask=wind_mask_val,
+                                                                                                        infos=infos_val,
+                                                                                                        window_size=12,
+                                                                                                        stride=self.cfg.stride,
+                                                                                                    )
+            self.X_train, self.sar_train, self.X_val, self.sar_val, self.X_test, self.sar_test = dataprepfunc.centrage_sur_imagesize_irar_temporale_mode(cfg,
+                                                                                                                                                         self.target_dir,
+                                                                                                                                                         irwin_train,sar_train,
+                                                                                                                                                         irwin_val,sar_val,
+                                                                                                                                                         irwin_test, sar_test)
+            self.mask_train, self.mask_val, self.mask_test = dataprepfunc.create_temporal_mask(self.sar_train, self.sar_val, self.sar_test, 
+                                                                                               wind_mask_train, wind_mask_val, wind_mask_test)
+            self.X_train = np.nan_to_num(self.X_train, nan=0.0, posinf=0.0, neginf=0.0); self.sar_train = np.nan_to_num(self.sar_train, nan=0.0, posinf=0.0, neginf=0.0)
+            self.X_val = np.nan_to_num(self.X_val, nan=0.0, posinf=0.0, neginf=0.0); self.sar_val = np.nan_to_num(self.sar_val, nan=0.0, posinf=0.0, neginf=0.0)
+            self.X_test = np.nan_to_num(self.X_test, nan=0.0, posinf=0.0, neginf=0.0); self.sar_test = np.nan_to_num(self.sar_test, nan=0.0, posinf=0.0, neginf=0.0)
 
             # Data Augmentation
             if self.cfg.augmentation : 
@@ -230,122 +147,15 @@ class PrepareDataSet:
                 
             # Normalisation SAR annulaire globale sur les 12 canaux
             N_train, C, H, W = self.sar_train.shape
-            N_val = self.sar_val.shape[0]
-            N_test = self.sar_test.shape[0]
-            # Affichage de la disponibilité SAR par canal
-            for c in range(C):
-                n_valid_pixels = self.mask_train[:, c].sum()
-
-                n_valid_sequences = np.sum(
-                    self.mask_train[:, c]
-                    .reshape(N_train, -1)
-                    .sum(axis=1) > 0
-                )
-                print(
-                    f"Canal SAR {c}: "
-                    f"pixels valides={n_valid_pixels}, "
-                    f"séquences avec SAR={n_valid_sequences}"
-                )
-            # Fusion des dimensions séquence et canal
-            # (N, 12, H, W) -> (N * 12, H, W)
-            sar_train_flat = self.sar_train.reshape(
-                N_train * C,
-                H,
-                W,
-            )
-            mask_train_flat = self.mask_train.reshape(
-                N_train * C,
-                H,
-                W,
-            ).astype(bool)
-
-            sar_val_flat = self.sar_val.reshape(
-                N_val * C,
-                H,
-                W,
-            )
-            mask_val_flat = self.mask_val.reshape(
-                N_val * C,
-                H,
-                W,
-            ).astype(bool)
-
-            sar_test_flat = self.sar_test.reshape(
-                N_test * C,
-                H,
-                W,
-            )
-            mask_test_flat = self.mask_test.reshape(
-                N_test * C,
-                H,
-                W,
-            ).astype(bool)
-
-            # Vérification : au moins une observation SAR valide
-            if not mask_train_flat.any():
-                raise RuntimeError(
-                    "Aucun pixel SAR valide dans le jeu d'entraînement."
-                )
-
-            # Calcul d'UNE statistique par anneau avec tous les canaux
-            sar_train_flat, mean_sar, std_sar = dataprep.z_score(
-                sar_train_flat,
-                mask = mask_train_flat
-            )
-            # calculées uniquement sur le train
-            sar_val_flat, _, _ = dataprep.z_score(
-                sar_val_flat,
-                mean_value= mean_sar,
-                std_value = std_sar,
-                mask=mask_val_flat
-            )
-            sar_test_flat, _, _ = dataprep.z_score(
-                sar_test_flat,
-                mean_value = mean_sar,
-                std_value = std_sar,
-                mask = mask_test_flat
-            )
-            # Retour aux formes temporelles originales
-            self.sar_train = sar_train_flat.reshape(
-                N_train,
-                C,
-                H,
-                W,
-            ).astype(np.float32)
-            self.sar_val = sar_val_flat.reshape(
-                N_val,
-                C,
-                H,
-                W,
-            ).astype(np.float32)
-            self.sar_test = sar_test_flat.reshape(
-                N_test,
-                C,
-                H,
-                W,
-            ).astype(np.float32)
-            # Remise à zéro des pixels et canaux sans SAR
-            self.sar_train *= self.mask_train
-            self.sar_val *= self.mask_val
-            self.sar_test *= self.mask_test
-            self.mean_sar = mean_sar
-            self.std_sar = std_sar
-            
-            stats = {
-                "mean_ir": self.mean_X,
-                "std_ir": self.std_X,
-                "mean_sar": self.mean_sar,
-                "std_sar": self.std_sar,
-            }
-
+            dataprepfunc.print_infos_temporal_data(C, self.mask_train,N_train)
+            stats = dataprepfunc.normalize_sar_temporal_mode( dataprep, self.sar_train, self.sar_val, self.sar_test, self.mask_train, self.mask_val, self.mask_test)
+            stats["mean_x"] = mean_x; stats["std_x"] = std_x
             with open(
                 os.path.join(self.target_dir, "stats_normalisation.pkl"),
                 "wb",
             ) as f:
                 pkl.dump(stats, f)
-
-            
-
+#################################################################################################################################################################
         else:
             ## prmeier cas : utilisation de la nouvelle base de données IRAR 
             if self.cfg.irar:
@@ -408,7 +218,7 @@ class PrepareDataSet:
                                     if j == int(len(train_seq_paths)//2) :
                                         winds.append(ds["wind_aeqd"].values)  # (501,501) dxy = 2
                                         
-                                    if self.add_era5 : 
+                                    if self.cfg.add_era5 : 
                                         reg_era5 = dataprep.add_era5_irar(path)
                                         era5.append(reg_era5)
 
@@ -421,21 +231,21 @@ class PrepareDataSet:
                             if name == "Train":
                                 irwin_train.append(np.stack(irs))
                                 sar_train.append(np.stack(winds))
-                                if self.add_era5  :
+                                if self.cfg.add_era5  :
                                     era5_train.append(np.stack(era5))
                                 infos_train.append({k: row[k] for k in keys})
 
                             elif name == "Val":
                                 irwin_val.append(np.stack(irs))
                                 sar_val.append(np.stack(winds))
-                                if self.add_era5  :
+                                if self.cfg.add_era5  :
                                     era5_val.append(np.stack(era5))
                                 infos_val.append({k: row[k] for k in keys})
 
                             elif name == "Test":
                                 irwin_test.append(np.stack(irs))
                                 sar_test.append(np.stack(winds))
-                                if self.add_era5  :
+                                if self.cfg.add_era5  :
                                     era5_test.append(np.stack(era5))
                                 infos_test.append({k: row[k] for k in keys})
 
@@ -490,7 +300,7 @@ class PrepareDataSet:
                                     raise KeyError("Missing owiWindSpeed")
 
                                 # --- Récupération éventuelle des données ERA5 colocalisées ---
-                                if self.add_era5:
+                                if self.cfg.add_era5:
                                     sar_path = row["sar_aeqd_path"]
                                     cyclone_id = row["cyclone_id"]
                                     date = str(sar_path.split("/")[-1].split("-")[5])
@@ -573,7 +383,7 @@ class PrepareDataSet:
 
                 N = len(anggrek_csv)
                 # Indices relatifs (-C/2 ... +C/2) des canaux IR temporels à charger
-                indices = list(range(-(self.irwin_channels // 2), (self.irwin_channels // 2) + 1))
+                indices = list(range(-(self.cfg.irwin_channels // 2), (self.cfg.irwin_channels // 2) + 1))
             
                 for row_idx, row in tqdm(anggrek_csv.iterrows(), total=N, desc="Generating Anggrek data : ..............."):
 
@@ -620,7 +430,7 @@ class PrepareDataSet:
                             }
                         )
 
-                        if self.add_era5:
+                        if self.cfg.add_era5:
                             reg_era5 = dataprep.add_era5_anggrek(anggrek_csv, row_idx, self.cfg.irar)
                             era5_anggrek.append(reg_era5)
             
@@ -629,7 +439,7 @@ class PrepareDataSet:
             self.infos_train = np.array(infos_train) ; self.infos_val = np.array(infos_val) ; self.infos_test = np.array(infos_test)
             if self.cfg.anggrek_test:
                 self.X_anggrek = np.array(irwin_anggrek) ; self.infos_anggrek = np.array(infos_anggrek)
-            if self.add_era5:
+            if self.cfg.add_era5:
                 self.era5_train = np.array(era5_train) ; self.era5_val = np.array(era5_val) ; self.era5_test = np.array(era5_test)
                 if self.cfg.anggrek_test:    
                     self.era5_anggrek = np.array(era5_anggrek)
@@ -639,7 +449,7 @@ class PrepareDataSet:
             print(f"irwin_test shape : {self.X_test.shape} ; sar_test shape : {self.sar_test.shape} ; infos_test shape : {self.infos_test.shape}")
             if self.cfg.anggrek_test:
                 print(f"irwin_anggrek shape : {self.X_anggrek.shape} ; infos_anggrek shape : {self.infos_anggrek.shape}")
-            if self.add_era5:
+            if self.cfg.add_era5:
                 print(f"era5_train shape : {self.era5_train.shape}")
                 print(f"era5_val shape : {self.era5_val.shape}")
                 print(f"era5_test shape : {self.era5_test.shape}")

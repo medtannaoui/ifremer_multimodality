@@ -477,3 +477,194 @@ def add_era5_anggrek(anggrek_csv, row_idx, irar):
             index_hour=int(hour) - 1 + int(minute) // 30,
         )
 
+
+import numpy as np
+
+
+def create_sliding_sequences(
+    ir: np.ndarray,
+    sar: np.ndarray,
+    wind_mask: np.ndarray,
+    infos=None,
+    window_size: int = 12,
+    stride: int = 1,
+    remove_windows_without_wind: bool = True,
+):
+    """
+    Crée des fenêtres temporelles glissantes sur l'axe C.
+
+    Exemple avec window_size=12 et stride=1 :
+        fenêtre 1 : [0:12]
+        fenêtre 2 : [1:13]
+        fenêtre 3 : [2:14]
+        ...
+
+    Paramètres
+    ----------
+    ir : np.ndarray
+        Forme (N, C, W, H).
+
+    sar : np.ndarray
+        Forme (N, C, W, H).
+
+    wind_mask : np.ndarray
+        Forme (N, C).
+
+    infos : list[dict] | None
+        Liste de longueur N contenant les informations
+        correspondant à chaque échantillon.
+
+    window_size : int
+        Nombre de canaux temporels par nouvelle séquence.
+
+    stride : int
+        Décalage entre deux fenêtres.
+        stride=1 produit :
+            0:12, 1:13, 2:14, etc.
+
+    remove_windows_without_wind : bool
+        Si True, supprime les fenêtres ne contenant
+        aucune donnée SAR valide.
+
+    Retour
+    ------
+    ir_windows : np.ndarray
+        Forme (N_windows, window_size, W, H).
+
+    sar_windows : np.ndarray
+        Forme (N_windows, window_size, W, H).
+
+    mask_windows : np.ndarray
+        Forme (N_windows, window_size).
+
+    infos_windows : list[dict] | None
+        Informations répétées pour chaque fenêtre.
+
+    sample_indices : np.ndarray
+        Indice de l'échantillon original pour chaque fenêtre.
+
+    start_indices : np.ndarray
+        Position temporelle de début de chaque fenêtre.
+    """
+
+    if ir.ndim != 4:
+        raise ValueError(
+            f"`ir` doit avoir la forme (N, C, W, H), reçu : {ir.shape}"
+        )
+
+    if sar.ndim != 4:
+        raise ValueError(
+            f"`sar` doit avoir la forme (N, C, W, H), reçu : {sar.shape}"
+        )
+
+    if wind_mask.ndim != 2:
+        raise ValueError(
+            "`wind_mask` doit avoir la forme (N, C), "
+            f"reçu : {wind_mask.shape}"
+        )
+
+    if ir.shape != sar.shape:
+        raise ValueError(
+            f"IR et SAR doivent avoir la même forme : "
+            f"{ir.shape} != {sar.shape}"
+        )
+
+    n_samples, n_channels, width, height = ir.shape
+
+    if wind_mask.shape != (n_samples, n_channels):
+        raise ValueError(
+            "`wind_mask` doit correspondre aux dimensions (N, C). "
+            f"Attendu : {(n_samples, n_channels)}, "
+            f"reçu : {wind_mask.shape}"
+        )
+
+    if infos is not None and len(infos) != n_samples:
+        raise ValueError(
+            f"`infos` doit contenir {n_samples} éléments, "
+            f"reçu : {len(infos)}"
+        )
+
+    if window_size > n_channels:
+        raise ValueError(
+            f"`window_size={window_size}` est supérieur au nombre "
+            f"de canaux C={n_channels}."
+        )
+
+    if stride <= 0:
+        raise ValueError("`stride` doit être strictement positif.")
+
+    ir_windows = []
+    sar_windows = []
+    mask_windows = []
+    infos_windows = [] if infos is not None else None
+
+    sample_indices = []
+    start_indices = []
+
+    for sample_idx in range(n_samples):
+
+        for start in range(
+            0,
+            n_channels - window_size + 1,
+            stride,
+        ):
+            end = start + window_size
+
+            current_ir = ir[sample_idx, start:end]
+            current_sar = sar[sample_idx, start:end]
+            current_mask = wind_mask[sample_idx, start:end]
+
+            # Éliminer les fenêtres sans aucune donnée SAR
+            if remove_windows_without_wind and not np.any(current_mask):
+                continue
+
+            ir_windows.append(current_ir)
+            sar_windows.append(current_sar)
+            mask_windows.append(current_mask)
+
+            sample_indices.append(sample_idx)
+            start_indices.append(start)
+
+            if infos_windows is not None:
+                current_info = dict(infos[sample_idx])
+
+                # Informations supplémentaires sur la fenêtre
+                current_info["original_sample_index"] = sample_idx
+                current_info["window_start"] = start
+                current_info["window_end"] = end - 1
+
+                infos_windows.append(current_info)
+
+    if len(ir_windows) == 0:
+        empty_ir = np.empty(
+            (0, window_size, width, height),
+            dtype=np.float32,
+        )
+
+        empty_sar = np.empty(
+            (0, window_size, width, height),
+            dtype=np.float32,
+        )
+
+        empty_mask = np.empty(
+            (0, window_size),
+            dtype=bool,
+        )
+
+        return (
+            empty_ir,
+            empty_sar,
+            empty_mask,
+            infos_windows,
+            np.empty((0,), dtype=np.int64),
+            np.empty((0,), dtype=np.int64),
+        )
+
+    return (
+        np.stack(ir_windows, axis=0).astype(np.float32),
+        np.stack(sar_windows, axis=0).astype(np.float32),
+        np.stack(mask_windows, axis=0).astype(bool),
+        infos_windows,
+        np.asarray(sample_indices, dtype=np.int64),
+        np.asarray(start_indices, dtype=np.int64),
+    )
