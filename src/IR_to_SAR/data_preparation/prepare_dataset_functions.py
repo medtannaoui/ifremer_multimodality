@@ -2,6 +2,8 @@ import numpy as np
 import xarray as xr
 import os
 import pickle as pkl
+import pandas as pd
+from datetime import datetime, timedelta
 
 def generate_sequence_irar_temporal_mode(all_sequences, enu):
 
@@ -69,7 +71,7 @@ def centrage_sur_imagesize_irar_temporale_mode(cfg, target_dir, irwin_train, sar
         print("erreur dans la sauvgarde des sequences :",e)
     return X_train,sar_train, X_val, sar_val, X_test, sar_test
     
-def create_temporla_mask(sar_train, sar_val, sar_test, wind_mask_train, wind_mask_val, wind_mask_test):
+def create_temporal_mask(sar_train, sar_val, sar_test, wind_mask_train, wind_mask_val, wind_mask_test):
     # Spatial mask (NaN)
     mask_train = np.isfinite(sar_train).astype(np.float32)
     mask_val   = np.isfinite(sar_val).astype(np.float32)
@@ -191,3 +193,76 @@ def normalize_sar_temporal_mode(dataprep, sar_train, sar_val, sar_test, mask_tra
         "mean_sar": mean_sar,
         "std_sar": std_sar,
     }
+
+
+def read_csv_irar(cfg):
+    data = pd.read_csv(
+        "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/IRAR_L2_dataset.csv"
+    )
+    data = data[data["year"] != 2017]
+    data = data[(data["valide"] == True) & (data["ir_regrided"] == True)]
+    print("Len Data IRAR Valide :", len(data))
+    irar = pd.read_csv("/scale/user/mtannaou/alternance/mnt/csvs_finaux/IRAR.csv")
+    irar["date_irar"] = pd.to_datetime(irar["date_irar"])
+    train_df = data[data["set"] == "train"][:2 if cfg.code_test else None]
+    val_df = data[data["set"] == "val"][:2 if cfg.code_test else None]
+    test_df = data[data["set"] == "test"][:2 if cfg.code_test else None]
+    return irar, data, train_df, val_df, test_df
+
+def generating_irar_data(cfg, dataprep, row, irar):
+    cyclone_id = row["cyclone_id"]
+    year = row["year"]
+    path_irar = row["path_irar"]
+    path_l2 = row["L2M path"]
+    date_irar = datetime.strptime(os.path.basename(path_irar).split("_s")[-1].split("_")[0], "%Y%m%d%H%M%S")
+
+    sequence_path_plus = []
+    sequence_path_moins = []
+    valid_sequence = True
+    index_par = range(1, 6)   # sargeo frequenc (range(1, 5))
+
+    for i in index_par:
+        date_i = date_irar + timedelta(minutes=i*60)
+        date_j = date_irar - timedelta(minutes=i*60)
+
+        sub_i = irar[(irar["date_irar"] == date_i) & (irar["cyclone_id"] == cyclone_id)]
+        sub_j = irar[(irar["date_irar"] == date_j) & (irar["cyclone_id"] == cyclone_id)]
+
+        if len(sub_i) == 0 or len(sub_j) == 0:
+            valid_sequence = False
+            break
+
+        sequence_path_plus.append(sub_i["path_nc"].values[0])
+        sequence_path_moins.append(sub_j["path_nc"].values[0])
+
+    if not valid_sequence:
+        return False
+
+    train_seq_paths = sequence_path_moins + [path_irar] + sequence_path_plus
+    irs = []
+    winds = []
+    era5 = []
+    valide = 0
+    for j, path in enumerate(train_seq_paths):
+            try : 
+                ds = xr.open_dataset(path)
+                # ds = dataprep.build_storm_centered_dataset(ds)
+
+                irs.append(ds["ir_aeqd"].values - 273.15)   # (501,501) dxy = 2
+                if j == int(len(train_seq_paths)//2) :
+                    winds.append(ds["wind_aeqd"].values)  # (501,501) dxy = 2
+                    
+                if cfg.add_era5 : 
+                    reg_era5 = dataprep.add_era5_irar(path)
+                    era5.append(reg_era5)
+
+                valide += 1
+            except Exception as e:
+                print(f"Error loading {path}: {e}")
+                break
+    if valide == len(train_seq_paths):
+        return True, irs, winds, era5
+    else : 
+        return False, None, None, None
+    
+    

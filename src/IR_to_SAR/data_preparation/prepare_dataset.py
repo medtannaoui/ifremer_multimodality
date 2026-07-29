@@ -58,8 +58,12 @@ class PrepareDataSet:
         
         if cfg.temporal_mode : 
             print("Using temporal mode .....")
-            with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/tempral_data_with_infos.pkl","rb") as f:
-                all_sequences = pkl.load(f)
+            if not self.cfg.overlap : 
+                with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/tempral_data_with_infos.pkl","rb") as f:
+                    all_sequences = pkl.load(f)
+            else : 
+                with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/tempral_data_with_infos_stride1.pkl","rb") as f:
+                    all_sequences = pkl.load(f)
             
             for enu, ind in tqdm(enumerate(all_sequences), desc="Generating sequences for training : ....",total=len(all_sequences)):
                 if dataprepfunc.generate_sequence_irar_temporal_mode(all_sequences, enu) is None:
@@ -71,7 +75,7 @@ class PrepareDataSet:
                     irwin_test.append(ir_sequence);sar_test.append(wind_sequence)
                     wind_mask_test.append(wind_mask)
                     infos_test.append({k: ind[k] for k in keys})
-                elif int(all_sequences[enu]["year"]) in [2019, 2020]:
+                elif int(all_sequences[enu]["year"]) in [2020]:
                     irwin_val.append(ir_sequence); sar_val.append(wind_sequence)
                     wind_mask_val.append(wind_mask)
                     infos_val.append({k: ind[k] for k in keys})
@@ -88,29 +92,7 @@ class PrepareDataSet:
             # Test
             irwin_test = np.stack(irwin_test, axis=0).astype(np.float32);sar_test = np.stack(sar_test, axis=0).astype(np.float32)
             wind_mask_test = np.stack(wind_mask_test, axis=0);self.infos_test = infos_test
-            ## ajout de l overlap
-            if self.cfg.overlap : 
-                irwin_train, sar_train, wind_mask_train, self.infos_train,_,_ = dataprep.create_sliding_sequences(ir=irwin_train,
-                                                                                                                sar=sar_train,
-                                                                                                                wind_mask=wind_mask_train,
-                                                                                                                infos=infos_train,
-                                                                                                                window_size=12,
-                                                                                                                stride=self.cfg.stride,
-                                                                                                            )
-                irwin_test, sar_test, wind_mask_test, self.infos_test,_,_ = dataprep.create_sliding_sequences(ir=irwin_test,
-                                                                                                            sar=sar_test,
-                                                                                                            wind_mask=wind_mask_test,
-                                                                                                            infos=infos_test,
-                                                                                                            window_size=12,
-                                                                                                            stride=self.cfg.stride,
-                                                                                                        )
-                irwin_val, sar_val, wind_mask_val, self.infos_val,_,_ = dataprep.create_sliding_sequences(ir=irwin_val,
-                                                                                                        sar=sar_val,
-                                                                                                        wind_mask=wind_mask_val,
-                                                                                                        infos=infos_val,
-                                                                                                        window_size=12,
-                                                                                                        stride=self.cfg.stride,
-                                                                                                    )
+
             self.X_train, self.sar_train, self.X_val, self.sar_val, self.X_test, self.sar_test = dataprepfunc.centrage_sur_imagesize_irar_temporale_mode(cfg,
                                                                                                                                                          self.target_dir,
                                                                                                                                                          irwin_train,sar_train,
@@ -159,93 +141,32 @@ class PrepareDataSet:
         else:
             ## prmeier cas : utilisation de la nouvelle base de données IRAR 
             if self.cfg.irar:
-                data = pd.read_csv(
-                    "/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/IRAR_L2_dataset.csv"
-                )
-                data = data[data["year"] != 2017]
-                data = data[(data["valide"] == True) & (data["ir_regrided"] == True)]
-                print("Len Data IRAR Valide :", len(data))
-
-                irar = pd.read_csv("/scale/user/mtannaou/alternance/mnt/csvs_finaux/IRAR.csv")
-                irar["date_irar"] = pd.to_datetime(irar["date_irar"])
-
-                train_df = data[data["set"] == "train"][:5 if self.cfg.code_test else None]
-                val_df = data[data["set"] == "val"][:5 if self.cfg.code_test else None]
-                test_df = data[data["set"] == "test"][:5 if self.cfg.code_test else None]
+                irar, data, train_df, val_df, test_df = dataprepfunc.read_csv_irar(self.cfg)
 
                 ## Train generating
                 for df, name in zip([train_df, val_df, test_df], ["Train", "Val", "Test"]):
                     for itr, row in tqdm(df.iterrows(), total=len(df), desc=f"Generating {name} data Using IRAR Dataset : ..............."):
-                        cyclone_id = row["cyclone_id"]
-                        year = row["year"]
-                        path_irar = row["path_irar"]
-                        path_l2 = row["L2M path"]
-                        date_irar = datetime.strptime(os.path.basename(path_irar).split("_s")[-1].split("_")[0], "%Y%m%d%H%M%S")
+                        valide, irs, winds, era5 = dataprepfunc.generating_irar_data(self.cfg, dataprep, row, irar)
 
-                        sequence_path_plus = []
-                        sequence_path_moins = []
-                        valid_sequence = True
-                        index_par = range(1, 6)   # sargeo frequenc (range(1, 5))
-
-                        for i in index_par:
-                            date_i = date_irar + timedelta(minutes=i*60)
-                            date_j = date_irar - timedelta(minutes=i*60)
-
-                            sub_i = irar[(irar["date_irar"] == date_i) & (irar["cyclone_id"] == cyclone_id)]
-                            sub_j = irar[(irar["date_irar"] == date_j) & (irar["cyclone_id"] == cyclone_id)]
-
-                            if len(sub_i) == 0 or len(sub_j) == 0:
-                                valid_sequence = False
-                                break
-
-                            sequence_path_plus.append(sub_i["path_nc"].values[0])
-                            sequence_path_moins.append(sub_j["path_nc"].values[0])
-
-                        if not valid_sequence:
-                            continue
-
-                        train_seq_paths = sequence_path_moins + [path_irar] + sequence_path_plus
-                        irs = []
-                        winds = []
-                        era5 = []
-                        valide = 0
-                        for j, path in enumerate(train_seq_paths):
-                                try : 
-                                    ds = xr.open_dataset(path)
-                                    # ds = dataprep.build_storm_centered_dataset(ds)
-
-                                    irs.append(ds["ir_aeqd"].values - 273.15)   # (501,501) dxy = 2
-                                    if j == int(len(train_seq_paths)//2) :
-                                        winds.append(ds["wind_aeqd"].values)  # (501,501) dxy = 2
-                                        
-                                    if self.cfg.add_era5 : 
-                                        reg_era5 = dataprep.add_era5_irar(path)
-                                        era5.append(reg_era5)
-
-                                    valide += 1
-                                except Exception as e:
-                                    print(f"Error loading {path}: {e}")
-                                    break
-                        
-                        if valide == len(train_seq_paths):                       
+                        if valide :                       
                             if name == "Train":
                                 irwin_train.append(np.stack(irs))
                                 sar_train.append(np.stack(winds))
-                                if self.cfg.add_era5  :
+                                if cfg.add_era5  :
                                     era5_train.append(np.stack(era5))
                                 infos_train.append({k: row[k] for k in keys})
 
                             elif name == "Val":
                                 irwin_val.append(np.stack(irs))
                                 sar_val.append(np.stack(winds))
-                                if self.cfg.add_era5  :
+                                if cfg.add_era5  :
                                     era5_val.append(np.stack(era5))
                                 infos_val.append({k: row[k] for k in keys})
 
                             elif name == "Test":
                                 irwin_test.append(np.stack(irs))
                                 sar_test.append(np.stack(winds))
-                                if self.cfg.add_era5  :
+                                if cfg.add_era5  :
                                     era5_test.append(np.stack(era5))
                                 infos_test.append({k: row[k] for k in keys})
 
@@ -374,6 +295,7 @@ class PrepareDataSet:
                         except Exception as e:
                             print(e)
                             continue
+
             if self.cfg.anggrek_test:
                 # Données du cyclone "Anggrek" (jeu de test additionnel)
                 anggrek_csv = pd.read_csv(
@@ -443,6 +365,8 @@ class PrepareDataSet:
                 self.era5_train = np.array(era5_train) ; self.era5_val = np.array(era5_val) ; self.era5_test = np.array(era5_test)
                 if self.cfg.anggrek_test:    
                     self.era5_anggrek = np.array(era5_anggrek)
+                    if np.ndim(self.era5_anggrek) > 4:
+                        self.era5_anggrek = self.era5_anggrek.squeeze()
             
             print(f"irwin_train shape : {self.X_train.shape} ; sar_train shape : {self.sar_train.shape} ; infos_train shape : {self.infos_train.shape}")
             print(f"irwin_val shape : {self.X_val.shape} ; sar_val shape : {self.sar_val.shape} ; infos_val shape : {self.infos_val.shape}")
@@ -453,6 +377,8 @@ class PrepareDataSet:
                 print(f"era5_train shape : {self.era5_train.shape}")
                 print(f"era5_val shape : {self.era5_val.shape}")
                 print(f"era5_test shape : {self.era5_test.shape}")
+                if cfg.anggrek_test : 
+                    print(f"era5 anggrek shape : {self.era5_anggrek.shape}" )
                 h_X, w_X = self.X_train.shape[-2:]
                 h_era5, w_era5 = self.era5_train.shape[-2:]
 
@@ -485,6 +411,8 @@ class PrepareDataSet:
                 print("Train data apres concatenatiuo avec era5" , self.X_train.shape)
                 print("VAl data apres concatenatiuo avec era5" , self.X_val.shape)
                 print("Test data apres concatenatiuo avec era5" , self.X_test.shape)
+                if self.cfg.anggrek_test:
+                    print("Anggrek data apres concatenatiuo avec era5" , self.X_anggrek.shape)
 
 
             ## recadrage et centrage autour du cnetre et redimensionnement
