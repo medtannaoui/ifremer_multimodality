@@ -161,17 +161,31 @@ def train_one_epoch(fabric, model, dataloader, optimizer, cfg, scheduler=None):
         sar_valid = sar_valid * mask
         pred_valid = pred
 
-        loss, l_pix, l_grad, l_radial = combined_sar_loss(
-            sar_valid,
-            pred_valid,
-            mask,
-            w_pix=cfg.w_pix,
-            w_grad=cfg.w_grad,
-            w_radial=cfg.w_radial,
-            bin_edges=BIN_EDGES,
-            bin_weights=BIN_WEIGHTS,
-            use_weighted_pix=True
-        )
+        if not cfg.temporal_mode : 
+            loss, l_pix, l_grad, l_radial = combined_sar_loss(
+                sar_valid,
+                pred_valid,
+                mask,
+                w_pix=cfg.w_pix,
+                w_grad=cfg.w_grad,
+                w_radial=cfg.w_radial,
+                bin_edges=BIN_EDGES,
+                bin_weights=BIN_WEIGHTS,
+                use_weighted_pix=True
+            )
+        else : 
+            loss, l_pix, l_grad, l_radial  = temporal_combined_sar_loss(
+                                                                sar_valid,
+                                                                pred_valid,
+                                                                mask,
+                                                                w_pix=cfg.w_pix,
+                                                                w_grad=cfg.w_grad,
+                                                                w_radial=cfg.w_radial,
+                                                                r_bins=None,
+                                                                bin_edges=BIN_EDGES,
+                                                                bin_weights=BIN_WEIGHTS,
+                                                                use_weighted_pix=True,
+                                                            )
 
         fabric.backward(loss)
         fabric.clip_gradients(model, optimizer, max_norm=1.0)
@@ -198,29 +212,18 @@ def train_one_epoch(fabric, model, dataloader, optimizer, cfg, scheduler=None):
         train_loss.item(),
         avg_l_pix.item(),
         avg_l_grad.item(),
-        avg_l_radial.item()
+        avg_l_radial.item(),
+        BIN_EDGES,
+        BIN_WEIGHTS
     )
 
-def validate(fabric, model, dataloader, cfg):
+def validate(fabric, model, dataloader, cfg, BIN_EDGES, BIN_WEIGHTS):
     model.eval()
 
     total_loss = 0.0
     total_l_pix = 0.0
     total_l_grad = 0.0
     total_l_radial = 0.0
-
-    BIN_EDGES = compute_bin_edges_quantiles(
-        dataloader,
-        device=fabric.device,
-        num_bins=5
-    )
-
-    BIN_WEIGHTS, BIN_PROBS, BIN_COUNTS = compute_bin_weights_from_loader(
-        train_loader=dataloader,
-        bin_edges=BIN_EDGES,
-        device=fabric.device,
-        alpha=0.5
-    )
 
     with torch.no_grad():
         for x, sar, mask, infos in tqdm(dataloader, desc="Validating"):
@@ -253,17 +256,31 @@ def validate(fabric, model, dataloader, cfg):
             sar_valid = sar_valid * mask
             pred_valid = pred
 
-            loss, l_pix, l_grad, l_radial = combined_sar_loss(
-                sar_valid,
-                pred_valid,
-                mask,
-                w_pix=cfg.w_pix,
-                w_grad=cfg.w_grad,
-                w_radial=cfg.w_radial,
-                bin_edges=BIN_EDGES,
-                bin_weights=BIN_WEIGHTS,
-                use_weighted_pix=True
-            )
+            if not cfg.temporal_mode : 
+                loss, l_pix, l_grad, l_radial = combined_sar_loss(
+                    sar_valid,
+                    pred_valid,
+                    mask,
+                    w_pix=cfg.w_pix,
+                    w_grad=cfg.w_grad,
+                    w_radial=cfg.w_radial,
+                    bin_edges=BIN_EDGES,
+                    bin_weights=BIN_WEIGHTS,
+                    use_weighted_pix=True
+                )
+            else : 
+                loss, l_pix, l_grad, l_radial  = temporal_combined_sar_loss(
+                                                                    sar_valid,
+                                                                    pred_valid,
+                                                                    mask,
+                                                                    w_pix=cfg.w_pix,
+                                                                    w_grad=cfg.w_grad,
+                                                                    w_radial=cfg.w_radial,
+                                                                    r_bins=None,
+                                                                    bin_edges=BIN_EDGES,
+                                                                    bin_weights=BIN_WEIGHTS,
+                                                                    use_weighted_pix=True,
+                                                                )
 
             total_loss += float(loss.detach().item())
             total_l_pix += float(l_pix)
@@ -497,7 +514,7 @@ def train(fabric, cfg, full_data, target_dir):
         if fabric.is_global_zero:
             logger.info(f"===== Epoch {epoch + 1}/{cfg.num_epochs} =====")
 
-        train_loss, l_pix, l_grad, l_radial = train_one_epoch(
+        train_loss, l_pix, l_grad, l_radial, BIN_EDGES, BIN_WEIGHTS = train_one_epoch(
             fabric,
             model,
             train_loader,
@@ -510,7 +527,9 @@ def train(fabric, cfg, full_data, target_dir):
             fabric,
             model,
             val_loader,
-            cfg=cfg
+            cfg=cfg,
+            BIN_EDGES = BIN_EDGES,
+            BIN_WEIGHTS = BIN_WEIGHTS
         )
 
         scheduler.step()
@@ -588,6 +607,10 @@ def train(fabric, cfg, full_data, target_dir):
         torch.cuda.empty_cache()
         if torch.cuda.is_available():
             torch.cuda.ipc_collect()
+        
+        if cfg.temporal_mode and epoch == 0: 
+            with open(os.path.join(target_dir,"model.pkl"),"wb") as f:
+                pkl.dump(model, f)
 
         if stop_training or epoch == cfg.num_epochs - 1:
 
@@ -624,6 +647,7 @@ def train(fabric, cfg, full_data, target_dir):
                         ),
                         device=fabric.device
                     )
+        
 
                 distdata.training_completed(
                     cfg,

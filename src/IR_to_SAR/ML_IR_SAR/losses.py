@@ -626,3 +626,210 @@ def weighted_l1(
     return numerator / denominator
 
 
+def temporal_neighbor_mse_loss(
+    pred,
+    weight_distance_1=0.5,
+    weight_distance_2=0.25,
+):
+    pred = _ensure_4d(pred)
+
+    _, number_of_channels, _, _ = pred.shape
+
+    zero = pred.sum() * 0.0
+
+    if number_of_channels <= 1:
+        return zero
+
+    loss = zero
+    active_weight = 0.0
+
+    # Canaux voisins : t et t+1
+    if number_of_channels >= 2 and weight_distance_1 > 0:
+
+        loss_distance_1 = F.mse_loss(
+            pred[:, 1:, :, :],
+            pred[:, :-1, :, :],
+            reduction="mean",
+        )
+
+        loss = loss + weight_distance_1 * loss_distance_1
+        active_weight += weight_distance_1
+
+    # Canaux séparés de deux pas : t et t+2
+    if number_of_channels >= 3 and weight_distance_2 > 0:
+
+        loss_distance_2 = F.mse_loss(
+            pred[:, 2:, :, :],
+            pred[:, :-2, :, :],
+            reduction="mean",
+        )
+
+        loss = loss + weight_distance_2 * loss_distance_2
+        active_weight += weight_distance_2
+
+    if active_weight > 0:
+        loss = loss / active_weight
+
+    return loss
+
+def temporal_pixel_stability_loss(
+    pred,
+    spatial_mask=None,
+    eps=1e-8,
+):
+    pred = _ensure_4d(pred)
+
+    _, number_of_channels, _, _ = pred.shape
+
+    zero = pred.sum() * 0.0
+
+    if number_of_channels <= 1:
+        return zero
+
+    # Moyenne temporelle pour chaque pixel
+    temporal_mean = pred.mean(
+        dim=1,
+        keepdim=True,
+    )
+
+    # Variance temporelle par pixel
+    temporal_variance = (
+        pred - temporal_mean
+    ).pow(2).mean(
+        dim=1,
+        keepdim=True,
+    )
+
+    if spatial_mask is None:
+        return temporal_variance.mean()
+
+    spatial_mask = _ensure_4d(
+        spatial_mask
+    ).to(
+        device=pred.device,
+        dtype=pred.dtype,
+    )
+
+    if spatial_mask.shape[1] != 1:
+        spatial_mask = spatial_mask.any(
+            dim=1,
+            keepdim=True,
+        ).to(pred.dtype)
+
+    if spatial_mask.shape != temporal_variance.shape:
+        raise ValueError(
+            "Le masque spatial doit être compatible avec "
+            f"{temporal_variance.shape}, reçu {spatial_mask.shape}."
+        )
+
+    numerator = (
+        temporal_variance * spatial_mask
+    ).sum()
+
+    denominator = spatial_mask.sum().clamp_min(eps)
+
+    return numerator / denominator
+
+def temporal_combined_sar_loss(
+    sar_valid,
+    pred_valid,
+    mask,
+    # Poids internes de la loss principale
+    w_pix=1.0,
+    w_grad=0.0,
+    w_radial=0.0,
+    r_bins=None,
+    bin_edges=None,
+    bin_weights=None,
+    use_weighted_pix=False,
+    # Poids des deux régularisations temporelles
+    lambda_neighbors=1e-5,
+    lambda_stability=1e-5,
+    # Poids internes des distances temporelles
+    neighbor_weight_1=0.5,
+    neighbor_weight_2=0.25,
+    use_spatial_mask_for_stability=False,
+    eps=1e-8,
+):
+    sar_valid = _ensure_4d(sar_valid)
+    pred_valid = _ensure_4d(pred_valid)
+    mask = _ensure_4d(mask).to(
+        device=pred_valid.device,
+        dtype=pred_valid.dtype,
+    )
+
+    if pred_valid.shape != sar_valid.shape:
+        raise ValueError(
+            f"pred et SAR ont des formes différentes : "
+            f"{pred_valid.shape} != {sar_valid.shape}"
+        )
+
+    if mask.shape != sar_valid.shape:
+        raise ValueError(
+            f"mask et SAR ont des formes différentes : "
+            f"{mask.shape} != {sar_valid.shape}"
+        )
+
+    # 1. Terme principal : doit rester dominant
+    (
+        main_loss,
+        l_pix,
+        l_grad,
+        l_radial,
+    ) = combined_sar_loss(
+        sar_valid=sar_valid,
+        pred_valid=pred_valid,
+        mask=mask,
+        w_pix=w_pix,
+        w_grad=w_grad,
+        w_radial=w_radial,
+        r_bins=r_bins,
+        bin_edges=bin_edges,
+        bin_weights=bin_weights,
+        use_weighted_pix=use_weighted_pix,
+        eps=eps,
+    )
+
+    zero = pred_valid.sum() * 0.0
+
+    neighbor_loss = zero
+    stability_loss = zero
+
+    # 2. Cohérence temporelle locale
+    if lambda_neighbors > 0:
+
+        neighbor_loss = temporal_neighbor_mse_loss(
+            pred=pred_valid,
+            weight_distance_1=neighbor_weight_1,
+            weight_distance_2=neighbor_weight_2,
+        )
+
+    # 3. Stabilité temporelle globale par pixel
+    if lambda_stability > 0:
+        spatial_mask = None
+        if use_spatial_mask_for_stability:
+            spatial_mask = mask.any(
+                dim=1,
+                keepdim=True,
+            )
+        stability_loss = temporal_pixel_stability_loss(
+            pred=pred_valid,
+            spatial_mask=spatial_mask,
+            eps=eps,
+        )
+
+    # Important :
+    # on ne divise PAS par la somme des lambdas.
+    # La loss principale reste ainsi dominante.
+    total_loss = (
+        main_loss
+        + lambda_neighbors * neighbor_loss
+        + lambda_stability * stability_loss
+    ) / (1+lambda_neighbors+lambda_stability)
+
+    return (
+        total_loss,
+        l_pix,
+        l_grad,
+        l_radial
+    )

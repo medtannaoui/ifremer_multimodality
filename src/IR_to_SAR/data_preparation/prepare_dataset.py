@@ -132,6 +132,8 @@ class PrepareDataSet:
             dataprepfunc.print_infos_temporal_data(C, self.mask_train,N_train)
             stats = dataprepfunc.normalize_sar_temporal_mode( dataprep, self.sar_train, self.sar_val, self.sar_test, self.mask_train, self.mask_val, self.mask_test)
             stats["mean_x"] = mean_x; stats["std_x"] = std_x
+            self.mean_sar = stats["mean_sar"]; self.std_sar = stats["std_sar"]
+            self.mean_x = stats["mean_x"]; self.std_x = stats["std_x"]
             with open(
                 os.path.join(self.target_dir, "stats_normalisation.pkl"),
                 "wb",

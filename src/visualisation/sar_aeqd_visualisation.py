@@ -92,7 +92,7 @@ def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alt
     ax11.set_ylim(-300, 300)
     ax11.set_ylabel("y (km)")
     ax11.set_aspect('equal')
-    ax11.set_title("SAR-derived wind speed", fontsize=12)
+    ax11.set_title("Champ de vent issu du SAR", fontsize=12)
     ax11.set_xticks([])
     ax11.axhline(0, color='black', linestyle='--', linewidth=0.7)
     ax11.axvline(0, color='black', linestyle='--', linewidth=0.7)
@@ -103,7 +103,7 @@ def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alt
     ax12.set_xlim(-300, 300)
     ax12.set_ylim(-300, 300)
     ax12.set_aspect('equal')
-    ax12.set_title("Brightness Temperature", fontsize=12)
+    ax12.set_title("Température de brillance infrarouge", fontsize=12)
     ax12.set_xticks([])
     ax12.set_yticks([])
     ax12.axhline(0, color='black', linestyle='--', linewidth=0.7)
@@ -114,6 +114,7 @@ def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alt
     ax21.contour(x_ir, y_ir, ir, cmap=cmap_ir, linewidths=0.8, levels=10)
     ax21.set_xlim(-300, 300)
     ax21.set_ylim(-300, 300)
+    ax21.set_title("Champ de vent SAR projeté (AEQD)", fontsize=12)
     ax21.set_xlabel("x (km)")
     ax21.set_ylabel("y (km)")
     ax21.set_aspect('equal')
@@ -125,6 +126,7 @@ def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alt
     ax22.contour(xs, ys, wind, cmap=cmap_sar, linewidths=0.8, levels=10)
     ax22.set_xlim(-300, 300)
     ax22.set_ylim(-300, 300)
+    ax22.set_title("Champ de vent SAR regrillé sur l'image IR", fontsize=12)
     ax22.set_xlabel("x (km)")
     ax22.set_aspect('equal')
     ax22.axhline(0, color='black', linestyle='--', linewidth=0.7)
@@ -148,25 +150,25 @@ def plot_sar_ir(date="20241006t092222",path_sar_folder="/scale/user/mtannaou/alt
         ax.set_xticklabels([str(t) if abs(t) in [100, 200] else "" for t in major_ticks])
         ax.set_yticklabels([str(t) if abs(t) in [100, 200] else "" for t in major_ticks])
 
-    # === TITRE GLOBAL ===
-    plt.suptitle(
-    f"SAR vs IR comparison – {date_fmt} ({ds_sar['storm_latitude'].values[4]:.3f}°N, {(360 - ds_sar['storm_longitude'].values[4]):.3f}°W)\n",
-    fontsize=14, fontweight='bold'
-)
+#     # === TITRE GLOBAL ===
+#     plt.suptitle(
+#     f"Comparaison des observations SAR et infrarouges – {date_fmt} ({ds_sar['storm_latitude'].values[4]:.3f}°N, {(360 - ds_sar['storm_longitude'].values[4]):.3f}°W)\n",
+#     fontsize=14, fontweight='bold'
+# )
     # === COLORBARS — fixées et centrées ===
     cbar_sar = fig.colorbar(
         p1, ax=[ax11, ax21],
         orientation='horizontal',
         fraction=0.046, pad=0.08, anchor=(0.5, -2.0)
     )
-    cbar_sar.set_label("SAR-derived wind speed (kt)")
+    cbar_sar.set_label("Vitesse du vent (kt)")
 
     cbar_ir = fig.colorbar(
         p2, ax=[ax12, ax22],
         orientation='horizontal',
         fraction=0.046, pad=0.08, anchor=(0.5, -2.0)
     )
-    cbar_ir.set_label("Infrared brightness temperature (°C)")
+    cbar_ir.set_label("Température de brillance (°C)")
 
     # === ALIGNEMENT PARFAIT ===
     fig.align_ylabels([ax11, ax21])

@@ -486,7 +486,7 @@ class LogValidationSamples:
         self.log_batch(model, batch_active, epoch, device,
                        set=active_set, reg_model=reg_model, resid_stats=resid_stats)
 
-        if  (not self.conditional_model or self.cfg.anggrek_test) and epoch > 0 :  # 
+        if  (not self.conditional_model or self.cfg.anggrek_test) :  # 
             ir_anggrek, sar_anggrek, mask_anggrek, infos_anggrek = [], [], [], []
             for ir, sar, mask, inf in dataloader[-1]:
                 ir_anggrek.append(ir)
@@ -613,7 +613,7 @@ class LogValidationSamples:
             if pred_np.ndim == 2:
                 pred_np = pred_np[None, ...]
             B = x_np.shape[0]
-            ch = 2 if x_np.shape[1] > 4 else 0
+            ch = 4 if x_np.shape[1] > 4 else 0
             ir = x_np[:, ch, :, :]
             if self.add_era5:
                 era5 = x_np[:, -1, :, :]
@@ -746,11 +746,8 @@ class LogValidationSamples:
                 )
 
                 if self.add_era5:
-                    era5_vis = (
-                        clbk_func.annular_denormalization(era5[i:i+1], stats={"mean": self.mean_sar, "std": self.std_sar})[0]
-                        if self.norm == "annular"
-                        else era5[i] * self.std_sar + self.mean_sar
-                    )
+                    era5_vis = era5[i]
+                    
                     distdata.plot_sar(era5_vis, cmap=self.cmap_sar, ax=axs[1], fig=fig,
                                       x_lim=pred_den[i].shape[0])
                     axs[1].set_title("ERA5")
@@ -769,13 +766,13 @@ class LogValidationSamples:
 
         fig, ax = plt.subplots(figsize=(11, 6))
         ax.plot(time_parsed, ibtracs_vmax, color="black", linewidth=2, label="IBTrACS (Best Track)")
-        ax.plot(time_parsed, vmax, color="red", linewidth=2, label="ATCF")
-        ax.plot(time_parsed, satcon_vmax, color="blue", linewidth=2, label="SATCON")
+        # ax.plot(time_parsed, vmax, color="red", linewidth=2, label="ATCF")
+        # ax.plot(time_parsed, satcon_vmax, color="blue", linewidth=2, label="SATCON")
         ax.plot(time_parsed, era5_vmaxs, color="orange", linewidth=2, label="ERA5")
 
         if not add_mean_std_fm:
             ax.plot(time_parsed, pred_vmax, color="green", linewidth=2, label="UNET Res 3 km")
-            ax.plot(time_parsed, pred_vmax_2km, color="magenta", linewidth=2, label="UNET Res 2 km")
+            # ax.plot(time_parsed, pred_vmax_2km, color="magenta", linewidth=2, label="UNET Res 2 km")
         else:
             ax.plot(time_parsed, pred_vmax_mean_fm_3m, color="green", linewidth=2,
                     label="flow matching (mean n=20) Res 3 km")
@@ -791,15 +788,15 @@ class LogValidationSamples:
         ax.scatter(t_arr[mA], analysis_vmax_cyclobs[mA], marker="*", s=110,
                    facecolor="#FFD54F", edgecolor="black", linewidths=1.2, alpha=0.95, zorder=10,
                    label="Analysis vmax cyclobs")
-        ax.scatter(t_arr[mC], vmax_cyclobs[mC], marker="s", s=55,
-                   facecolor="#FF0000", edgecolor="black", linewidths=1.0, alpha=0.95, zorder=9,
-                   label="Vmax cyclobs")
+        # ax.scatter(t_arr[mC], vmax_cyclobs[mC], marker="s", s=55,
+        #            facecolor="#FF0000", edgecolor="black", linewidths=1.0, alpha=0.95, zorder=9,
+        #            label="Vmax cyclobs")
         handles, _ = ax.get_legend_handles_labels()
         handles += [
             Line2D([0], [0], marker="*", linestyle="None", markerfacecolor="#FFD54F",
                    markeredgecolor="black", markeredgewidth=1.2, markersize=12, label="Analysis vmax cyclobs"),
-            Line2D([0], [0], marker="s", linestyle="None", markerfacecolor="#2E7D32",
-                   markeredgecolor="black", markeredgewidth=1.0, markersize=8, label="Vmax cyclobs"),
+            # Line2D([0], [0], marker="s", linestyle="None", markerfacecolor="#2E7D32",
+            #        markeredgecolor="black", markeredgewidth=1.0, markersize=8, label="Vmax cyclobs"),
         ]
         ax.legend(handles=handles, loc="upper left", frameon=True, framealpha=0.9)
         ax.set_title(f"Lifecycle Vmax Comparison - 2024013S10093 — RMSE UNET = {rmse:.2f} m/s")
