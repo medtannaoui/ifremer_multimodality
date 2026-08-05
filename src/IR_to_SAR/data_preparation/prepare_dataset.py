@@ -130,10 +130,19 @@ class PrepareDataSet:
             # Normalisation SAR annulaire globale sur les 12 canaux
             N_train, C, H, W = self.sar_train.shape
             dataprepfunc.print_infos_temporal_data(C, self.mask_train,N_train)
-            stats = dataprepfunc.normalize_sar_temporal_mode( dataprep, self.sar_train, self.sar_val, self.sar_test, self.mask_train, self.mask_val, self.mask_test)
+            stats = {} 
+            self.sar_train, self.sar_val, self.sar_test, stats["mean_sar"], stats["std_sar"] = dataprepfunc.normalize_sar_temporal_mode( dataprep, self.sar_train, self.sar_val, self.sar_test, self.mask_train, self.mask_val, self.mask_test)
             stats["mean_x"] = mean_x; stats["std_x"] = std_x
             self.mean_sar = stats["mean_sar"]; self.std_sar = stats["std_sar"]
             self.mean_x = stats["mean_x"]; self.std_x = stats["std_x"]
+
+            try:
+                with open(os.path.join(target_dir,"sequence_data_normalized.pkl"),"wb") as f:
+                    pkl.dump({"x_test_normalized":self.X_test,
+                            "y_test_normalized":self.sar_test}
+                            , f)
+            except Exception as e : 
+                print("erreur dans la sauvgarde des sequences :",e)
             with open(
                 os.path.join(self.target_dir, "stats_normalisation.pkl"),
                 "wb",

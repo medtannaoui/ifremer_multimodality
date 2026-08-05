@@ -744,7 +744,7 @@ def temporal_combined_sar_loss(
     use_weighted_pix=False,
     # Poids des deux régularisations temporelles
     lambda_neighbors=1e-5,
-    lambda_stability=1e-5,
+    lambda_stability=1e-10,
     # Poids internes des distances temporelles
     neighbor_weight_1=0.5,
     neighbor_weight_2=0.25,

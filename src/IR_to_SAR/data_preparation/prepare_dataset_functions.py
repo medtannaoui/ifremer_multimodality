@@ -189,10 +189,15 @@ def normalize_sar_temporal_mode(dataprep, sar_train, sar_val, sar_test, mask_tra
     mean_sar = mean_sar
     std_sar = std_sar
     
-    return {
-        "mean_sar": mean_sar,
-        "std_sar": std_sar,
-    }
+   
+    return (
+        sar_train,
+        sar_val,
+        sar_test,
+        mean_sar,
+        std_sar,
+    )
+    
 
 
 def read_csv_irar(cfg):
