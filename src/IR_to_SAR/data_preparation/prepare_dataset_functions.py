@@ -102,7 +102,7 @@ def print_infos_temporal_data(C, mask_train, N_train,):
             f"séquences avec SAR={n_valid_sequences}"
         )
 
-def normalize_sar_temporal_mode(dataprep, sar_train, sar_val, sar_test, mask_train, mask_val, mask_test):
+def normalize_sar_temporal_mode(cfg, dataprep, sar_train, sar_val, sar_test, mask_train, mask_val, mask_test):
     N_train, C, H, W = sar_train.shape
     N_val = sar_val.shape[0]
     N_test = sar_test.shape[0]
@@ -146,23 +146,41 @@ def normalize_sar_temporal_mode(dataprep, sar_train, sar_val, sar_test, mask_tra
         )
 
     # Calcul d'UNE statistique par anneau avec tous les canaux
-    sar_train_flat, mean_sar, std_sar = dataprep.z_score(
-        sar_train_flat,
-        mask = mask_train_flat
-    )
-    # calculées uniquement sur le train
-    sar_val_flat, _, _ = dataprep.z_score(
-        sar_val_flat,
-        mean_value= mean_sar,
-        std_value = std_sar,
-        mask=mask_val_flat
-    )
-    sar_test_flat, _, _ = dataprep.z_score(
-        sar_test_flat,
-        mean_value = mean_sar,
-        std_value = std_sar,
-        mask = mask_test_flat
-    )
+    if cfg.norm == "z_score":
+        sar_train_flat, mean_sar, std_sar = dataprep.z_score(
+            sar_train_flat,
+            mask = mask_train_flat
+        )
+        # calculées uniquement sur le train
+        sar_val_flat, _, _ = dataprep.z_score(
+            sar_val_flat,
+            mean_value= mean_sar,
+            std_value = std_sar,
+            mask=mask_val_flat
+        )
+        sar_test_flat, _, _ = dataprep.z_score(
+            sar_test_flat,
+            mean_value = mean_sar,
+            std_value = std_sar,
+            mask = mask_test_flat
+        )
+    else :
+        sar_train_flat, stats_annular = dataprep.annular_normalization(
+            sar_train_flat,
+            mask = mask_train_flat
+        )
+        # calculées uniquement sur le train
+        sar_val_flat, _ = dataprep.annular_normalization(
+            sar_val_flat,
+            stats = stats_annular,
+            mask=mask_val_flat
+        )
+        sar_test_flat, _ = dataprep.annular_normalization(
+            sar_test_flat,
+            stats = stats_annular,
+            mask = mask_test_flat
+        )
+        mean_sar = stats_annular["mean"]; std_sar = stats_annular["std"]
     # Retour aux formes temporelles originales
     sar_train = sar_train_flat.reshape(
         N_train,
@@ -186,10 +204,7 @@ def normalize_sar_temporal_mode(dataprep, sar_train, sar_val, sar_test, mask_tra
     sar_train *= mask_train
     sar_val *= mask_val
     sar_test *= mask_test
-    mean_sar = mean_sar
-    std_sar = std_sar
-    
-   
+
     return (
         sar_train,
         sar_val,

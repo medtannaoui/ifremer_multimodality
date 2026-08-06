@@ -173,7 +173,7 @@ def moment_to_sar(moment):
     sar = moment / r_safe[None, :, :]
     return sar
 
-def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
+def data_augmentation(cfg, ir_tensor, sar_tensor, mask_tensor, infos):
     out_ir, out_sar, out_mask, out_infos = [], [], [], []
     for ir, sar, mask, inf in zip(ir_tensor, sar_tensor, mask_tensor, infos):
         inf0 = copy.deepcopy(inf)
@@ -187,15 +187,16 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
         vmax = inf.get("analysis_vmax", np.nan)
         vmax = np.nanmax(vmax) if np.ndim(vmax) > 0 else float(vmax)
         if np.isfinite(rmax) and (rmax > 0):
-            for flip in ["h","v"]:
-                ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
-                inf_aug = copy.deepcopy(inf)
-                inf_aug["augmentation"] = 1
-                inf_aug["aug_type"] = f"flip_{flip}"
-                out_ir.append(ir_r)
-                out_sar.append(sar_r)
-                out_mask.append(mask_r)
-                out_infos.append(inf_aug)
+            if not cfg.overlap :
+                for flip in ["h","v"]:
+                    ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
+                    inf_aug = copy.deepcopy(inf)
+                    inf_aug["augmentation"] = 1
+                    inf_aug["aug_type"] = f"flip_{flip}"
+                    out_ir.append(ir_r)
+                    out_sar.append(sar_r)
+                    out_mask.append(mask_r)
+                    out_infos.append(inf_aug)
 
             for angle in [90,270,180]:
                 ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
@@ -206,27 +207,26 @@ def data_augmentation(ir_tensor, sar_tensor, mask_tensor, infos):
                 out_sar.append(sar_r)
                 out_mask.append(mask_r)
                 out_infos.append(inf_aug)
-
-        if np.isfinite(rmax) and (rmax > 0):
-            for sigma in [0.05]:
-                ir_r = add_white_noise(ir, sigma)
-                inf_aug = copy.deepcopy(inf)
-                inf_aug["augmentation"] = 1
-                inf_aug["aug_type"] = f"white_noise_{sigma}"
-                out_ir.append(ir_r)
-                out_sar.append(sar)   
-                out_mask.append(mask)
-                out_infos.append(inf_aug)
-        if np.isfinite(rmax) and (vmax < 10000):
-            for amount in [0.04]:
-                ir_r = add_salt_pepper_noise(ir, amount)
-                inf_aug = copy.deepcopy(inf)
-                inf_aug["augmentation"] = 1
-                inf_aug["aug_type"] = f"saltpepper_{amount}"
-                out_ir.append(ir_r)
-                out_sar.append(sar)      # unchanged
-                out_mask.append(mask)
-                out_infos.append(inf_aug)
+            if not cfg.overlap:
+                for sigma in [0.05]:
+                    ir_r = add_white_noise(ir, sigma)
+                    inf_aug = copy.deepcopy(inf)
+                    inf_aug["augmentation"] = 1
+                    inf_aug["aug_type"] = f"white_noise_{sigma}"
+                    out_ir.append(ir_r)
+                    out_sar.append(sar)   
+                    out_mask.append(mask)
+                    out_infos.append(inf_aug)
+            
+                for amount in [0.04]:
+                    ir_r = add_salt_pepper_noise(ir, amount)
+                    inf_aug = copy.deepcopy(inf)
+                    inf_aug["augmentation"] = 1
+                    inf_aug["aug_type"] = f"saltpepper_{amount}"
+                    out_ir.append(ir_r)
+                    out_sar.append(sar)      # unchanged
+                    out_mask.append(mask)
+                    out_infos.append(inf_aug)
     return (
         np.stack(out_ir, axis=0),
         np.stack(out_sar, axis=0),

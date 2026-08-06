@@ -75,7 +75,7 @@ class PrepareDataSet:
                     irwin_test.append(ir_sequence);sar_test.append(wind_sequence)
                     wind_mask_test.append(wind_mask)
                     infos_test.append({k: ind[k] for k in keys})
-                elif int(all_sequences[enu]["year"]) in [2020]:
+                elif int(all_sequences[enu]["year"]) in [2018]:
                     irwin_val.append(ir_sequence); sar_val.append(wind_sequence)
                     wind_mask_val.append(wind_mask)
                     infos_val.append({k: ind[k] for k in keys})
@@ -108,6 +108,7 @@ class PrepareDataSet:
             if self.cfg.augmentation : 
                 print("Start Data Augmentation for train set : ----------")
                 self.X_train, self.sar_train, self.mask_train, self.infos_train = dataprep.data_augmentation(
+                                                                                                self.cfg,
                                                                                                 self.X_train, 
                                                                                                 self.sar_train, 
                                                                                                 self.mask_train,
@@ -131,7 +132,7 @@ class PrepareDataSet:
             N_train, C, H, W = self.sar_train.shape
             dataprepfunc.print_infos_temporal_data(C, self.mask_train,N_train)
             stats = {} 
-            self.sar_train, self.sar_val, self.sar_test, stats["mean_sar"], stats["std_sar"] = dataprepfunc.normalize_sar_temporal_mode( dataprep, self.sar_train, self.sar_val, self.sar_test, self.mask_train, self.mask_val, self.mask_test)
+            self.sar_train, self.sar_val, self.sar_test, stats["mean_sar"], stats["std_sar"] = dataprepfunc.normalize_sar_temporal_mode( self.cfg, dataprep, self.sar_train, self.sar_val, self.sar_test, self.mask_train, self.mask_val, self.mask_test)
             stats["mean_x"] = mean_x; stats["std_x"] = std_x
             self.mean_sar = stats["mean_sar"]; self.std_sar = stats["std_sar"]
             self.mean_x = stats["mean_x"]; self.std_x = stats["std_x"]
