@@ -186,8 +186,8 @@ def data_augmentation(cfg, ir_tensor, sar_tensor, mask_tensor, infos):
         rmax = np.nanmax(rmax) if np.ndim(rmax) > 0 else float(rmax)
         vmax = inf.get("analysis_vmax", np.nan)
         vmax = np.nanmax(vmax) if np.ndim(vmax) > 0 else float(vmax)
-        if np.isfinite(rmax) and (rmax > 0):
-            if not cfg.overlap :
+        if True:
+            if not cfg.temporal_mode :
                 for flip in ["h","v"]:
                     ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
                     inf_aug = copy.deepcopy(inf)
@@ -197,17 +197,7 @@ def data_augmentation(cfg, ir_tensor, sar_tensor, mask_tensor, infos):
                     out_sar.append(sar_r)
                     out_mask.append(mask_r)
                     out_infos.append(inf_aug)
-
-            for angle in [90,270,180]:
-                ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
-                inf_aug = copy.deepcopy(inf)
-                inf_aug["augmentation"] = 1
-                inf_aug["aug_type"] = f"rot_{angle}"
-                out_ir.append(ir_r)
-                out_sar.append(sar_r)
-                out_mask.append(mask_r)
-                out_infos.append(inf_aug)
-            if not cfg.overlap:
+                
                 for sigma in [0.05]:
                     ir_r = add_white_noise(ir, sigma)
                     inf_aug = copy.deepcopy(inf)
@@ -227,6 +217,19 @@ def data_augmentation(cfg, ir_tensor, sar_tensor, mask_tensor, infos):
                     out_sar.append(sar)      # unchanged
                     out_mask.append(mask)
                     out_infos.append(inf_aug)
+
+
+            for angle in [90,270,180]:
+                ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
+                inf_aug = copy.deepcopy(inf)
+                inf_aug["augmentation"] = 1
+                inf_aug["aug_type"] = f"rot_{angle}"
+                out_ir.append(ir_r)
+                out_sar.append(sar_r)
+                out_mask.append(mask_r)
+                out_infos.append(inf_aug)
+
+                
     return (
         np.stack(out_ir, axis=0),
         np.stack(out_sar, axis=0),

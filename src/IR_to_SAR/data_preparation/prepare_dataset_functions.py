@@ -5,7 +5,7 @@ import pickle as pkl
 import pandas as pd
 from datetime import datetime, timedelta
 
-def generate_sequence_irar_temporal_mode(all_sequences, enu):
+def generate_sequence_irar_temporal_mode(cfg, all_sequences, enu):
 
     cyclone_id = all_sequences[enu]["cyc_id"]
     sequence = all_sequences[enu]["sequence"]
@@ -27,7 +27,8 @@ def generate_sequence_irar_temporal_mode(all_sequences, enu):
         except Exception as e: 
             break
     
-    if len(ir_sequence) != 12:
+    nbr_target = 12 if cfg.overlap else 9
+    if len(ir_sequence) != nbr_target:
         return None
     if not any(wind_mask):
         return None

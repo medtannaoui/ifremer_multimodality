@@ -59,17 +59,17 @@ class PrepareDataSet:
         if cfg.temporal_mode : 
             print("Using temporal mode .....")
             if not self.cfg.overlap : 
-                with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/tempral_data_with_infos.pkl","rb") as f:
+                with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/24hours_before_data.pkl","rb") as f:
                     all_sequences = pkl.load(f)
             else : 
-                with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/tempral_data_with_infos_stride1.pkl","rb") as f:
+                with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/one_day_24hours_data_with_infos_stride1.pkl","rb") as f:
                     all_sequences = pkl.load(f)
             
             for enu, ind in tqdm(enumerate(all_sequences), desc="Generating sequences for training : ....",total=len(all_sequences)):
-                if dataprepfunc.generate_sequence_irar_temporal_mode(all_sequences, enu) is None:
+                if dataprepfunc.generate_sequence_irar_temporal_mode(self.cfg, all_sequences, enu) is None:
                     continue
                 else : 
-                    ir_sequence, wind_sequence, wind_mask = dataprepfunc.generate_sequence_irar_temporal_mode(all_sequences, enu)
+                    ir_sequence, wind_sequence, wind_mask = dataprepfunc.generate_sequence_irar_temporal_mode(self.cfg, all_sequences, enu)
 
                 if int(all_sequences[enu]["year"]) in  [2017]:
                     irwin_test.append(ir_sequence);sar_test.append(wind_sequence)
@@ -118,16 +118,31 @@ class PrepareDataSet:
             
             print("Start normalisation : .......................")
 
-            mean_x, std_x = [], []
-            for c in range(self.X_train.shape[1]):
-                self.X_train[:, c], mean, std = dataprep.z_score(self.X_train[:, c])
-                mean_x.append(mean)
-                std_x.append(std)
-            self.mean_X, self.std_X = mean_x, std_x
-            for c in range(self.X_train.shape[1]):
-                self.X_val[:, c], _, _ = dataprep.z_score(self.X_val[:, c], mean_value=mean_x[c], std_value=std_x[c])
-                self.X_test[:, c], _, _ = dataprep.z_score(self.X_test[:, c], mean_value=mean_x[c], std_value=std_x[c])
-                
+            # mean_x, std_x = [], []
+            # for c in range(self.X_train.shape[1]):
+            #     self.X_train[:, c], mean, std = dataprep.z_score(self.X_train[:, c])
+            #     mean_x.append(mean)
+            #     std_x.append(std)
+            # self.mean_X, self.std_X = mean_x, std_x
+            # for c in range(self.X_train.shape[1]):
+            #     self.X_val[:, c], _, _ = dataprep.z_score(self.X_val[:, c], mean_value=mean_x[c], std_value=std_x[c])
+            #     self.X_test[:, c], _, _ = dataprep.z_score(self.X_test[:, c], mean_value=mean_x[c], std_value=std_x[c])
+            
+            # Calcul sur tout le train
+            self.X_train, mean_x, std_x = dataprep.z_score(self.X_train)
+            self.X_val, _, _ = dataprep.z_score(
+                self.X_val,
+                mean_value=mean_x,
+                std_value=std_x,
+            )
+            self.X_test, _, _ = dataprep.z_score(
+                self.X_test,
+                mean_value=mean_x,
+                std_value=std_x,
+            )
+            self.mean_X = mean_x
+            self.std_X = std_x
+            
             # Normalisation SAR annulaire globale sur les 12 canaux
             N_train, C, H, W = self.sar_train.shape
             dataprepfunc.print_infos_temporal_data(C, self.mask_train,N_train)

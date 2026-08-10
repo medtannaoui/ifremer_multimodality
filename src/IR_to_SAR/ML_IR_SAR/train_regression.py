@@ -314,6 +314,7 @@ def main(cfg: config.IR_SAR_Config, test=False):
     cfg.early_stop_patience = 2 if cfg.code_test else cfg.early_stop_patience
     cfg.batch_size = cfg.batch_size if not cfg.code_test else 1
     cfg.out_channels = 12 if cfg.temporal_mode else cfg.out_channels
+    cfg.out_channels = 9 if (not cfg.overlap and cfg.temporal_mode) else cfg.out_channels
 
     logger.info(f"Starting training with config:\n{cfg.__dict__}")
 
