@@ -32,7 +32,7 @@ def add_era5():
     
     count = 0
     for ind in tqdm(range(len(data)), desc="adding era5 ...", total=len(data)-365):
-        sample = data[ind+365]
+        sample = data[ind]
         cyclone_id  = sample["cyc_id"]
         er = 0
         try :
@@ -77,8 +77,9 @@ def add_era5():
             else : 
                 sample["all_era5"] = 0
 
-        except : 
+        except Exception as e: 
             sample["all_era5"] = 0
+            print(f"Erreur sample {ind + 365}: {e}")
             continue                                                                  ## 300km , resolution 2km
 
     with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/one_day_24hours_with_era5.pkl","wb") as f:
