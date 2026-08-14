@@ -83,22 +83,22 @@ class IRSARDataset(Dataset):
         return torch.tensor(X, dtype=torch.float32), sar
 
 class PairedDataset(Dataset):
-    def __init__(self, X, sar_array, mask, infos):
+    def __init__(self, X, sar_array, mask, infos, mw=None, mw_mask=None, mw_pixel_mask=None):
         self.X = X
         self.sar = sar_array
         self.mask = mask
         self.infos = infos
+        self.mw = mw
+        self.mw_mask = mw_mask
+        self.mw_pixel_mask = mw_pixel_mask
     
     def __len__(self):
         return len(self.X)
 
     def __getitem__(self, idx):
-        return (
-        torch.tensor(self.X[idx], dtype=torch.float32),
-        torch.tensor(self.sar[idx], dtype=torch.float32),
-        torch.tensor(self.mask[idx], dtype=torch.float32),
-        self.infos[idx]  
-    )
+        if self.mw is not None:
+            return torch.tensor(self.X[idx], dtype=torch.float32), torch.tensor(self.sar[idx], dtype=torch.float32), torch.tensor(self.mask[idx], dtype=torch.float32), torch.tensor(self.mw[idx], dtype=torch.float32), torch.tensor(self.mw_mask[idx], dtype=torch.bool), torch.tensor(self.mw_pixel_mask[idx], dtype=torch.bool), self.infos[idx]
+        return torch.tensor(self.X[idx], dtype=torch.float32), torch.tensor(self.sar[idx], dtype=torch.float32), torch.tensor(self.mask[idx], dtype=torch.float32), self.infos[idx]
 
 def train_one_epoch(fabric, model, dataloader, optimizer, cfg, scheduler=None):
     model.train()
@@ -121,10 +121,22 @@ def train_one_epoch(fabric, model, dataloader, optimizer, cfg, scheduler=None):
         alpha=0.5
     )
 
-    for x, sar, mask, infos in tqdm(dataloader, desc="Training"):
+    for batch in tqdm(dataloader, desc="Training"):
+        if cfg.temporal_mode and cfg.add_mw:
+            x, sar, mask, mw, mw_mask, mw_pixel_mask, infos = batch
+        else:
+            x, sar, mask, infos = batch
+
         x = x.to(fabric.device)
         sar = sar.to(fabric.device)
         mask = mask.to(fabric.device)
+        if cfg.temporal_mode and cfg.add_mw:
+            mw, mw_mask, mw_pixel_mask = mw.to(fabric.device), mw_mask.to(fabric.device), mw_pixel_mask.to(fabric.device)
+        
+        if cfg.temporal_mode and cfg.add_mw:
+            x = torch.cat([x, mw, mw_pixel_mask.float()], dim=1)
+            # print("Shape on the model input is:",x.shape)
+            # print("Shape of the model output is :",sar.shape)
 
         if cfg.channel_dropout:
             x = model_ir_sar.apply_random_channel_dropout(
@@ -226,10 +238,20 @@ def validate(fabric, model, dataloader, cfg, BIN_EDGES, BIN_WEIGHTS):
     total_l_radial = 0.0
 
     with torch.no_grad():
-        for x, sar, mask, infos in tqdm(dataloader, desc="Validating"):
+        for batch in tqdm(dataloader, desc="Validating"):
+            if cfg.temporal_mode and cfg.add_mw:
+                x, sar, mask, mw, mw_mask, mw_pixel_mask, infos = batch
+            else:
+                x, sar, mask, infos = batch
+
             x = x.to(fabric.device)
             sar = sar.to(fabric.device)
             mask = mask.to(fabric.device)
+            if cfg.temporal_mode and cfg.add_mw:
+                mw, mw_mask, mw_pixel_mask = mw.to(fabric.device), mw_mask.to(fabric.device), mw_pixel_mask.to(fabric.device)
+        
+            if cfg.temporal_mode and cfg.add_mw:
+                x = torch.cat([x, mw, mw_pixel_mask.float()], dim=1)
 
             if cfg.conditional_model:
                 shear_infos = torch.stack([
@@ -355,7 +377,7 @@ def main(cfg: config.IR_SAR_Config, test=False):
 
 def train(fabric, cfg, full_data, target_dir):
     
-    cfg.in_channels = full_data.dataset.X_train.shape[1]
+    cfg.in_channels = full_data.dataset.X_train.shape[1] + 2 * full_data.dataset.mw_train.shape[1] if (cfg.temporal_mode and cfg.add_mw) else full_data.dataset.X_train.shape[1]
     cfg.anggrek_test = False if cfg.temporal_mode else cfg.anggrek_test
 
     if fabric.is_global_zero:
@@ -365,44 +387,20 @@ def train(fabric, cfg, full_data, target_dir):
         logger.info(f"batch_size = {cfg.batch_size}")
         logger.info(f"early_stop_patience = {cfg.early_stop_patience}")
 
-    train_ds = PairedDataset(
-        *(full_data.dataset.X_train, full_data.dataset.sar_train),
-        full_data.dataset.mask_train,
-        full_data.dataset.infos_train
-    )
+    if cfg.temporal_mode and cfg.add_mw:
+        train_ds = PairedDataset(full_data.dataset.X_train, full_data.dataset.sar_train, full_data.dataset.mask_train, full_data.dataset.infos_train, full_data.dataset.mw_train, full_data.dataset.mw_mask_train, full_data.dataset.mw_pixel_mask_train)
+        val_ds = PairedDataset(full_data.dataset.X_val, full_data.dataset.sar_val, full_data.dataset.mask_val, full_data.dataset.infos_val, full_data.dataset.mw_val, full_data.dataset.mw_mask_val, full_data.dataset.mw_pixel_mask_val)
+        test_ds = PairedDataset(full_data.dataset.X_test, full_data.dataset.sar_test, full_data.dataset.mask_test, full_data.dataset.infos_test, full_data.dataset.mw_test, full_data.dataset.mw_mask_test, full_data.dataset.mw_pixel_mask_test)
+    else:
+        train_ds = PairedDataset(full_data.dataset.X_train, full_data.dataset.sar_train, full_data.dataset.mask_train, full_data.dataset.infos_train)
+        val_ds = PairedDataset(full_data.dataset.X_val, full_data.dataset.sar_val, full_data.dataset.mask_val, full_data.dataset.infos_val)
+        test_ds = PairedDataset(full_data.dataset.X_test, full_data.dataset.sar_test, full_data.dataset.mask_test, full_data.dataset.infos_test)
 
-    val_ds = PairedDataset(
-        *(full_data.dataset.X_val, full_data.dataset.sar_val),
-        full_data.dataset.mask_val,
-        full_data.dataset.infos_val
-    )
-    
-    test_ds = PairedDataset(
-        *(full_data.dataset.X_test, full_data.dataset.sar_test),
-        full_data.dataset.mask_test,
-        full_data.dataset.infos_test
-    )
+    train_loader = DataLoader(train_ds,batch_size=cfg.batch_size,shuffle=True,collate_fn=dataprep.custom_collate)
 
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=cfg.batch_size,
-        shuffle=True,
-        collate_fn=dataprep.custom_collate
-    )
+    val_loader = DataLoader(val_ds,batch_size=cfg.batch_size,shuffle=False,collate_fn=dataprep.custom_collate)
 
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=cfg.batch_size,
-        shuffle=False,
-        collate_fn=dataprep.custom_collate
-    )
-
-    test_loader = DataLoader(
-        test_ds,
-        batch_size=cfg.batch_size,
-        shuffle=False,
-        collate_fn=dataprep.custom_collate
-    )
+    test_loader = DataLoader(test_ds,batch_size=cfg.batch_size,shuffle=False,collate_fn=dataprep.custom_collate )
 
     anggrek_loader = None
 
@@ -420,11 +418,7 @@ def train(fabric, cfg, full_data, target_dir):
             collate_fn=dataprep.custom_collate
         )
 
-    in_channels = (
-        train_ds.X.shape[1]
-        if isinstance(train_ds.X, np.ndarray)
-        else train_ds.X[0].shape[0]
-    )
+    in_channels = train_ds.X.shape[1] + 2 * train_ds.mw.shape[1] if (cfg.temporal_mode and cfg.add_mw) else train_ds.X.shape[1]
 
     model = model_ir_sar.create_model(
         cfg=cfg,

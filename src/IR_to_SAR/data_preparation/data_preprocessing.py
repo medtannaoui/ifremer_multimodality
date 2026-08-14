@@ -109,30 +109,6 @@ def annular_denormalization(
                 ) + mean[b]
             return images
 
-##### AUgmentation #######################
-def augmentation_sar_safe(ir, sar, mask, angle=None, flip=None):
-   
-    ir_t = torch.tensor(ir, dtype=torch.float32).unsqueeze(0)
-    sar_t = torch.tensor(sar, dtype=torch.float32).unsqueeze(0)
-    mask_t = torch.tensor(mask, dtype=torch.float32).unsqueeze(0)
-    if angle is not None:
-        ir_t = TF.rotate(ir_t, angle)
-        sar_t = TF.rotate(sar_t, angle)
-        mask_t = TF.rotate(mask_t, angle)
-    if flip == "h":
-        ir_t = TF.hflip(ir_t)
-        sar_t = TF.hflip(sar_t)
-        mask_t = TF.hflip(mask_t)
-    elif flip == "v":
-        ir_t = TF.vflip(ir_t)
-        sar_t = TF.vflip(sar_t)
-        mask_t = TF.vflip(mask_t)
-    return (
-        ir_t.squeeze(0).numpy(),
-        sar_t.squeeze(0).numpy(),
-        mask_t.squeeze(0).numpy(),
-    )
-
 def add_white_noise(img, sigma):
     noise = np.random.normal(0, sigma, img.shape)
     return img + noise
@@ -173,68 +149,394 @@ def moment_to_sar(moment):
     sar = moment / r_safe[None, :, :]
     return sar
 
-def data_augmentation(cfg, ir_tensor, sar_tensor, mask_tensor, infos):
+def augmentation_sar_safe(
+    ir,
+    sar,
+    mask,
+    angle=None,
+    flip=None,
+    mw=None,
+    mw_pixel_mask=None,
+):
+
+    ir_t = torch.tensor(ir, dtype=torch.float32).unsqueeze(0)
+    sar_t = torch.tensor(sar, dtype=torch.float32).unsqueeze(0)
+    mask_t = torch.tensor(mask, dtype=torch.float32).unsqueeze(0)
+
+    if mw is not None:
+        mw_t = torch.tensor(
+            mw,
+            dtype=torch.float32
+        ).unsqueeze(0)
+
+        mw_pixel_mask_t = torch.tensor(
+            mw_pixel_mask,
+            dtype=torch.float32
+        ).unsqueeze(0)
+
+    # Rotation
+    if angle is not None:
+
+        ir_t = TF.rotate(ir_t, angle)
+        sar_t = TF.rotate(sar_t, angle)
+        mask_t = TF.rotate(mask_t, angle)
+
+        if mw is not None:
+            mw_t = TF.rotate(mw_t, angle)
+            mw_pixel_mask_t = TF.rotate(
+                mw_pixel_mask_t,
+                angle
+            )
+
+    # Flip horizontal
+    if flip == "h":
+
+        ir_t = TF.hflip(ir_t)
+        sar_t = TF.hflip(sar_t)
+        mask_t = TF.hflip(mask_t)
+
+        if mw is not None:
+            mw_t = TF.hflip(mw_t)
+            mw_pixel_mask_t = TF.hflip(
+                mw_pixel_mask_t
+            )
+
+    # Flip vertical
+    elif flip == "v":
+
+        ir_t = TF.vflip(ir_t)
+        sar_t = TF.vflip(sar_t)
+        mask_t = TF.vflip(mask_t)
+
+        if mw is not None:
+            mw_t = TF.vflip(mw_t)
+            mw_pixel_mask_t = TF.vflip(
+                mw_pixel_mask_t
+            )
+
+    if mw is not None:
+
+        return (
+            ir_t.squeeze(0).numpy(),
+            sar_t.squeeze(0).numpy(),
+            mask_t.squeeze(0).numpy(),
+            mw_t.squeeze(0).numpy(),
+            mw_pixel_mask_t.squeeze(0).numpy().astype(bool),
+        )
+
+    return (
+        ir_t.squeeze(0).numpy(),
+        sar_t.squeeze(0).numpy(),
+        mask_t.squeeze(0).numpy(),
+    )
+
+def data_augmentation(
+    cfg,
+    ir_tensor,
+    sar_tensor,
+    mask_tensor,
+    infos,
+    mw_tensor=None,
+    mw_mask_tensor=None,
+    mw_pixel_mask_tensor=None,
+):
+
     out_ir, out_sar, out_mask, out_infos = [], [], [], []
-    for ir, sar, mask, inf in zip(ir_tensor, sar_tensor, mask_tensor, infos):
+
+    if cfg.add_mw:
+        out_mw = []
+        out_mw_mask = []
+        out_mw_pixel_mask = []
+
+    for idx, (ir, sar, mask, inf) in enumerate(
+        zip(
+            ir_tensor,
+            sar_tensor,
+            mask_tensor,
+            infos
+        )
+    ):
+
+        # =====================================================
+        # MW du sample courant
+        # =====================================================
+
+        if cfg.add_mw:
+
+            mw = mw_tensor[idx]
+            mw_mask = mw_mask_tensor[idx]
+            mw_pixel_mask = mw_pixel_mask_tensor[idx]
+
+
+        # =====================================================
+        # Original
+        # =====================================================
+
         inf0 = copy.deepcopy(inf)
         inf0["augmentation"] = 0
+
         out_ir.append(ir)
         out_sar.append(sar)
         out_mask.append(mask)
         out_infos.append(inf0)
-        rmax = inf.get("analysis_rmax", np.nan)
-        rmax = np.nanmax(rmax) if np.ndim(rmax) > 0 else float(rmax)
-        vmax = inf.get("analysis_vmax", np.nan)
-        vmax = np.nanmax(vmax) if np.ndim(vmax) > 0 else float(vmax)
-        if True:
-            if not cfg.temporal_mode :
-                for flip in ["h","v"]:
-                    ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, flip=flip)
-                    inf_aug = copy.deepcopy(inf)
-                    inf_aug["augmentation"] = 1
-                    inf_aug["aug_type"] = f"flip_{flip}"
-                    out_ir.append(ir_r)
-                    out_sar.append(sar_r)
-                    out_mask.append(mask_r)
-                    out_infos.append(inf_aug)
-                
-                for sigma in [0.05]:
-                    ir_r = add_white_noise(ir, sigma)
-                    inf_aug = copy.deepcopy(inf)
-                    inf_aug["augmentation"] = 1
-                    inf_aug["aug_type"] = f"white_noise_{sigma}"
-                    out_ir.append(ir_r)
-                    out_sar.append(sar)   
-                    out_mask.append(mask)
-                    out_infos.append(inf_aug)
-            
-                for amount in [0.04]:
-                    ir_r = add_salt_pepper_noise(ir, amount)
-                    inf_aug = copy.deepcopy(inf)
-                    inf_aug["augmentation"] = 1
-                    inf_aug["aug_type"] = f"saltpepper_{amount}"
-                    out_ir.append(ir_r)
-                    out_sar.append(sar)      # unchanged
-                    out_mask.append(mask)
-                    out_infos.append(inf_aug)
+
+        if cfg.add_mw:
+
+            out_mw.append(mw)
+            out_mw_mask.append(mw_mask.copy())
+            out_mw_pixel_mask.append(
+                mw_pixel_mask.copy()
+            )
 
 
-            for angle in [90,270,180]:
-                ir_r, sar_r, mask_r = augmentation_sar_safe(ir, sar, mask, angle=angle)
+        rmax = inf.get(
+            "analysis_rmax",
+            np.nan
+        )
+
+        rmax = (
+            np.nanmax(rmax)
+            if np.ndim(rmax) > 0
+            else float(rmax)
+        )
+
+        vmax = inf.get(
+            "analysis_vmax",
+            np.nan
+        )
+
+        vmax = (
+            np.nanmax(vmax)
+            if np.ndim(vmax) > 0
+            else float(vmax)
+        )
+
+
+        # =====================================================
+        # Non temporal mode
+        # =====================================================
+
+        if not cfg.temporal_mode:
+
+            # -------------------------------------------------
+            # Flips
+            # -------------------------------------------------
+
+            for flip in ["h", "v"]:
+
+                if cfg.add_mw:
+
+                    (
+                        ir_r,
+                        sar_r,
+                        mask_r,
+                        mw_r,
+                        mw_pixel_mask_r,
+                    ) = augmentation_sar_safe(
+                        ir,
+                        sar,
+                        mask,
+                        flip=flip,
+                        mw=mw,
+                        mw_pixel_mask=mw_pixel_mask,
+                    )
+
+                else:
+
+                    ir_r, sar_r, mask_r = (
+                        augmentation_sar_safe(
+                            ir,
+                            sar,
+                            mask,
+                            flip=flip,
+                        )
+                    )
+
+
                 inf_aug = copy.deepcopy(inf)
                 inf_aug["augmentation"] = 1
-                inf_aug["aug_type"] = f"rot_{angle}"
+                inf_aug["aug_type"] = f"flip_{flip}"
+
                 out_ir.append(ir_r)
                 out_sar.append(sar_r)
                 out_mask.append(mask_r)
                 out_infos.append(inf_aug)
 
-                
+                if cfg.add_mw:
+
+                    out_mw.append(mw_r)
+
+                    # Temporal mask inchangé
+                    out_mw_mask.append(
+                        mw_mask.copy()
+                    )
+
+                    # Spatial mask transformé
+                    out_mw_pixel_mask.append(
+                        mw_pixel_mask_r
+                    )
+
+
+            # -------------------------------------------------
+            # White noise : uniquement IR
+            # -------------------------------------------------
+
+            for sigma in [0.05]:
+
+                ir_r = add_white_noise(
+                    ir,
+                    sigma
+                )
+
+                inf_aug = copy.deepcopy(inf)
+                inf_aug["augmentation"] = 1
+                inf_aug["aug_type"] = (
+                    f"white_noise_{sigma}"
+                )
+
+                out_ir.append(ir_r)
+                out_sar.append(sar)
+                out_mask.append(mask)
+                out_infos.append(inf_aug)
+
+                if cfg.add_mw:
+
+                    out_mw.append(
+                        mw.copy()
+                    )
+
+                    out_mw_mask.append(
+                        mw_mask.copy()
+                    )
+
+                    out_mw_pixel_mask.append(
+                        mw_pixel_mask.copy()
+                    )
+
+
+            # -------------------------------------------------
+            # Salt & pepper : uniquement IR
+            # -------------------------------------------------
+
+            for amount in [0.04]:
+
+                ir_r = add_salt_pepper_noise(
+                    ir,
+                    amount
+                )
+
+                inf_aug = copy.deepcopy(inf)
+                inf_aug["augmentation"] = 1
+                inf_aug["aug_type"] = (
+                    f"saltpepper_{amount}"
+                )
+
+                out_ir.append(ir_r)
+                out_sar.append(sar)
+                out_mask.append(mask)
+                out_infos.append(inf_aug)
+
+                if cfg.add_mw:
+
+                    out_mw.append(
+                        mw.copy()
+                    )
+
+                    out_mw_mask.append(
+                        mw_mask.copy()
+                    )
+
+                    out_mw_pixel_mask.append(
+                        mw_pixel_mask.copy()
+                    )
+
+
+        # =====================================================
+        # Rotations
+        # =====================================================
+
+        for angle in [90, 270, 180]:
+
+            if cfg.add_mw:
+
+                (
+                    ir_r,
+                    sar_r,
+                    mask_r,
+                    mw_r,
+                    mw_pixel_mask_r,
+                ) = augmentation_sar_safe(
+                    ir,
+                    sar,
+                    mask,
+                    angle=angle,
+                    mw=mw,
+                    mw_pixel_mask=mw_pixel_mask,
+                )
+
+            else:
+
+                ir_r, sar_r, mask_r = (
+                    augmentation_sar_safe(
+                        ir,
+                        sar,
+                        mask,
+                        angle=angle,
+                    )
+                )
+
+
+            inf_aug = copy.deepcopy(inf)
+            inf_aug["augmentation"] = 1
+            inf_aug["aug_type"] = (
+                f"rot_{angle}"
+            )
+
+            out_ir.append(ir_r)
+            out_sar.append(sar_r)
+            out_mask.append(mask_r)
+            out_infos.append(inf_aug)
+
+            if cfg.add_mw:
+
+                out_mw.append(mw_r)
+
+                # Le mask temporel ne change PAS
+                out_mw_mask.append(
+                    mw_mask.copy()
+                )
+
+                # Le mask spatial tourne comme le MW
+                out_mw_pixel_mask.append(
+                    mw_pixel_mask_r
+                )
+
+
+    # =========================================================
+    # Return
+    # =========================================================
+
+    if cfg.add_mw:
+
+        return (
+            np.stack(out_ir, axis=0),
+            np.stack(out_sar, axis=0),
+            np.stack(out_mask, axis=0),
+            out_infos,
+            np.stack(out_mw, axis=0),
+            np.stack(out_mw_mask, axis=0),
+            np.stack(
+                out_mw_pixel_mask,
+                axis=0
+            ).astype(bool),
+        )
+
+
     return (
         np.stack(out_ir, axis=0),
         np.stack(out_sar, axis=0),
         np.stack(out_mask, axis=0),
-        out_infos
+        out_infos,
     )
 
 def regrid_batch_by_resolution(x, in_resolution, out_resolution):
@@ -375,19 +677,20 @@ def build_storm_centered_dataset(
 
 
 def custom_collate(batch):
-    """
-    batch = [
-        (x, sar, mask, infos_dict),
-        ...
-    ]
-    """
-    xs    = torch.stack([item[0] for item in batch])
-    sars  = torch.stack([item[1] for item in batch])
+    if len(batch[0]) == 7:
+        xs = torch.stack([item[0] for item in batch])
+        sars = torch.stack([item[1] for item in batch])
+        masks = torch.stack([item[2] for item in batch])
+        mws = torch.stack([item[3] for item in batch])
+        mw_masks = torch.stack([item[4] for item in batch])
+        mw_pixel_masks = torch.stack([item[5] for item in batch])
+        infos = [item[6] for item in batch]
+        return xs, sars, masks, mws, mw_masks, mw_pixel_masks, infos
+
+    xs = torch.stack([item[0] for item in batch])
+    sars = torch.stack([item[1] for item in batch])
     masks = torch.stack([item[2] for item in batch])
-
-    # infos reste une liste de dictionnaires
     infos = [item[3] for item in batch]
-
     return xs, sars, masks, infos
 
 import src.IR_to_SAR.data_preparation.regrid_era5.regrid_era5 as regrid_colocs

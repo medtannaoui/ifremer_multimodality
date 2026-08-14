@@ -53,6 +53,7 @@ class IR_SAR_Config:
     temporal_mode : bool
     overlap : bool
     stride : int
+    add_mw : bool
     @staticmethod
     def from_yaml(path: str):
         with open(path, "r") as file:

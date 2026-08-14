@@ -460,37 +460,65 @@ def compute_bin_weights_from_loader(
     train_loader,
     bin_edges,
     device,
-    alpha=0.5,     # 0.5 doux, 1.0 inverse fréquence strict
+    alpha=0.5,
     eps=1e-6,
     max_batches=None
 ):
     num_bins = bin_edges.numel() - 1
     counts = torch.zeros(num_bins, device=device, dtype=torch.float64)
 
-    for b, (x, sar, mask, _) in enumerate(train_loader):
+    for b, batch in enumerate(train_loader):
+
         if max_batches is not None and b >= max_batches:
             break
 
-        sar = sar.to(device)
-        mask = mask.to(device)
-        sar = torch.nan_to_num(sar, nan=0.0, posinf=0.0, neginf=0.0)
+        sar = batch[1].to(device)
+        mask = batch[2].to(device)
+
+        sar = torch.nan_to_num(
+            sar,
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0
+        )
 
         valid = mask > 0.5
+
         if valid.sum() == 0:
             continue
 
         v = sar[valid].float()
-        idx = torch.bucketize(v, bin_edges, right=False) - 1
-        idx = idx.clamp(0, num_bins - 1)
 
-        counts += torch.bincount(idx, minlength=num_bins).to(torch.float64)
+        idx = torch.bucketize(
+            v,
+            bin_edges,
+            right=False
+        ) - 1
+
+        idx = idx.clamp(
+            0,
+            num_bins - 1
+        )
+
+        counts += torch.bincount(
+            idx,
+            minlength=num_bins
+        ).to(torch.float64)
 
     probs = counts / counts.sum().clamp_min(1.0)
 
-    weights = 1.0 / torch.pow(probs + eps, alpha)
-    weights = weights / weights.mean().clamp_min(1e-12)  # stabilise
+    weights = 1.0 / torch.pow(
+        probs + eps,
+        alpha
+    )
 
-    return weights.to(torch.float32), probs.to(torch.float32), counts
+    weights = weights / weights.mean().clamp_min(1e-12)
+
+    return (
+        weights.to(torch.float32),
+        probs.to(torch.float32),
+        counts
+    )
 
 @torch.no_grad()
 def compute_bin_edges_quantiles(
@@ -500,42 +528,63 @@ def compute_bin_edges_quantiles(
     max_batches=None,
     eps=1e-6,
 ):
-    """
-    Calcule bin_edges (num_bins+1,) automatiquement avec min/max sur les pixels valides (mask)
-    sans stocker tous les pixels.
-    """
+
     vmin = None
     vmax = None
 
-    for b, (x, sar, mask, _) in enumerate(train_loader):
+    for b, batch in enumerate(train_loader):
+
         if max_batches is not None and b >= max_batches:
             break
 
-        sar = sar.to(device)
-        mask = mask.to(device)
+        sar = batch[1].to(device)
+        mask = batch[2].to(device)
 
-        sar = torch.nan_to_num(sar, nan=0.0, posinf=0.0, neginf=0.0)
+        sar = torch.nan_to_num(
+            sar,
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0
+        )
+
         valid = mask > 0.5
+
         if valid.sum() == 0:
             continue
 
         v = sar[valid].float()
+
         bmin = v.min()
         bmax = v.max()
 
-        vmin = bmin if vmin is None else torch.minimum(vmin, bmin)
-        vmax = bmax if vmax is None else torch.maximum(vmax, bmax)
+        vmin = (
+            bmin
+            if vmin is None
+            else torch.minimum(vmin, bmin)
+        )
+
+        vmax = (
+            bmax
+            if vmax is None
+            else torch.maximum(vmax, bmax)
+        )
 
     if vmin is None or vmax is None:
-        raise RuntimeError("No valid pixels found to compute min/max bin edges.")
+        raise RuntimeError(
+            "No valid pixels found to compute min/max bin edges."
+        )
 
-    # Evite vmin == vmax
     if torch.isclose(vmin, vmax):
         vmax = vmin + eps
 
-    edges = torch.linspace(vmin, vmax, steps=num_bins + 1, device=device)
-    return edges
+    edges = torch.linspace(
+        vmin,
+        vmax,
+        steps=num_bins + 1,
+        device=device
+    )
 
+    return edges
 
 def make_weight_map(
     target,

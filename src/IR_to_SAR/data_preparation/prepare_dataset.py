@@ -15,7 +15,7 @@ import src.IR_to_SAR.data_preparation.regrid_era5.regrid_era5 as regrid_colocs
 reload(dataprep)
 
 # données pour era5
-era5_path = "/scale/user/mtannaou/alternance/src/extract_cyclones_era5/era5_single_levels"
+era5_path = "src/extract_cyclones_era5/era5_single_levels"
 janvier, mars, mai, juillet, aout, octobre, decembre = (
     np.arange(1, 32, 1),
     np.arange(1, 32, 1),
@@ -47,7 +47,9 @@ class PrepareDataSet:
         sar_train, sar_val, sar_test = [], [], []
         infos_train, infos_val, infos_test, infos_anggrek = [], [], [], []
         era5_train, era5_val, era5_test, era5_anggrek = [], [], [], []
+        mw_train, mw_val, mw_test = [], [], []
         wind_mask_train, wind_mask_val, wind_mask_test = [], [], []
+        mw_mask_train, mw_mask_val, mw_mask_test = [], [], []
         keys = [
                 "cyclone_name",
                 "cyclone_id",
@@ -62,86 +64,182 @@ class PrepareDataSet:
                 with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/24hours_before_data.pkl","rb") as f:
                     all_sequences = pkl.load(f)
             else : 
-                with open("/scale/user/mtannaou/alternance/src/IR_to_SAR/ML_IR_SAR/csv_data/one_day_24hours_data_with_infos_stride1.pkl","rb") as f:
-                    all_sequences = pkl.load(f)
+                if self.cfg.add_mw or self.cfg.add_era5:
+                    with open("src/IR_to_SAR/ML_IR_SAR/csv_data/one_day_24hours_data_with_era5_and_MW","rb") as f:
+                        all_sequences = pkl.load(f)
+                        if self.cfg.code_test:
+                            all_sequences = all_sequences[:380]
+                else : 
+                    with open("src/IR_to_SAR/ML_IR_SAR/csv_data/one_day_24hours_data_with_infos_stride1.pkl","rb") as f:
+                        all_sequences = pkl.load(f)
             
             for enu, ind in tqdm(enumerate(all_sequences), desc="Generating sequences for training : ....",total=len(all_sequences)):
-                if dataprepfunc.generate_sequence_irar_temporal_mode(self.cfg, all_sequences, enu) is None:
+                if all_sequences[enu]["all_era5"] != 1:
                     continue
-                else : 
-                    ir_sequence, wind_sequence, wind_mask = dataprepfunc.generate_sequence_irar_temporal_mode(self.cfg, all_sequences, enu)
+                result = dataprepfunc.generate_sequence_irar_temporal_mode(self.cfg,all_sequences,enu)
+                if result is None:
+                    continue
+                if self.cfg.add_mw:
+                    ir_sequence,wind_sequence,wind_mask,mw_v_sequence,mw_mask= result
+                else:
+                    ir_sequence,wind_sequence,wind_mask = result
 
-                if int(all_sequences[enu]["year"]) in  [2017]:
+                if int(all_sequences[enu]["year"]) in  [2018]:
                     irwin_test.append(ir_sequence);sar_test.append(wind_sequence)
                     wind_mask_test.append(wind_mask)
+                    if self.cfg.add_mw : 
+                        mw_test.append(mw_v_sequence)
+                        mw_mask_test.append(mw_mask)
                     infos_test.append({k: ind[k] for k in keys})
+                    irwin_val.append(ir_sequence); sar_val.append(wind_sequence)
+                    wind_mask_val.append(wind_mask)
+                    if self.cfg.add_mw : 
+                        mw_val.append(mw_v_sequence)
+                        mw_mask_val.append(mw_mask)
+                    infos_val.append({k: ind[k] for k in keys})
+                    if self.cfg.code_test:
+                        irwin_train.append(ir_sequence), sar_train.append(wind_sequence)
+                        wind_mask_train.append(wind_mask)
+                        if self.cfg.add_mw : 
+                            mw_train.append(mw_v_sequence)
+                            mw_mask_train.append(mw_mask)
+                        infos_train.append({k: ind[k] for k in keys})
                 elif int(all_sequences[enu]["year"]) in [2018]:
                     irwin_val.append(ir_sequence); sar_val.append(wind_sequence)
                     wind_mask_val.append(wind_mask)
+                    if self.cfg.add_mw : 
+                        mw_val.append(mw_v_sequence)
+                        mw_mask_val.append(mw_mask)
                     infos_val.append({k: ind[k] for k in keys})
                 else : 
                     irwin_train.append(ir_sequence), sar_train.append(wind_sequence)
                     wind_mask_train.append(wind_mask)
+                    if self.cfg.add_mw : 
+                        mw_train.append(mw_v_sequence)
+                        mw_mask_train.append(mw_mask)
                     infos_train.append({k: ind[k] for k in keys})
 
             irwin_train = np.stack(irwin_train, axis=0).astype(np.float32); sar_train = np.stack(sar_train, axis=0).astype(np.float32);
+            if self.cfg.add_mw : 
+                mw_train = np.stack(mw_train, axis=0).astype(np.float32)
+                mw_mask_train = np.stack(mw_mask_train, axis=0).astype(bool)
             wind_mask_train = np.stack(wind_mask_train, axis=0);self.infos_train = infos_train
             # Validation
             irwin_val = np.stack(irwin_val, axis=0).astype(np.float32);sar_val = np.stack(sar_val, axis=0).astype(np.float32)
+            if self.cfg.add_mw : 
+                mw_val = np.stack(mw_val, axis=0).astype(np.float32)
+                mw_mask_val = np.stack(mw_mask_val, axis=0).astype(bool)
             wind_mask_val = np.stack(wind_mask_val, axis=0);self.infos_val = infos_val
             # Test
             irwin_test = np.stack(irwin_test, axis=0).astype(np.float32);sar_test = np.stack(sar_test, axis=0).astype(np.float32)
+            if self.cfg.add_mw : 
+                mw_test = np.stack(mw_test, axis=0).astype(np.float32)
+                mw_mask_test = np.stack(mw_mask_test, axis=0).astype(bool)
             wind_mask_test = np.stack(wind_mask_test, axis=0);self.infos_test = infos_test
 
-            self.X_train, self.sar_train, self.X_val, self.sar_val, self.X_test, self.sar_test = dataprepfunc.centrage_sur_imagesize_irar_temporale_mode(cfg,
-                                                                                                                                                         self.target_dir,
-                                                                                                                                                         irwin_train,sar_train,
-                                                                                                                                                         irwin_val,sar_val,
-                                                                                                                                                         irwin_test, sar_test)
+            if not cfg.add_mw:
+                
+                self.X_train,self.sar_train,self.X_val,self.sar_val,self.X_test,self.sar_test = dataprepfunc.centrage_sur_imagesize_irar_temporale_mode(cfg,self.target_dir,
+                    irwin_train,
+                    sar_train,
+                    irwin_val,
+                    sar_val,
+                    irwin_test,
+                    sar_test
+                )  
+            else:
+                (self.X_train,self.sar_train,
+                self.X_val,self.sar_val,
+                self.X_test,self.sar_test,self.mw_train,self.mw_val,self.mw_test) = dataprepfunc.centrage_sur_imagesize_irar_temporale_mode(cfg,self.target_dir,irwin_train,
+                                                                                                                                        sar_train, irwin_val, sar_val,
+                                                                                                                                        irwin_test, sar_test,
+                                                                                                                                        mw_train=mw_train,mw_val=mw_val,mw_test=mw_test
+                                                                                                                                    )
+                self.mw_mask_train = mw_mask_train
+                self.mw_mask_val   = mw_mask_val
+                self.mw_mask_test  = mw_mask_test
+
+
+                      
             self.mask_train, self.mask_val, self.mask_test = dataprepfunc.create_temporal_mask(self.sar_train, self.sar_val, self.sar_test, 
                                                                                                wind_mask_train, wind_mask_val, wind_mask_test)
             self.X_train = np.nan_to_num(self.X_train, nan=0.0, posinf=0.0, neginf=0.0); self.sar_train = np.nan_to_num(self.sar_train, nan=0.0, posinf=0.0, neginf=0.0)
             self.X_val = np.nan_to_num(self.X_val, nan=0.0, posinf=0.0, neginf=0.0); self.sar_val = np.nan_to_num(self.sar_val, nan=0.0, posinf=0.0, neginf=0.0)
             self.X_test = np.nan_to_num(self.X_test, nan=0.0, posinf=0.0, neginf=0.0); self.sar_test = np.nan_to_num(self.sar_test, nan=0.0, posinf=0.0, neginf=0.0)
+            if self.cfg.add_mw : 
+                self.mw_pixel_mask_train = ( np.isfinite(self.mw_train) & self.mw_mask_train[:, :, None, None])
+                self.mw_pixel_mask_val = (  np.isfinite(self.mw_val) & self.mw_mask_val[:, :, None, None])
+                self.mw_pixel_mask_test = ( np.isfinite(self.mw_test) & self.mw_mask_test[:, :, None, None])
+                self.mw_train = np.nan_to_num(self.mw_train, nan=0.0, posinf=0.0, neginf=0.0); self.mw_val = np.nan_to_num(self.mw_val, nan=0.0, posinf=0.0, neginf=0.0)
+                self.mw_test = np.nan_to_num(self.mw_test, nan=0.0, posinf=0.0, neginf=0.0)
+
 
             # Data Augmentation
             if self.cfg.augmentation : 
                 print("Start Data Augmentation for train set : ----------")
-                self.X_train, self.sar_train, self.mask_train, self.infos_train = dataprep.data_augmentation(
-                                                                                                self.cfg,
-                                                                                                self.X_train, 
-                                                                                                self.sar_train, 
-                                                                                                self.mask_train,
-                                                                                                self.infos_train
-                                                                                            )
+                if not self.cfg.add_mw : 
+                    self.X_train, self.sar_train, self.mask_train, self.infos_train = dataprep.data_augmentation(
+                                                                                                    self.cfg,
+                                                                                                    self.X_train, 
+                                                                                                    self.sar_train, 
+                                                                                                    self.mask_train,
+                                                                                                    self.infos_train
+                                                                                                )
+                else : 
+                    self.X_train, self.sar_train, self.mask_train, self.infos_train, self.mw_train, self.mw_mask_train, self.mw_pixel_mask_train, = dataprep.data_augmentation(
+                                                                                                    self.cfg,
+                                                                                                    self.X_train, 
+                                                                                                    self.sar_train, 
+                                                                                                    self.mask_train,
+                                                                                                    self.infos_train,
+                                                                                                    mw_tensor = self.mw_train,
+                                                                                                    mw_mask_tensor = self.mw_mask_train,
+                                                                                                    mw_pixel_mask_tensor=self.mw_pixel_mask_train
+                                                                                                )
                 print("New Size after augmentation :",self.X_train.shape,self.sar_train.shape)
+                if self.cfg.add_mw : 
+                    print(" New Size of MW :", self.mw_train.shape, self.mw_mask_train.shape)
             
             print("Start normalisation : .......................")
-
-            # mean_x, std_x = [], []
-            # for c in range(self.X_train.shape[1]):
-            #     self.X_train[:, c], mean, std = dataprep.z_score(self.X_train[:, c])
-            #     mean_x.append(mean)
-            #     std_x.append(std)
-            # self.mean_X, self.std_X = mean_x, std_x
-            # for c in range(self.X_train.shape[1]):
-            #     self.X_val[:, c], _, _ = dataprep.z_score(self.X_val[:, c], mean_value=mean_x[c], std_value=std_x[c])
-            #     self.X_test[:, c], _, _ = dataprep.z_score(self.X_test[:, c], mean_value=mean_x[c], std_value=std_x[c])
             
             # Calcul sur tout le train
-            self.X_train, mean_x, std_x = dataprep.z_score(self.X_train)
-            self.X_val, _, _ = dataprep.z_score(
-                self.X_val,
-                mean_value=mean_x,
-                std_value=std_x,
-            )
-            self.X_test, _, _ = dataprep.z_score(
-                self.X_test,
-                mean_value=mean_x,
-                std_value=std_x,
-            )
+            if self.cfg.add_era5:
+                mean_x = self.X_train.mean(axis=(0, 2, 3), keepdims=True)
+                std_x = self.X_train.std(axis=(0, 2, 3), keepdims=True)
+
+                self.X_train = (self.X_train - mean_x) / (std_x + 1e-8)
+                self.X_val = (self.X_val - mean_x) / (std_x + 1e-8)
+                self.X_test = (self.X_test - mean_x) / (std_x + 1e-8)
+            else:
+                self.X_train, mean_x, std_x = dataprep.z_score(self.X_train)
+                self.X_val, _, _ = dataprep.z_score(self.X_val, mean_value=mean_x, std_value=std_x)
+                self.X_test, _, _ = dataprep.z_score(self.X_test, mean_value=mean_x, std_value=std_x)
+
             self.mean_X = mean_x
             self.std_X = std_x
+
+            if self.cfg.add_mw:
+                valid_mw_train = self.mw_train[
+                    self.mw_pixel_mask_train
+                ]
+                mean_mw = valid_mw_train.mean()
+                std_mw = valid_mw_train.std()
+                self.mw_train = (
+                        self.mw_train - mean_mw
+                    ) / (std_mw + 1e-10)
+                self.mw_val = (
+                        self.mw_val - mean_mw
+                    ) / (std_mw + 1e-8)
+                self.mw_test = (
+                        self.mw_test - mean_mw
+                    ) / (std_mw + 1e-8)
+                self.mw_train *= self.mw_pixel_mask_train
+                self.mw_val   *= self.mw_pixel_mask_val
+                self.mw_test  *= self.mw_pixel_mask_test
+                self.mean_MW = mean_mw
+                self.std_MW = std_mw
+
+
             
             # Normalisation SAR annulaire globale sur les 12 canaux
             N_train, C, H, W = self.sar_train.shape
@@ -151,12 +249,24 @@ class PrepareDataSet:
             stats["mean_x"] = mean_x; stats["std_x"] = std_x
             self.mean_sar = stats["mean_sar"]; self.std_sar = stats["std_sar"]
             self.mean_x = stats["mean_x"]; self.std_x = stats["std_x"]
+            if self.cfg.add_mw :
+                stats["mean_mw"] = self.mean_MW;stats["std_mw"] = self.std_MW
 
             try:
+                data_to_save = {
+                    "x_test_normalized": self.X_test,
+                    "y_test_normalized": self.sar_test,
+                }
+                if self.cfg.add_mw:
+                    data_to_save.update({
+                        "mw_test_normalized": self.mw_test,
+                        "mw_mask_test": self.mw_mask_test,
+                        "mw_pixel_mask_test": self.mw_pixel_mask_test,
+                    })
                 with open(os.path.join(target_dir,"sequence_data_normalized.pkl"),"wb") as f:
-                    pkl.dump({"x_test_normalized":self.X_test,
-                            "y_test_normalized":self.sar_test}
+                    pkl.dump(data_to_save
                             , f)
+                    
             except Exception as e : 
                 print("erreur dans la sauvgarde des sequences :",e)
             with open(
